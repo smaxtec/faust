@@ -14,6 +14,7 @@ from faust.types import TP, AppT, CollectionT
 
 bigtable = None
 
+
 class BigTableStore(base.SerializedStore):
     """Bigtable table storage."""
 
