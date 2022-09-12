@@ -1,4 +1,5 @@
 """BigTable storage."""
+import logging
 import typing
 from typing import Any, Iterator, Optional, Tuple, Union
 
@@ -23,16 +24,20 @@ class BigTableStore(base.SerializedStore):
     table: Table
     PROJECT_KEY = "project_key"
     INSTANCE_KEY = "instance_key"
+    TABLE_NAME_KEY = "table_name_key"
 
     def __init__(
         self,
         url: Union[str, URL],
         app: AppT,
         table: CollectionT,
-        options: Optional[typing.Dict[str, Any]] = None,
+        options: typing.Dict[str, Any],
         **kwargs: Any,
     ) -> None:
         try:
+            logging.getLogger(__name__).error(
+                f"BigTableStore: Making bigtable with {self.table_name=}"
+            )
             self.client = Client(
                 options.get(BigTableStore.PROJECT_KEY),
                 admin=True,
@@ -43,11 +48,12 @@ class BigTableStore(base.SerializedStore):
 
             existing_tables = [t.table_id for t in self.instance.list_tables()]
             table_exists = self.table_name in existing_tables
-            self.table = self.instance.table(self.table_name)
+            self.bt_table_prefix = options.get(BigTableStore.TABLE_NAME_KEY)
+            self.table = self.instance.table(self.bt_table_prefix)
             if not table_exists:
                 self.table.create()
             else:
-                self.table = self.instance.table(self.table_name)
+                self.table = self.instance.table(self.bt_table_prefix)
             existing_cf = [
                 cf.column_family_id for cf in self.table.list_column_families()
             ]
@@ -71,10 +77,18 @@ class BigTableStore(base.SerializedStore):
     def bigtable_extract_row_data(self, row_data):
         return list(row_data.to_dict().values())[0][0].value
 
+    def get_bigtable_key(self, key: bytes) -> bytes:
+
+        return bytes(f"{self.table_name}_{key.decode("utf-8")}")
+
+    def get_access_key(self, bt_key: bytes) -> bytes:
+        return bytes(bt_key.decode("utf-8").removeprefix(f"{self.table_name}_"))
+
     def _get(self, key: bytes) -> Optional[bytes]:
         filter = CellsColumnLimitFilter(1)
         try:
-            res = self.table.read_row(key, filter_=filter)
+            bt_key = self.get_bigtable_key(key)
+            res = self.table.read_row(bt_key, filter_=filter)
             if res is None:
                 raise KeyError(f"row {key} not found in bigtable {self.table=}")
             return self.bigtable_extract_row_data(res)
@@ -89,7 +103,8 @@ class BigTableStore(base.SerializedStore):
 
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
-            row = self.table.direct_row(key)
+            bt_key = self.get_bigtable_key(key)
+            row = self.table.direct_row(bt_key)
             row.set_cell(self.column_family.column_family_id, self.column_name, value)
             row.commit()
         except Exception as ex:
@@ -101,6 +116,7 @@ class BigTableStore(base.SerializedStore):
 
     def _del(self, key: bytes) -> None:
         try:
+            bt_key = self.get_bigtable_key(key)
             row = self.table.direct_row(key)
             row.delete()
             row.commit()
@@ -114,7 +130,7 @@ class BigTableStore(base.SerializedStore):
     def _iterkeys(self) -> Iterator[bytes]:
         try:
             for key, val in self.table.scan():
-                yield key
+                yield self.get_access_(key)
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _iterkeys "
@@ -137,7 +153,7 @@ class BigTableStore(base.SerializedStore):
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
             for key, val in self.table.scan():
-                yield key, self.bigtable_extract_row_data(val)
+                yield self.get_access_(key), self.bigtable_extract_row_data(val)
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error "
@@ -212,9 +228,35 @@ class BigTableStore(base.SerializedStore):
         raise NotImplementedError("Not yet implemented for Bigtable.")
 
 
+class BigTableStoreTest(BigTableStore):
+    def __init__(
+        self,
+        options: Optional[typing.Dict[str, Any]] = None,
+    ) -> None:
+        try:
+            self.client = Client(options.get(BigTableStore.PROJECT_KEY))
+            self.instance = self.client.instance(
+                options.get(BigTableStore.INSTANCE_KEY)
+            )
+
+            self.table = self.instance.table(self.bt_table_prefix)
+            column_family_id = "FaustColumnFamily"
+            self.column_family = self.table.column_family(
+                column_family_id,
+                gc_rule=column_family.MaxVersionsGCRule(1),
+            )
+            self.column_name = "DATA"
+
+        except Exception as ex:
+            self.logger.error(f"Error configuring bigtable client {ex}")
+            raise ex
+
+
 if __name__ == "__main__":
     options = {
-        BigTableStoreTest.PROJECT_KEY: "dev-smaxtec-system",
-        BigTableStoreTest.INSTANCE_KEY: "faust-store-test",
+        BigTableStoreTest.PROJECT_KEY: "smaxtec-system",
+        BigTableStoreTest.INSTANCE_KEY: "faust-cache-test",
+        BigTableStoreTest.TABLE_NAME_KEY: "sxfaust_cache",
     }
     store = BigTableStoreTest(options)
+    pass
