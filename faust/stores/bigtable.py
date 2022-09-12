@@ -78,8 +78,8 @@ class BigTableStore(base.SerializedStore):
         return list(row_data.to_dict().values())[0][0].value
 
     def get_bigtable_key(self, key: bytes) -> bytes:
-
-        return bytes(f"{self.table_name}_{key.decode("utf-8")}")
+        decoded_key = key.decode('utf-8')
+        return bytes(f"{self.table_name}_{decoded_key}")
 
     def get_access_key(self, bt_key: bytes) -> bytes:
         return bytes(bt_key.decode("utf-8").removeprefix(f"{self.table_name}_"))
