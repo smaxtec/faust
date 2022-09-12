@@ -36,7 +36,7 @@ class BigTableStore(base.SerializedStore):
     ) -> None:
         try:
             logging.getLogger(__name__).error(
-                f"BigTableStore: Making bigtable with {self.table_name=}"
+                f"BigTableStore: Making bigtablestore with {self.table_name=}"
             )
             self.client = Client(
                 options.get(BigTableStore.PROJECT_KEY),
@@ -48,12 +48,12 @@ class BigTableStore(base.SerializedStore):
 
             existing_tables = [t.table_id for t in self.instance.list_tables()]
             table_exists = self.table_name in existing_tables
-            self.bt_table_prefix = options.get(BigTableStore.TABLE_NAME_KEY)
-            self.table = self.instance.table(self.bt_table_prefix)
+            self.bt_table_name = options.get(BigTableStore.TABLE_NAME_KEY)
+            self.table = self.instance.table(self.bt_table_name)
             if not table_exists:
                 self.table.create()
             else:
-                self.table = self.instance.table(self.bt_table_prefix)
+                self.table = self.instance.table(self.bt_table_name)
             existing_cf = [
                 cf.column_family_id for cf in self.table.list_column_families()
             ]
@@ -239,7 +239,7 @@ class BigTableStoreTest(BigTableStore):
                 options.get(BigTableStore.INSTANCE_KEY)
             )
 
-            self.table = self.instance.table(self.bt_table_prefix)
+            self.table = self.instance.table(self.bt_table_name)
             column_family_id = "FaustColumnFamily"
             self.column_family = self.table.column_family(
                 column_family_id,
