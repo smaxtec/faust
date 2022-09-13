@@ -73,11 +73,27 @@ class BigTableStore(base.SerializedStore):
             bt_key.decode("utf-8").removeprefix(f"{self.table_name}_"), encoding="utf-8"
         )
 
+    def get_scan_range_for_sxkeys(self, key: bytes) -> Tuple[bytes, bytes]:
+        key_id = key.decode("utf-8")
+        key_id = key_id.split("_")[1]
+        key_start_str = key_id
+        key_end_str = key_id
+        last_char = key_end_str[-1]
+        key_end_str = key_end_str[:-1]
+        key_end_str += chr(ord(last_char) + 1)
+
+        key_start: bytes = f"{self.table_name}_{key_start_str}".encode("utf-8")
+        key_end: bytes = f"{self.table_name}_{key_end_str}".encode("utf-8")
+        return key_start, key_end
+
     def _get(self, key: bytes) -> Optional[bytes]:
         filter = CellsColumnLimitFilter(1)
         try:
             bt_key = self.get_bigtable_key(key)
-            res = self.bt_table.read_row(bt_key, filter_=filter)
+            start_key, end_key = self.get_scan_range_for_sxkeys(bt_key)
+            res = self.bt_table.read_row(
+                bt_key, start_key=start_key, end_key=end_key, filter_=filter
+            )
             if res is None:
                 raise KeyError(f"row {key} not found in bigtable {self.table=}")
             return self.bigtable_extract_row_data(res)
@@ -118,8 +134,8 @@ class BigTableStore(base.SerializedStore):
 
     def _iterkeys(self) -> Iterator[bytes]:
         try:
-            for key, val in self.bt_table.scan():
-                yield self.get_access_(key)
+            for row in self._iteritems():
+                yield row[0]
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _iterkeys "
@@ -129,8 +145,8 @@ class BigTableStore(base.SerializedStore):
 
     def _itervalues(self) -> Iterator[bytes]:
         try:
-            for key, val in self.bt_table.scan():
-                yield self.bigtable_extract_row_data(val)
+            for row in self._iteritems():
+                yield row[1]
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error "
@@ -141,8 +157,9 @@ class BigTableStore(base.SerializedStore):
 
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
-            for key, val in self.bt_table.scan():
-                yield self.get_access_(key), self.bigtable_extract_row_data(val)
+            table_prefix = f"{self.table_name}".encode("utf-8")
+            for row in self.bt_table.read_rows(start_key=table_prefix, end_key=table_prefix):
+                yield self.get_access_key(row.row_key), self.bigtable_extract_row_data(row)
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error "
