@@ -34,38 +34,25 @@ class BigTableStore(base.SerializedStore):
         options: typing.Dict[str, Any],
         **kwargs: Any,
     ) -> None:
+        self.table_name = table.name
         try:
             logging.getLogger(__name__).error(
                 f"BigTableStore: Making bigtablestore with {self.table_name=}"
             )
             self.client = Client(
                 options.get(BigTableStore.PROJECT_KEY),
-                admin=True,
             )
             self.instance = self.client.instance(
                 options.get(BigTableStore.INSTANCE_KEY)
             )
 
-            existing_tables = [t.table_id for t in self.instance.list_tables()]
-            table_exists = self.table_name in existing_tables
             self.bt_table_name = options.get(BigTableStore.TABLE_NAME_KEY)
             self.table = self.instance.table(self.bt_table_name)
-            if not table_exists:
-                self.table.create()
-            else:
-                self.table = self.instance.table(self.bt_table_name)
-            existing_cf = [
-                cf.column_family_id for cf in self.table.list_column_families()
-            ]
-
             column_family_id = "FaustColumnFamily"
-            cf_exists = column_family_id in existing_cf
             self.column_family = self.table.column_family(
                 column_family_id,
                 gc_rule=column_family.MaxVersionsGCRule(1),
             )
-            if not cf_exists:
-                self.column_family.create()
             self.column_name = "DATA"
 
             table.use_partitioner = True
