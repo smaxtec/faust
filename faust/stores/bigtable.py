@@ -66,10 +66,10 @@ class BigTableStore(base.SerializedStore):
 
     def get_bigtable_key(self, key: bytes) -> bytes:
         decoded_key = key.decode('utf-8')
-        return bytes(f"{self.table_name}_{decoded_key}")
+        return bytes(f"{self.table_name}_{decoded_key}", encoding="utf-8")
 
     def get_access_key(self, bt_key: bytes) -> bytes:
-        return bytes(bt_key.decode("utf-8").removeprefix(f"{self.table_name}_"))
+        return bytes(bt_key.decode("utf-8").removeprefix(f"{self.table_name}_"), encoding="utf-8")
 
     def _get(self, key: bytes) -> Optional[bytes]:
         filter = CellsColumnLimitFilter(1)
