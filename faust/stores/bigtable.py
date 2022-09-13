@@ -104,7 +104,7 @@ class BigTableStore(base.SerializedStore):
     def _del(self, key: bytes) -> None:
         try:
             bt_key = self.get_bigtable_key(key)
-            row = self.table.direct_row(key)
+            row = self.table.direct_row(bt_key)
             row.delete()
             row.commit()
         except Exception as ex:
