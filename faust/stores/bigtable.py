@@ -21,7 +21,7 @@ class BigTableStore(base.SerializedStore):
 
     client: Client
     instance: Instance
-    table: Table
+    bt_table: Table
     PROJECT_KEY = "project_key"
     INSTANCE_KEY = "instance_key"
     TABLE_NAME_KEY = "table_name_key"
