@@ -13,8 +13,6 @@ from yarl import URL
 from faust.stores import base
 from faust.types import TP, AppT, CollectionT
 
-bigtable = None
-
 
 class BigTableStore(base.SerializedStore):
     """Bigtable table storage."""
@@ -57,7 +55,7 @@ class BigTableStore(base.SerializedStore):
 
             table.use_partitioner = True
         except Exception as ex:
-            self.logger.error(f"Error configuring bigtable client {ex}")
+            self.log.error(f"Error configuring bigtable client {ex}")
             raise ex
         super().__init__(url, app, table, **kwargs)
 
@@ -89,7 +87,13 @@ class BigTableStore(base.SerializedStore):
                 end_inclusive=True,
                 filter_=filter,
             )
+            self.log.info(
+                f"[Bigtable]: _get with {key=} (={bt_key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
+            )
             if res is None:
+                self.log.warning(
+                    f"[Bigtable] KeyError in _get with {key=} (={bt_key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
+                )
                 raise KeyError(f"row {key} not found in bigtable {self.table=}")
             return self.bigtable_extract_row_data(res)
         except ValueError as ex:
@@ -107,6 +111,9 @@ class BigTableStore(base.SerializedStore):
             row = self.bt_table.direct_row(bt_key)
             row.set_cell(self.column_family.column_family_id, self.column_name, value)
             row.commit()
+            self.log.info(
+                f"[Bigtable]: _set with {key=} (={bt_key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
+            )
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in set for "
@@ -120,6 +127,9 @@ class BigTableStore(base.SerializedStore):
             row = self.bt_table.direct_row(bt_key)
             row.delete()
             row.commit()
+            self.log.info(
+                f"[Bigtable]: _del with {key=} (={bt_key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
+            )
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in delete for "
@@ -254,7 +264,79 @@ class BigTableStoreTest(BigTableStore):
             self.column_name = "DATA"
 
         except Exception as ex:
-            self.logger.error(f"Error configuring bigtable client {ex}")
+            logging.getLogger(__name__).error(f"Error configuring bigtable client {ex}")
+            raise ex
+
+    def bigtable_extract_row_data(self, row_data):
+        return list(row_data.to_dict().values())[0][0].value
+
+    def get_bigtable_key(self, key: bytes) -> bytes:
+        decoded_key = key.decode("utf-8")
+        return bytes(f"{self.table_name}_{decoded_key}", encoding="utf-8")
+
+    def get_access_key(self, bt_key: bytes) -> bytes:
+        return bytes(
+            bt_key.decode("utf-8").removeprefix(f"{self.table_name}_"), encoding="utf-8"
+        )
+
+    def sx_get_key_prefix(self, key: bytes) -> bytes:
+        key_id = key.decode("utf-8").split("_")[1]
+        return f"{self.table_name}_{key_id}".encode("utf-8")
+
+    def _get(self, key: bytes) -> Optional[bytes]:
+        filter = CellsColumnLimitFilter(1)
+        try:
+            bt_key = self.get_bigtable_key(key)
+            key_prefix = self.sx_get_key_prefix(bt_key)
+            res = self.bt_table.read_row(
+                bt_key,
+                start_key=key_prefix,
+                end_key=key_prefix,
+                end_inclusive=True,
+                filter_=filter,
+            )
+            if res is None:
+                raise KeyError(f"row {key} not found in bigtable {self.table=}")
+            return self.bigtable_extract_row_data(res)
+        except ValueError as ex:
+            self.log.debug(f"key not found {key} exception {ex}")
+            raise KeyError(f"key not found {key}")
+        except Exception as ex:
+            self.log.error(
+                f"Error in get for table {self.table_name} exception {ex} key {key}"
+            )
+            raise ex
+
+    def _set(self, key: bytes, value: Optional[bytes]) -> None:
+        try:
+            bt_key = self.get_bigtable_key(key)
+            row = self.bt_table.direct_row(bt_key)
+            self.log.info(
+                f"[Bigtable]: _set with {key=} (={bt_key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
+            )
+            row.set_cell(self.column_family.column_family_id, self.column_name, value)
+            row.commit()
+        except Exception as ex:
+            self.log.error(
+                f"FaustBigtableException Error in set for "
+                f"table {self.table_name} exception {ex} key {key}"
+            )
+            raise ex
+
+    def _del(self, key: bytes) -> None:
+        try:
+            bt_key = self.get_bigtable_key(key)
+            row = self.bt_table.direct_row(bt_key)
+            self.log.info(
+                f"[Bigtable]: _del with {key=} (={bt_key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
+            )
+            row.delete()
+            row.commit()
+        except Exception as ex:
+            self.log.error(
+                f"FaustBigtableException Error in delete for "
+                f"table {self.table_name} exception {ex} key {key}"
+            )
             raise ex
 
 
