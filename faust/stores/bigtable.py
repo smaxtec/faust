@@ -78,7 +78,7 @@ class BigTableStore(base.SerializedStore):
                 filter_=filter,
             )
             self.log.info(
-                f"[Bigtable]: _get with {key=} (={bt_key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
+                f"[Bigtable]: _get with {key=} (={key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
             )
             if res is None:
                 self.log.warning(
@@ -102,7 +102,7 @@ class BigTableStore(base.SerializedStore):
             row.set_cell(self.column_family.column_family_id, self.column_name, value)
             row.commit()
             self.log.info(
-                f"[Bigtable]: _set with {key=} (={bt_key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
+                f"[Bigtable]: _set with {key=} (={key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
             )
         except Exception as ex:
             self.log.error(
@@ -118,7 +118,7 @@ class BigTableStore(base.SerializedStore):
             row.delete()
             row.commit()
             self.log.info(
-                f"[Bigtable]: _del with {key=} (={bt_key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
+                f"[Bigtable]: _del with {key=} (={key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
             )
         except Exception as ex:
             self.log.error(
