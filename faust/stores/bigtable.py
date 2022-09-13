@@ -47,9 +47,9 @@ class BigTableStore(base.SerializedStore):
             )
 
             self.bt_table_name = options.get(BigTableStore.TABLE_NAME_KEY)
-            self.table = self.instance.table(self.bt_table_name)
+            self.bt_table = self.instance.table(self.bt_table_name)
             column_family_id = "FaustColumnFamily"
-            self.column_family = self.table.column_family(
+            self.column_family = self.bt_table.column_family(
                 column_family_id,
                 gc_rule=column_family.MaxVersionsGCRule(1),
             )
@@ -65,17 +65,19 @@ class BigTableStore(base.SerializedStore):
         return list(row_data.to_dict().values())[0][0].value
 
     def get_bigtable_key(self, key: bytes) -> bytes:
-        decoded_key = key.decode('utf-8')
+        decoded_key = key.decode("utf-8")
         return bytes(f"{self.table_name}_{decoded_key}", encoding="utf-8")
 
     def get_access_key(self, bt_key: bytes) -> bytes:
-        return bytes(bt_key.decode("utf-8").removeprefix(f"{self.table_name}_"), encoding="utf-8")
+        return bytes(
+            bt_key.decode("utf-8").removeprefix(f"{self.table_name}_"), encoding="utf-8"
+        )
 
     def _get(self, key: bytes) -> Optional[bytes]:
         filter = CellsColumnLimitFilter(1)
         try:
             bt_key = self.get_bigtable_key(key)
-            res = self.table.read_row(bt_key, filter_=filter)
+            res = self.bt_table.read_row(bt_key, filter_=filter)
             if res is None:
                 raise KeyError(f"row {key} not found in bigtable {self.table=}")
             return self.bigtable_extract_row_data(res)
@@ -91,7 +93,7 @@ class BigTableStore(base.SerializedStore):
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
             bt_key = self.get_bigtable_key(key)
-            row = self.table.direct_row(bt_key)
+            row = self.bt_table.direct_row(bt_key)
             row.set_cell(self.column_family.column_family_id, self.column_name, value)
             row.commit()
         except Exception as ex:
@@ -104,7 +106,7 @@ class BigTableStore(base.SerializedStore):
     def _del(self, key: bytes) -> None:
         try:
             bt_key = self.get_bigtable_key(key)
-            row = self.table.direct_row(bt_key)
+            row = self.bt_table.direct_row(bt_key)
             row.delete()
             row.commit()
         except Exception as ex:
@@ -116,7 +118,7 @@ class BigTableStore(base.SerializedStore):
 
     def _iterkeys(self) -> Iterator[bytes]:
         try:
-            for key, val in self.table.scan():
+            for key, val in self.bt_table.scan():
                 yield self.get_access_(key)
         except Exception as ex:
             self.log.error(
@@ -127,7 +129,7 @@ class BigTableStore(base.SerializedStore):
 
     def _itervalues(self) -> Iterator[bytes]:
         try:
-            for key, val in self.table.scan():
+            for key, val in self.bt_table.scan():
                 yield self.bigtable_extract_row_data(val)
         except Exception as ex:
             self.log.error(
@@ -139,7 +141,7 @@ class BigTableStore(base.SerializedStore):
 
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
-            for key, val in self.table.scan():
+            for key, val in self.bt_table.scan():
                 yield self.get_access_(key), self.bigtable_extract_row_data(val)
         except Exception as ex:
             self.log.error(
@@ -226,9 +228,9 @@ class BigTableStoreTest(BigTableStore):
                 options.get(BigTableStore.INSTANCE_KEY)
             )
 
-            self.table = self.instance.table(self.bt_table_name)
+            self.bt_table = self.instance.table(self.bt_table_name)
             column_family_id = "FaustColumnFamily"
-            self.column_family = self.table.column_family(
+            self.column_family = self.bt_table.column_family(
                 column_family_id,
                 gc_rule=column_family.MaxVersionsGCRule(1),
             )
