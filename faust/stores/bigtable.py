@@ -156,8 +156,9 @@ class BigTableStore(base.SerializedStore):
             for row in self.bt_table.read_rows(
                 start_key=table_prefix, end_key=table_prefix, end_inclusive=True
             ):
-                yield self.get_access_key(row.row_key), self.bigtable_extract_row_data(
-                    row
+                yield (
+                    self.get_access_key(row.row_key),
+                    self.bigtable_extract_row_data(row),
                 )
         except Exception as ex:
             self.log.error(
