@@ -211,20 +211,19 @@ class BigTableStore(base.SerializedStore):
     def get_offset_key(self, tp: TP):
         return self.offset_key_prefix + str(tp.partition).encode()
 
-    # def persisted_offset(self, tp: TP) -> Optional[int]:
-    # """Return the last persisted offset.
-    #
-    # See :meth:`set_persisted_offset`.
-    # """
-    # offset_key = self.offset_key_prefix + str(tp.partition).encode()
-    # try:
-    # offset = self._get(offset_key)
-    # except KeyError:
-    # offset = None
-    # pass
-    # if offset is not None:
-    # return int(offset)
-    # return None
+    def persisted_offset(self, tp: TP) -> Optional[int]:
+        """Return the last persisted offset.
+        See :meth:`set_persisted_offset`.
+        """
+        offset_key = self.offset_key_prefix + str(tp.partition).encode()
+        try:
+            offset = self._get(offset_key)
+        except KeyError:
+            offset = None
+            pass
+        if offset is not None:
+            return int(offset)
+        return None
 
     def set_persisted_offset(self, tp: TP, offset: int) -> None:
         """Set the last persisted offset for this table.
