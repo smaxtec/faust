@@ -1,7 +1,7 @@
 """BigTable storage."""
 import logging
 import typing
-from typing import Any, Iterator, Optional, Tuple, Union, List, Dict
+from typing import Any, Callable, Iterable, Iterator, Optional, Tuple, Union, List, Dict
 
 from google.cloud.bigtable import column_family
 from google.cloud.bigtable.client import Client
@@ -12,7 +12,7 @@ from google.cloud.bigtable.table import Table
 from yarl import URL
 
 from faust.stores import base
-from faust.types import TP, AppT, CollectionT
+from faust.types import TP, AppT, CollectionT, EventT
 
 
 class BigTableStore(base.SerializedStore):
@@ -212,19 +212,19 @@ class BigTableStore(base.SerializedStore):
         return self.offset_key_prefix + str(tp.partition).encode()
 
     # def persisted_offset(self, tp: TP) -> Optional[int]:
-        # """Return the last persisted offset.
-#
-        # See :meth:`set_persisted_offset`.
-        # """
-        # offset_key = self.offset_key_prefix + str(tp.partition).encode()
-        # try:
-            # offset = self._get(offset_key)
-        # except KeyError:
-            # offset = None
-            # pass
-        # if offset is not None:
-            # return int(offset)
-        # return None
+    # """Return the last persisted offset.
+    #
+    # See :meth:`set_persisted_offset`.
+    # """
+    # offset_key = self.offset_key_prefix + str(tp.partition).encode()
+    # try:
+    # offset = self._get(offset_key)
+    # except KeyError:
+    # offset = None
+    # pass
+    # if offset is not None:
+    # return int(offset)
+    # return None
 
     def set_persisted_offset(self, tp: TP, offset: int) -> None:
         """Set the last persisted offset for this table.
