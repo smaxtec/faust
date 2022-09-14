@@ -83,9 +83,6 @@ class BigTableStore(base.SerializedStore):
                 bt_key,
                 filter_=filter,
             )
-            self.log.info(
-                f"[Bigtable]: _get with {key=} (={key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
-            )
             if res is None:
                 self.log.warning(
                     f"[Bigtable] KeyError in _get with {key=} (={bt_key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
@@ -107,9 +104,6 @@ class BigTableStore(base.SerializedStore):
             row = self.bt_table.direct_row(bt_key)
             row.set_cell(self.column_family.column_family_id, self.column_name, value)
             row.commit()
-            self.log.info(
-                f"[Bigtable]: _set with {key=} (={key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
-            )
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in set for "
@@ -123,9 +117,6 @@ class BigTableStore(base.SerializedStore):
             row = self.bt_table.direct_row(bt_key)
             row.delete()
             row.commit()
-            self.log.info(
-                f"[Bigtable]: _del with {key=} (={key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
-            )
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in delete for "
