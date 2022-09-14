@@ -67,7 +67,9 @@ class BigTableStore(base.SerializedStore):
         return f"{self.table_name}_{decoded_key}".encode("utf-8")
 
     def get_access_key(self, bt_key: bytes) -> bytes:
-        return bt_key.decode("utf-8").removeprefix(f"{self.table_name}_").encode("utf-8")
+        return (
+            bt_key.decode("utf-8").removeprefix(f"{self.table_name}_").encode("utf-8")
+        )
 
     def _get(self, key: bytes) -> Optional[bytes]:
         filter = CellsColumnLimitFilter(1)
@@ -155,9 +157,7 @@ class BigTableStore(base.SerializedStore):
             end_key_str = self.table_name[:-1] + chr(ord(self.table_name[-1]) + 1)
             end_key = end_key_str.encode("utf-8")
             start_key = self.table_name.encode("utf-8")
-            for row in self.bt_table.read_rows(
-                start_key=start_key, end_key=end_key
-            ):
+            for row in self.bt_table.read_rows(start_key=start_key, end_key=end_key):
                 yield (
                     self.get_access_key(row.row_key),
                     self.bigtable_extract_row_data(row),
@@ -272,7 +272,7 @@ class BigTableStoreTest(BigTableStore):
         prefix = f"{self.table_name}_"
         bt_key_str = bt_key.decode("utf-8")
         if bt_key_str.startswith(prefix):
-            bt_key_str = bt_key_str[len(prefix)]:]
+            bt_key_str = bt_key_str[len(prefix) :]
         return bt_key_str.encode("utf-8")
 
     def _get(self, key: bytes) -> Optional[bytes]:
@@ -296,9 +296,7 @@ class BigTableStoreTest(BigTableStore):
             print(f"key not found {key} exception {ex}")
             raise KeyError(f"key not found {key}")
         except Exception as ex:
-            print(
-                f"Error in get for table {self.table_name} exception {ex} key {key}"
-            )
+            print(f"Error in get for table {self.table_name} exception {ex} key {key}")
             raise ex
 
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
@@ -361,9 +359,7 @@ class BigTableStoreTest(BigTableStore):
             end_key_str = self.table_name[:-1] + chr(ord(self.table_name[-1]) + 1)
             end_key = end_key_str.encode("utf-8")
             start_key = self.table_name.encode("utf-8")
-            for row in self.bt_table.read_rows(
-                start_key=start_key, end_key=end_key
-            ):
+            for row in self.bt_table.read_rows(start_key=start_key, end_key=end_key):
                 yield (
                     self.get_access_key(row.row_key),
                     self.bigtable_extract_row_data(row),
