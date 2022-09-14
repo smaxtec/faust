@@ -1,13 +1,14 @@
 """BigTable storage."""
 import logging
 import typing
-from typing import Any, Iterator, Optional, Tuple, Union
+from typing import Any, Iterator, Optional, Tuple, Union, List, Dict
 
 from google.cloud.bigtable import column_family
 from google.cloud.bigtable.client import Client
 from google.cloud.bigtable.instance import Instance
 from google.cloud.bigtable.row_filters import CellsColumnLimitFilter
 from google.cloud.bigtable.table import Table
+
 from yarl import URL
 
 from faust.stores import base
@@ -33,6 +34,7 @@ class BigTableStore(base.SerializedStore):
         **kwargs: Any,
     ) -> None:
         self.table_name = table.name
+        self.offset_key_prefix = f"{self.table_name}_offsets:".encode()
         try:
             logging.getLogger(__name__).error(
                 f"BigTableStore: Making bigtablestore with {self.table_name=}"
@@ -63,13 +65,15 @@ class BigTableStore(base.SerializedStore):
         return list(row_data.to_dict().values())[0][0].value
 
     def get_bigtable_key(self, key: bytes) -> bytes:
-        decoded_key = key.decode("utf-8")
-        return f"{self.table_name}_{decoded_key}".encode("utf-8")
+        decoded_key = key.decode()
+        return f"{self.table_name}_{decoded_key}".encode()
 
     def get_access_key(self, bt_key: bytes) -> bytes:
-        return (
-            bt_key.decode("utf-8").removeprefix(f"{self.table_name}_").encode("utf-8")
-        )
+        prefix = f"{self.table_name}_"
+        bt_key_str = bt_key.decode()
+        if bt_key_str.startswith(prefix):
+            bt_key_str = bt_key_str[len(prefix) :]
+        return bt_key_str.encode()
 
     def _get(self, key: bytes) -> Optional[bytes]:
         filter = CellsColumnLimitFilter(1)
@@ -155,8 +159,8 @@ class BigTableStore(base.SerializedStore):
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
             end_key_str = self.table_name[:-1] + chr(ord(self.table_name[-1]) + 1)
-            end_key = end_key_str.encode("utf-8")
-            start_key = self.table_name.encode("utf-8")
+            end_key = end_key_str.encode()
+            start_key = self.table_name.encode()
             for row in self.bt_table.read_rows(start_key=start_key, end_key=end_key):
                 yield (
                     self.get_access_key(row.row_key),
@@ -204,12 +208,35 @@ class BigTableStore(base.SerializedStore):
         """
         ...
 
-    def persisted_offset(self, tp: TP) -> Optional[int]:
-        """Return the persisted offset.
+    def get_offset_key(self, tp: TP):
+        return self.offset_key_prefix + str(tp.partition).encode()
 
-        This always returns :const:`None` when using the bigtable store.
+    # def persisted_offset(self, tp: TP) -> Optional[int]:
+        # """Return the last persisted offset.
+#
+        # See :meth:`set_persisted_offset`.
+        # """
+        # offset_key = self.offset_key_prefix + str(tp.partition).encode()
+        # try:
+            # offset = self._get(offset_key)
+        # except KeyError:
+            # offset = None
+            # pass
+        # if offset is not None:
+            # return int(offset)
+        # return None
+
+    def set_persisted_offset(self, tp: TP, offset: int) -> None:
+        """Set the last persisted offset for this table.
+
+        This will remember the last offset that we wrote to RocksDB,
+        so that on rebalance/recovery we can seek past this point
+        to only read the events that occurred recently while
+        we were not an active replica.
         """
-        return None
+        offset_key = self.get_offset_key(tp)
+        pass
+        # self._set(offset_key, str(offset).encode())
 
     async def backup_partition(
         self,
@@ -234,6 +261,49 @@ class BigTableStore(base.SerializedStore):
 
         """
         raise NotImplementedError("Not yet implemented for Bigtable.")
+
+    def apply_changelog_batch(
+        self,
+        batch: Iterable[EventT],
+        to_key: Callable[[Any], Any],
+        to_value: Callable[[Any], Any],
+    ) -> None:
+        """Write batch of changelog events to local RocksDB storage.
+
+        Arguments:
+            batch: Iterable of changelog events (:class:`faust.Event`)
+            to_key: A callable you can use to deserialize the key
+                of a changelog event.
+            to_value: A callable you can use to deserialize the value
+                of a changelog event.
+        """
+        tp_offsets: Dict[TP, int] = {}
+        row_mutations = []
+        for event in batch:
+            tp, offset = event.message.tp, event.message.offset
+            tp_offsets[tp] = (
+                offset if tp not in tp_offsets else max(offset, tp_offsets[tp])
+            )
+            msg = event.message
+
+            bt_key = self.get_bigtable_key(msg.key)
+            row = self.bt_table.direct_row(bt_key)
+            if msg.value is None:
+                row.delete()
+            else:
+                row.set_cell(
+                    self.column_family.column_family_id,
+                    self.column_name,
+                    msg.value,
+                )
+            row_mutations.append(row)
+        response = self.bt_table.mutate_rows(row_mutations)
+        for i, status in enumerate(response):
+            if status.code != 0:
+                self.log.error("Row number {} failed to write".format(i))
+
+        for tp, offset in tp_offsets.items():
+            self.set_persisted_offset(tp, offset)
 
 
 class BigTableStoreTest(BigTableStore):
@@ -265,15 +335,15 @@ class BigTableStoreTest(BigTableStore):
         return list(row_data.to_dict().values())[0][0].value
 
     def get_bigtable_key(self, key: bytes) -> bytes:
-        decoded_key = key.decode("utf-8")
-        return f"{self.table_name}_{decoded_key}".encode("utf-8")
+        decoded_key = key.decode()
+        return f"{self.table_name}_{decoded_key}".encode()
 
     def get_access_key(self, bt_key: bytes) -> bytes:
         prefix = f"{self.table_name}_"
-        bt_key_str = bt_key.decode("utf-8")
+        bt_key_str = bt_key.decode()
         if bt_key_str.startswith(prefix):
             bt_key_str = bt_key_str[len(prefix) :]
-        return bt_key_str.encode("utf-8")
+        return bt_key_str.encode()
 
     def _get(self, key: bytes) -> Optional[bytes]:
         filter = CellsColumnLimitFilter(1)
@@ -357,8 +427,8 @@ class BigTableStoreTest(BigTableStore):
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
             end_key_str = self.table_name[:-1] + chr(ord(self.table_name[-1]) + 1)
-            end_key = end_key_str.encode("utf-8")
-            start_key = self.table_name.encode("utf-8")
+            end_key = end_key_str.encode()
+            start_key = self.table_name.encode()
             for row in self.bt_table.read_rows(start_key=start_key, end_key=end_key):
                 yield (
                     self.get_access_key(row.row_key),
@@ -379,6 +449,9 @@ if __name__ == "__main__":
         BigTableStoreTest.INSTANCE_KEY: "faust-cache-test",
         BigTableStoreTest.TABLE_NAME_KEY: "sxfaust_cache",
     }
-    key = "aaaa_123_bbbb".encode("utf-8")
+    key = "aaaa_123_bbbb".encode()
     store = BigTableStoreTest(options)
+    bt_key = store.get_bigtable_key(key)
+    key_later = store.get_access_key(bt_key)
+    assert key == key_later
     pass
