@@ -266,7 +266,7 @@ class BigTableStoreTest(BigTableStore):
 
     def get_bigtable_key(self, key: bytes) -> bytes:
         decoded_key = key.decode("utf-8")
-        return bytes(f"{self.table_name}_{decoded_key}", encoding="utf-8")
+        return f"{self.table_name}_{decoded_key}".encode("utf-8")
 
     def get_access_key(self, bt_key: bytes) -> bytes:
         prefix = f"{self.table_name}_"
