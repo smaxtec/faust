@@ -269,9 +269,11 @@ class BigTableStoreTest(BigTableStore):
         return bytes(f"{self.table_name}_{decoded_key}", encoding="utf-8")
 
     def get_access_key(self, bt_key: bytes) -> bytes:
-        return bytes(
-            bt_key.decode("utf-8").removeprefix(f"{self.table_name}_"), encoding="utf-8"
-        )
+        prefix = f"{self.table_name}_"
+        bt_key_str = bt_key.decode("utf-8")
+        if bt_key_str.startswith(prefix):
+            bt_key_str = bt_key_str[len(prefix)]:]
+        return bt_key_str.encode("utf-8")
 
     def _get(self, key: bytes) -> Optional[bytes]:
         filter = CellsColumnLimitFilter(1)
