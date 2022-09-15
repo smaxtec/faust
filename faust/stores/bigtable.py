@@ -50,13 +50,13 @@ class BigTableStore(base.SerializedStore):
             )
 
             self.bt_table: Table = self.instance.table(self.table_name)
+            self.column_family_id = "FaustColumnFamily"
             if not self.bt_table.exists():
                 self.bt_table.create(
                     column_families={
-                        "FaustColumnFamily": column_family.MaxVersionsGCRule(1)
+                        self.column_family_id: column_family.MaxVersionsGCRule(1)
                     }
                 )
-            self.column_family_id = self.bt_table.column_family.column_family_id
             self.column_name = "DATA"
 
             table.use_partitioner = True
