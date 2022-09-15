@@ -61,7 +61,7 @@ class BigTableStore(base.SerializedStore):
 
             table.use_partitioner = True
         except Exception as ex:
-            self.log.error(f"Error configuring bigtable client {ex}")
+            logging.getLogger(__name__).error(f"Error configuring bigtable client {ex}")
             raise ex
         super().__init__(url, app, table, **kwargs)
 
