@@ -22,6 +22,7 @@ class BigTableStore(base.SerializedStore):
     bt_table: Table
     PROJECT_KEY = "project_key"
     INSTANCE_KEY = "instance_key"
+    BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
 
     def __init__(
         self,
@@ -31,6 +32,10 @@ class BigTableStore(base.SerializedStore):
         options: typing.Dict[str, Any],
         **kwargs: Any,
     ) -> None:
+        table_name_generator = options.get(
+            BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
+        )
+        self.table_name = table_name_generator(table)
         self.offset_key_prefix = "changelog_offset:".encode()
         self.table_name = table.changelog_topic.get_topic_name().replace(
             "-changelog", ""
