@@ -31,7 +31,7 @@ class BigTableStore(base.SerializedStore):
         options: typing.Dict[str, Any],
         **kwargs: Any,
     ) -> None:
-        self.offset_key_prefix = "offsets:".encode()
+        self.offset_key_prefix = "changelog_offset:".encode()
         self.table_name = table.changelog_topic.get_topic_name().replace(
             "-changelog", ""
         )
@@ -48,18 +48,12 @@ class BigTableStore(base.SerializedStore):
             )
 
             self.bt_table: Table = self.instance.table(self.table_name)
+            column_families = list(self.bt_table.list_column_families().keys())
+            if self.column_family not in column_families:
             if not self.bt_table.exists():
                 self.bt_table.create()
 
             column_family_id = "FaustColumnFamily"
-            self.column_family: column_family.ColumnFamily = (
-                self.bt_table.column_family(
-                    column_family_id,
-                    gc_rule=column_family.MaxVersionsGCRule(1),
-                )
-            )
-            column_families = list(self.bt_table.list_column_families().keys())
-            if self.column_family not in column_families:
                 self.column_family.create()
             self.column_name = "DATA"
 
