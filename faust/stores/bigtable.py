@@ -1,14 +1,13 @@
 """BigTable storage."""
 import logging
 import typing
-from typing import Any, Callable, Iterable, Iterator, Optional, Tuple, Union, List, Dict
+from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple, Union
 
 from google.cloud.bigtable import column_family
 from google.cloud.bigtable.client import Client
 from google.cloud.bigtable.instance import Instance
 from google.cloud.bigtable.row_filters import CellsColumnLimitFilter
 from google.cloud.bigtable.table import Table
-
 from yarl import URL
 
 from faust.stores import base
@@ -23,7 +22,6 @@ class BigTableStore(base.SerializedStore):
     bt_table: Table
     PROJECT_KEY = "project_key"
     INSTANCE_KEY = "instance_key"
-    TABLE_NAME_KEY = "table_name_key"
 
     def __init__(
         self,
@@ -33,26 +31,35 @@ class BigTableStore(base.SerializedStore):
         options: typing.Dict[str, Any],
         **kwargs: Any,
     ) -> None:
-        self.table_name = table.name
-        self.offset_key_prefix = f"{self.table_name}_offsets:".encode()
+        self.offset_key_prefix = "offsets:".encode()
         try:
             logging.getLogger(__name__).error(
                 f"BigTableStore: Making bigtablestore with {self.table_name=}"
             )
-            self.client = Client(
+            self.client: Client = Client(
                 options.get(BigTableStore.PROJECT_KEY),
+                admin=True,
             )
-            self.instance = self.client.instance(
+            self.instance: Instance = self.client.instance(
                 options.get(BigTableStore.INSTANCE_KEY)
             )
 
-            self.bt_table_name = options.get(BigTableStore.TABLE_NAME_KEY)
-            self.bt_table = self.instance.table(self.bt_table_name)
-            column_family_id = "FaustColumnFamily"
-            self.column_family = self.bt_table.column_family(
-                column_family_id,
-                gc_rule=column_family.MaxVersionsGCRule(1),
+            self.bt_table: Table = self.instance.table(
+                table.changelog_topic.get_topic_name()
             )
+            if not self.bt_table.exists():
+                self.bt_table.create()
+
+            column_family_id = "FaustColumnFamily"
+            self.column_family: column_family.ColumnFamily = (
+                self.bt_table.column_family(
+                    column_family_id,
+                    gc_rule=column_family.MaxVersionsGCRule(1),
+                )
+            )
+            column_families = list(self.bt_table.list_column_families().keys())
+            if self.column_family not in column_families:
+                self.column_family.create()
             self.column_name = "DATA"
 
             table.use_partitioner = True
@@ -64,29 +71,15 @@ class BigTableStore(base.SerializedStore):
     def bigtable_extract_row_data(self, row_data):
         return list(row_data.to_dict().values())[0][0].value
 
-    def get_bigtable_key(self, key: bytes) -> bytes:
-        decoded_key = key.decode()
-        return f"{self.table_name}_{decoded_key}".encode()
-
-    def get_access_key(self, bt_key: bytes) -> bytes:
-        prefix = f"{self.table_name}_"
-        bt_key_str = bt_key.decode()
-        if bt_key_str.startswith(prefix):
-            bt_key_str = bt_key_str[len(prefix) :]
-        return bt_key_str.encode()
-
     def _get(self, key: bytes) -> Optional[bytes]:
         filter = CellsColumnLimitFilter(1)
         try:
-            bt_key = self.get_bigtable_key(key)
             res = self.bt_table.read_row(
-                bt_key,
+                key,
                 filter_=filter,
             )
             if res is None:
-                self.log.warning(
-                    f"[Bigtable] KeyError in _get with {key=} (={bt_key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
-                )
+                self.log.warning(f"[Bigtable] KeyError in _get with {key=}")
                 raise KeyError(f"row {key} not found in bigtable {self.table=}")
             return self.bigtable_extract_row_data(res)
         except ValueError as ex:
@@ -100,9 +93,12 @@ class BigTableStore(base.SerializedStore):
 
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
-            bt_key = self.get_bigtable_key(key)
-            row = self.bt_table.direct_row(bt_key)
-            row.set_cell(self.column_family.column_family_id, self.column_name, value)
+            row = self.bt_table.direct_row(key)
+            row.set_cell(
+                self.column_family.column_family_id,
+                self.column_name,
+                value,
+            )
             row.commit()
         except Exception as ex:
             self.log.error(
@@ -113,8 +109,7 @@ class BigTableStore(base.SerializedStore):
 
     def _del(self, key: bytes) -> None:
         try:
-            bt_key = self.get_bigtable_key(key)
-            row = self.bt_table.direct_row(bt_key)
+            row = self.bt_table.direct_row(key)
             row.delete()
             row.commit()
         except Exception as ex:
@@ -149,12 +144,9 @@ class BigTableStore(base.SerializedStore):
 
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
-            end_key_str = self.table_name[:-1] + chr(ord(self.table_name[-1]) + 1)
-            end_key = end_key_str.encode()
-            start_key = self.table_name.encode()
-            for row in self.bt_table.read_rows(start_key=start_key, end_key=end_key):
+            for row in self.bt_table.read_rows():
                 yield (
-                    self.get_access_key(row.row_key),
+                    row.row_key,
                     self.bigtable_extract_row_data(row),
                 )
         except Exception as ex:
@@ -171,10 +163,11 @@ class BigTableStore(base.SerializedStore):
 
     def _contains(self, key: bytes) -> bool:
         try:
-            for k in self._iterkeys():
-                if k == key:
-                    return True
-            return False
+            res = self.bt_table.read_row(
+                key,
+                filter_=filter,
+            )
+            return res is not None
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _contains for table "
@@ -282,9 +275,7 @@ class BigTableStore(base.SerializedStore):
                 offset if tp not in tp_offsets else max(offset, tp_offsets[tp])
             )
             msg = event.message
-
-            bt_key = self.get_bigtable_key(msg.key)
-            row = self.bt_table.direct_row(bt_key)
+            row = self.bt_table.direct_row(msg.key)
             if msg.value is None:
                 row.delete()
             else:
@@ -298,153 +289,3 @@ class BigTableStore(base.SerializedStore):
             row_mutations,
             tp_offsets,
         )
-
-class BigTableStoreTest(BigTableStore):
-    def __init__(
-        self,
-        options: Optional[typing.Dict[str, Any]] = None,
-    ) -> None:
-        try:
-            self.table_name = "TESTMEPLS"
-            self.client = Client(options.get(BigTableStore.PROJECT_KEY))
-            self.instance = self.client.instance(
-                options.get(BigTableStore.INSTANCE_KEY)
-            )
-
-            self.bt_table_name = options.get(BigTableStore.TABLE_NAME_KEY)
-            self.bt_table = self.instance.table(self.bt_table_name)
-            column_family_id = "FaustColumnFamily"
-            self.column_family = self.bt_table.column_family(
-                column_family_id,
-                gc_rule=column_family.MaxVersionsGCRule(1),
-            )
-            self.column_name = "DATA"
-
-        except Exception as ex:
-            logging.getLogger(__name__).error(f"Error configuring bigtable client {ex}")
-            raise ex
-
-    def bigtable_extract_row_data(self, row_data):
-        return list(row_data.to_dict().values())[0][0].value
-
-    def get_bigtable_key(self, key: bytes) -> bytes:
-        decoded_key = key.decode()
-        return f"{self.table_name}_{decoded_key}".encode()
-
-    def get_access_key(self, bt_key: bytes) -> bytes:
-        prefix = f"{self.table_name}_"
-        bt_key_str = bt_key.decode()
-        if bt_key_str.startswith(prefix):
-            bt_key_str = bt_key_str[len(prefix) :]
-        return bt_key_str.encode()
-
-    def _get(self, key: bytes) -> Optional[bytes]:
-        filter = CellsColumnLimitFilter(1)
-        try:
-            bt_key = self.get_bigtable_key(key)
-            res = self.bt_table.read_row(
-                bt_key,
-                filter_=filter,
-            )
-            print(
-                f"[Bigtable]: _get with {key=} (={bt_key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
-            )
-            if res is None:
-                print(
-                    f"[Bigtable] KeyError in _get with {key=} (={bt_key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
-                )
-                raise KeyError(f"row {key} not found in bigtable {self.table=}")
-            return self.bigtable_extract_row_data(res)
-        except ValueError as ex:
-            print(f"key not found {key} exception {ex}")
-            raise KeyError(f"key not found {key}")
-        except Exception as ex:
-            print(f"Error in get for table {self.table_name} exception {ex} key {key}")
-            raise ex
-
-    def _set(self, key: bytes, value: Optional[bytes]) -> None:
-        try:
-            bt_key = self.get_bigtable_key(key)
-            row = self.bt_table.direct_row(bt_key)
-            row.set_cell(self.column_family.column_family_id, self.column_name, value)
-            row.commit()
-            print(
-                f"[Bigtable]: _set with {key=} (={bt_key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
-            )
-        except Exception as ex:
-            self.log.error(
-                f"FaustBigtableException Error in set for "
-                f"table {self.table_name} exception {ex} key {key}"
-            )
-            raise ex
-
-    def _del(self, key: bytes) -> None:
-        try:
-            bt_key = self.get_bigtable_key(key)
-            row = self.bt_table.direct_row(bt_key)
-            print(
-                f"[Bigtable]: _del with {key=} (={bt_key.decode('utf-8')}) -> {bt_key=} (={bt_key.decode('utf-8')})"
-            )
-            row.delete()
-            row.commit()
-        except Exception as ex:
-            print(
-                f"FaustBigtableException Error in delete for "
-                f"table {self.table_name} exception {ex} key {key}"
-            )
-            raise ex
-
-    def _iterkeys(self) -> Iterator[bytes]:
-        try:
-            for row in self._iteritems():
-                yield row[0]
-        except Exception as ex:
-            print(
-                f"FaustBigtableException Error in _iterkeys "
-                f"for table {self.table_name} exception {ex}"
-            )
-            raise ex
-
-    def _itervalues(self) -> Iterator[bytes]:
-        try:
-            for row in self._iteritems():
-                yield row[1]
-        except Exception as ex:
-            print(
-                f"FaustBigtableException Error "
-                f"in _itervalues for table {self.table_name}"
-                f" exception {ex}"
-            )
-            raise ex
-
-    def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
-        try:
-            end_key_str = self.table_name[:-1] + chr(ord(self.table_name[-1]) + 1)
-            end_key = end_key_str.encode()
-            start_key = self.table_name.encode()
-            for row in self.bt_table.read_rows(start_key=start_key, end_key=end_key):
-                yield (
-                    self.get_access_key(row.row_key),
-                    self.bigtable_extract_row_data(row),
-                )
-        except Exception as ex:
-            print(
-                f"FaustBigtableException Error "
-                f"in _iteritems for table {self.table_name}"
-                f" exception {ex}"
-            )
-            raise ex
-
-
-if __name__ == "__main__":
-    options = {
-        BigTableStoreTest.PROJECT_KEY: "smaxtec-system",
-        BigTableStoreTest.INSTANCE_KEY: "faust-cache-test",
-        BigTableStoreTest.TABLE_NAME_KEY: "sxfaust_cache",
-    }
-    key = "aaaa_123_bbbb".encode()
-    store = BigTableStoreTest(options)
-    bt_key = store.get_bigtable_key(key)
-    key_later = store.get_access_key(bt_key)
-    assert key == key_later
-    pass
