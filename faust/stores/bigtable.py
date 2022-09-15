@@ -37,9 +37,6 @@ class BigTableStore(base.SerializedStore):
         )
         self.table_name = table_name_generator(table)
         self.offset_key_prefix = "changelog_offset:".encode()
-        self.table_name = table.changelog_topic.get_topic_name().replace(
-            "-changelog", ""
-        )
         try:
             logging.getLogger(__name__).error(
                 f"BigTableStore: Making bigtablestore with {self.table_name=}"
