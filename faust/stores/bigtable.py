@@ -277,7 +277,7 @@ class BigTableStore(base.SerializedStore):
                 row.delete()
             else:
                 row.set_cell(
-                    self.column_family.column_family_id,
+                    self.column_family_id,
                     self.column_name,
                     msg.value,
                 )
