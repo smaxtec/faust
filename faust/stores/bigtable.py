@@ -12,6 +12,7 @@ from yarl import URL
 
 from faust.stores import base
 from faust.types import TP, AppT, CollectionT, EventT
+from faust.types.tables import KT
 
 
 class BigTableStore(base.SerializedStore):
@@ -172,6 +173,10 @@ class BigTableStore(base.SerializedStore):
                 f"{ex} key {key}"
             )
             raise ex
+
+    def __iter__(self) -> Iterator[KT]:
+        for k in self._iterkeys():
+            yield k.decode()
 
     def _clear(self) -> None:
         """This is typically used to clear data.
