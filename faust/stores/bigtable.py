@@ -51,6 +51,7 @@ class BigTableStore(base.SerializedStore):
 
             self.bt_table: Table = self.instance.table(self.table_name)
             self.column_family_id = "FaustColumnFamily"
+            self.row_filter = CellsColumnLimitFilter(1)
             if not self.bt_table.exists():
                 self.bt_table.create(
                     column_families={
@@ -69,11 +70,10 @@ class BigTableStore(base.SerializedStore):
         return list(row_data.to_dict().values())[0][0].value
 
     def _get(self, key: bytes) -> Optional[bytes]:
-        filter = CellsColumnLimitFilter(1)
         try:
             res = self.bt_table.read_row(
                 key,
-                filter_=filter,
+                filter_=self.row_filter
             )
             if res is None:
                 self.log.warning(f"[Bigtable] KeyError in _get with {key=}")
@@ -162,7 +162,7 @@ class BigTableStore(base.SerializedStore):
         try:
             res = self.bt_table.read_row(
                 key,
-                filter_=filter,
+                filter_=self.row_filter
             )
             return res is not None
         except Exception as ex:
