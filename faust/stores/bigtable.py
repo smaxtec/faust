@@ -36,7 +36,6 @@ class BigTableStore(base.SerializedStore):
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
         )
         self.table_name = table_name_generator(table)
-        self.offset_key_prefix = "changelog_offset:".encode()
         try:
             logging.getLogger(__name__).error(
                 f"BigTableStore: Making bigtablestore with {self.table_name=}"
@@ -65,6 +64,7 @@ class BigTableStore(base.SerializedStore):
             logging.getLogger(__name__).error(f"Error configuring bigtable client {ex}")
             raise ex
         super().__init__(url, app, table, **kwargs)
+        self.offset_key_prefix = "changelog_offset:"
 
     def bigtable_extract_row_data(self, row_data):
         return list(row_data.to_dict().values())[0][0].value
@@ -184,13 +184,13 @@ class BigTableStore(base.SerializedStore):
         ...
 
     def get_offset_key(self, tp: TP):
-        return self.offset_key_prefix + str(tp.partition).encode()
+        return self._encode_key(self.offset_key_prefix + str(tp.partition))
 
     def persisted_offset(self, tp: TP) -> Optional[int]:
         """Return the last persisted offset.
         See :meth:`set_persisted_offset`.
         """
-        offset_key = self.offset_key_prefix + str(tp.partition).encode()
+        offset_key = self.get_offset_key(tp)
         try:
             offset = self._get(offset_key)
         except KeyError:
