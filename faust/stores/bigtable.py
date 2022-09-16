@@ -12,7 +12,6 @@ from yarl import URL
 
 from faust.stores import base
 from faust.types import TP, AppT, CollectionT, EventT
-from faust.types.tables import KT
 
 
 class BigTableStore(base.SerializedStore):
@@ -72,10 +71,7 @@ class BigTableStore(base.SerializedStore):
 
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
-            res = self.bt_table.read_row(
-                key,
-                filter_=self.row_filter
-            )
+            res = self.bt_table.read_row(key, filter_=self.row_filter)
             if res is None:
                 self.log.warning(f"[Bigtable] KeyError in _get with {key=}")
                 raise KeyError(f"row {key} not found in bigtable {self.table=}")
@@ -161,10 +157,7 @@ class BigTableStore(base.SerializedStore):
 
     def _contains(self, key: bytes) -> bool:
         try:
-            res = self.bt_table.read_row(
-                key,
-                filter_=self.row_filter
-            )
+            res = self.bt_table.read_row(key, filter_=self.row_filter)
             return res is not None
         except Exception as ex:
             self.log.error(
@@ -173,10 +166,6 @@ class BigTableStore(base.SerializedStore):
                 f"{ex} key {key}"
             )
             raise ex
-
-    def __iter__(self) -> Iterator[KT]:
-        for k in self._iterkeys():
-            yield k.decode()
 
     def _clear(self) -> None:
         """This is typically used to clear data.
