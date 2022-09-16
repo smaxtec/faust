@@ -49,8 +49,16 @@ class BigTableStore(base.SerializedStore):
             )
 
             self.bt_table: Table = self.instance.table(self.table_name)
+            self.bt_offset_table: Table = self.instance.tale("offsets")
+
             self.column_family_id = "FaustColumnFamily"
             self.row_filter = CellsColumnLimitFilter(1)
+            if not self.bt_offset_table.exists():
+                self.bt_offset_table.create(
+                    column_families={
+                        self.column_family_id: column_family.MaxVersionsGCRule(1)
+                    }
+                )
             if not self.bt_table.exists():
                 self.bt_table.create(
                     column_families={
@@ -64,7 +72,7 @@ class BigTableStore(base.SerializedStore):
             logging.getLogger(__name__).error(f"Error configuring bigtable client {ex}")
             raise ex
         super().__init__(url, app, table, **kwargs)
-        self.offset_key_prefix = "changelog_offset:"
+        self.offset_key_prefix = f"{self.table_name}_"
 
     def bigtable_extract_row_data(self, row_data):
         return list(row_data.to_dict().values())[0][0].value
@@ -184,19 +192,17 @@ class BigTableStore(base.SerializedStore):
         ...
 
     def get_offset_key(self, tp: TP):
-        return self._encode_key(self.offset_key_prefix + str(tp.partition))
+        return (self.offset_key_prefix + str(tp.partition))
 
     def persisted_offset(self, tp: TP) -> Optional[int]:
         """Return the last persisted offset.
         See :meth:`set_persisted_offset`.
         """
         offset_key = self.get_offset_key(tp)
-        try:
-            offset = self._get(offset_key)
-        except KeyError:
-            offset = None
-        if offset is not None:
-            return int(offset)
+        row_res = self.bt_offset_table.read_row(offset_key, filter_=self.row_filter)
+        if row_res is not None:
+            offset = int(self.bigtable_extract_row_data(row_res))
+            return offset
         return None
 
     def set_persisted_offset(self, tp: TP, offset: int) -> None:
@@ -208,7 +214,13 @@ class BigTableStore(base.SerializedStore):
         we were not an active replica.
         """
         offset_key = self.get_offset_key(tp)
-        self._set(offset_key, str(offset).encode())
+        row = self.bt_offset_table.direct_row(offset_key)
+        row.set_cell(
+            self.column_family_id,
+            self.column_name,
+            str(offset).encode(),
+        )
+        row.commit()
 
     async def backup_partition(
         self,
