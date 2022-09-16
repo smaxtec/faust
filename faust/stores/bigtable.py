@@ -49,7 +49,7 @@ class BigTableStore(base.SerializedStore):
             )
 
             self.bt_table: Table = self.instance.table(self.table_name)
-            self.bt_offset_table: Table = self.instance.tale("offsets")
+            self.bt_offset_table: Table = self.instance.table("offsets")
 
             self.column_family_id = "FaustColumnFamily"
             self.row_filter = CellsColumnLimitFilter(1)
