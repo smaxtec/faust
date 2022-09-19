@@ -2,6 +2,7 @@
 import logging
 import typing
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple, Union
+from faust.streams import current_event
 
 from google.cloud.bigtable import column_family
 from google.cloud.bigtable.client import Client
@@ -14,6 +15,12 @@ from faust.stores import base
 from faust.types import TP, AppT, CollectionT, EventT
 
 
+def get_current_partition():
+    event = current_event()
+    assert event is not None
+    return event.message.partition
+
+
 class BigTableStore(base.SerializedStore):
     """Bigtable table storage."""
 
@@ -23,6 +30,7 @@ class BigTableStore(base.SerializedStore):
     PROJECT_KEY = "project_key"
     INSTANCE_KEY = "instance_key"
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
+    BT_READ_ROWS_BORDERS_KEY = "bt_read_rows_borders_key"
 
     def __init__(
         self,
@@ -35,7 +43,11 @@ class BigTableStore(base.SerializedStore):
         table_name_generator = options.get(
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
         )
+        self.bt_start_key, self.bt_end_key = options.get(
+            BigTableStore.BT_READ_ROWS_BORDERS_KEY, [None, None]
+        )
         self.table_name = table_name_generator(table)
+        self.table_name += f":{get_current_partition()}"
         try:
             logging.getLogger(__name__).error(
                 f"BigTableStore: Making bigtablestore with {self.table_name=}"
@@ -49,16 +61,8 @@ class BigTableStore(base.SerializedStore):
             )
 
             self.bt_table: Table = self.instance.table(self.table_name)
-            self.bt_offset_table: Table = self.instance.table("offsets")
 
             self.column_family_id = "FaustColumnFamily"
-            self.row_filter = CellsColumnLimitFilter(1)
-            if not self.bt_offset_table.exists():
-                self.bt_offset_table.create(
-                    column_families={
-                        self.column_family_id: column_family.MaxVersionsGCRule(1)
-                    }
-                )
             if not self.bt_table.exists():
                 self.bt_table.create(
                     column_families={
@@ -146,7 +150,10 @@ class BigTableStore(base.SerializedStore):
 
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
-            for row in self.bt_table.read_rows():
+            for row in self.bt_table.read_rows(
+                start_key=self.bt_start_key,
+                end_key=self.bt_end_key,
+            ):
                 yield (
                     row.row_key,
                     self.bigtable_extract_row_data(row),
@@ -192,14 +199,14 @@ class BigTableStore(base.SerializedStore):
         ...
 
     def get_offset_key(self, tp: TP):
-        return (self.offset_key_prefix + str(tp.partition))
+        return self.offset_key_prefix + str(tp.partition)
 
     def persisted_offset(self, tp: TP) -> Optional[int]:
         """Return the last persisted offset.
         See :meth:`set_persisted_offset`.
         """
         offset_key = self.get_offset_key(tp)
-        row_res = self.bt_offset_table.read_row(offset_key, filter_=self.row_filter)
+        row_res = self.bt_table.read_row(offset_key, filter_=self.row_filter)
         if row_res is not None:
             offset = int(self.bigtable_extract_row_data(row_res))
             return offset
@@ -214,7 +221,7 @@ class BigTableStore(base.SerializedStore):
         we were not an active replica.
         """
         offset_key = self.get_offset_key(tp)
-        row = self.bt_offset_table.direct_row(offset_key)
+        row = self.bt_table.direct_row(offset_key)
         row.set_cell(
             self.column_family_id,
             self.column_name,
