@@ -227,7 +227,7 @@ class BigTableStore(base.SerializedStore):
     def set_persisted_offset(self, tp: TP, offset: int) -> None:
         """Set the last persisted offset for this table.
 
-        This will remember the last offset that we wrote to RocksDB,
+        This will remember the last offset that we wrote to BigTableStore,
         so that on rebalance/recovery we can seek past this point
         to only read the events that occurred recently while
         we were not an active replica.
@@ -280,7 +280,7 @@ class BigTableStore(base.SerializedStore):
         to_key: Callable[[Any], Any],
         to_value: Callable[[Any], Any],
     ) -> None:
-        """Write batch of changelog events to local RocksDB storage.
+        """Write batch of changelog events to local BigTableStore storage.
 
         Arguments:
             batch: Iterable of changelog events (:class:`faust.Event`)
