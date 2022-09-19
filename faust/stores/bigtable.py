@@ -43,11 +43,11 @@ class BigTableStore(base.SerializedStore):
         table_name_generator = options.get(
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
         )
-        self.bt_start_key, self.bt_end_key = options.get(
-            BigTableStore.BT_READ_ROWS_BORDERS_KEY, [None, None]
-        )
         self.table_name = table_name_generator(table)
-        self.table_name += f":{get_current_partition()}"
+
+        self.bt_start_key, self.bt_end_key = options.get(
+            BigTableStore.BT_READ_ROWS_BORDERS_KEY, [b"", b""]
+        )
         try:
             logging.getLogger(__name__).error(
                 f"BigTableStore: Making bigtablestore with {self.table_name=}"
@@ -61,7 +61,7 @@ class BigTableStore(base.SerializedStore):
             )
 
             self.bt_table: Table = self.instance.table(self.table_name)
-
+            self.row_filter = CellsColumnLimitFilter(1)
             self.column_family_id = "FaustColumnFamily"
             if not self.bt_table.exists():
                 self.bt_table.create(
@@ -83,6 +83,7 @@ class BigTableStore(base.SerializedStore):
 
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
+
             res = self.bt_table.read_row(key, filter_=self.row_filter)
             if res is None:
                 self.log.warning(f"[Bigtable] KeyError in _get with {key=}")
@@ -99,6 +100,8 @@ class BigTableStore(base.SerializedStore):
 
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
+            partition_prefix = get_current_partition().to_bytes(1, "little")
+            key = b"".join([partition_prefix, key])
             row = self.bt_table.direct_row(key)
             row.set_cell(
                 self.column_family_id,
@@ -115,6 +118,8 @@ class BigTableStore(base.SerializedStore):
 
     def _del(self, key: bytes) -> None:
         try:
+            partition_prefix = get_current_partition().to_bytes(1, "little")
+            key = b"".join([partition_prefix, key])
             row = self.bt_table.direct_row(key)
             row.delete()
             row.commit()
@@ -150,12 +155,17 @@ class BigTableStore(base.SerializedStore):
 
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
+            partition_prefix = get_current_partition().to_bytes(1, "little")
+            start_key = b"".join([partition_prefix, self.bt_start_key])
+            end_key = b"".join([partition_prefix, self.bt_end_key])
+            end_key = partition_prefix + self.bt_end_key
+
             for row in self.bt_table.read_rows(
-                start_key=self.bt_start_key,
-                end_key=self.bt_end_key,
+                start_key=start_key,
+                end_key=end_key,
             ):
                 yield (
-                    row.row_key,
+                    row.row_key.replace(partition_prefix, b""),
                     self.bigtable_extract_row_data(row),
                 )
         except Exception as ex:
@@ -172,6 +182,8 @@ class BigTableStore(base.SerializedStore):
 
     def _contains(self, key: bytes) -> bool:
         try:
+            partition_prefix = get_current_partition().to_bytes(1, "little")
+            key = partition_prefix + key
             res = self.bt_table.read_row(key, filter_=self.row_filter)
             return res is not None
         except Exception as ex:
@@ -285,7 +297,9 @@ class BigTableStore(base.SerializedStore):
                 offset if tp not in tp_offsets else max(offset, tp_offsets[tp])
             )
             msg = event.message
-            row = self.bt_table.direct_row(msg.key)
+            partition_bytes: bytes = tp.partition.to_bytes(1, "little")
+            offset_key = b"".join([partition_bytes, msg.key])
+            row = self.bt_table.direct_row(offset_key)
             if msg.value is None:
                 row.delete()
             else:
