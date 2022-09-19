@@ -2,6 +2,7 @@
 import logging
 import typing
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple, Union
+
 from faust.streams import current_event
 
 from google.cloud.bigtable import column_family
@@ -83,7 +84,8 @@ class BigTableStore(base.SerializedStore):
 
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
-
+            partition_prefix = get_current_partition().to_bytes(1, "little")
+            key = b"".join([partition_prefix, key])
             res = self.bt_table.read_row(key, filter_=self.row_filter)
             if res is None:
                 self.log.warning(f"[Bigtable] KeyError in _get with {key=}")
@@ -232,14 +234,21 @@ class BigTableStore(base.SerializedStore):
         to only read the events that occurred recently while
         we were not an active replica.
         """
-        offset_key = self.get_offset_key(tp)
-        row = self.bt_table.direct_row(offset_key)
-        row.set_cell(
-            self.column_family_id,
-            self.column_name,
-            str(offset).encode(),
-        )
-        row.commit()
+        try:
+            offset_key = self.get_offset_key(tp)
+            row = self.bt_table.direct_row(offset_key)
+            row.set_cell(
+                self.column_family_id,
+                self.column_name,
+                str(offset).encode(),
+            )
+            row.commit()
+        except Exception as e:
+            self.log.error(
+                f"Failed to commit offset for {self.table.name}"
+                " -> will crash faust app!"
+            )
+            self.app._crash(e)
 
     async def backup_partition(
         self,
