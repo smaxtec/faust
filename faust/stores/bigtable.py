@@ -66,6 +66,7 @@ class BigTableStore(base.SerializedStore):
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error configuring bigtable client {ex}")
             raise ex
+        logging.getLogger(__name__).error(f"Kwargs for super are: {kwargs}")
         super().__init__(url, app, table, **kwargs)
 
     def _bigtable_setup_table(self):
@@ -292,8 +293,9 @@ class BigTableStore(base.SerializedStore):
                 offset if tp not in tp_offsets else max(offset, tp_offsets[tp])
             )
             msg = event.message
+            key: bytes = msg.key
             partition_bytes = tp.partition.to_bytes(1, "little")
-            offset_key = b"".join([partition_bytes, msg.key])
+            offset_key = b"".join([partition_bytes, key])
             row = self.bt_table.direct_row(offset_key)
             if msg.value is None:
                 row.delete()
