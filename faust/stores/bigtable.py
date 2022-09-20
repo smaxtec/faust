@@ -81,7 +81,8 @@ class BigTableStore(base.SerializedStore):
             )
         else:
             logging.getLogger(__name__).info(
-                "BigTableStore: Using existing" f"bigtablestore with {self.bt_table_name=}"
+                "BigTableStore: Using existing"
+                f"bigtablestore with {self.bt_table_name=}"
             )
 
     def _bigtable_exrtact_row_data(self, row_data):
