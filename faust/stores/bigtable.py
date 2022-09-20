@@ -60,11 +60,11 @@ class BigTableStore(base.SerializedStore):
             )
             self.row_filter = CellsColumnLimitFilter(1)
             self.column_name = "DATA"
-            self = self._bigtable_setup_table()
+            self._bigtable_setup_table()
 
             table.use_partitioner = True
         except Exception as ex:
-            logger.getLogger(__name__).error(f"Error in Bigtable init {ex}")
+            logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
         super().__init__(url, app, table, **kwargs)
 
