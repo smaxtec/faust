@@ -45,7 +45,6 @@ class BigTableStore(base.SerializedStore):
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
         )
         self.bt_table_name = table_name_generator(table)
-        self.offset_key_prefix = f"{self.bt_table_name}_"
 
         self.bt_start_key, self.bt_end_key = options.get(
             BigTableStore.READ_ROWS_BORDERS_KEY, [b"", b""]
@@ -66,6 +65,7 @@ class BigTableStore(base.SerializedStore):
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
+        self.offset_key_prefix = f"offset_partitiion:"
         super().__init__(url, app, table, **kwargs)
 
     def _bigtable_setup_table(self):
