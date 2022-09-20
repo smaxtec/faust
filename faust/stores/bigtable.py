@@ -44,8 +44,8 @@ class BigTableStore(base.SerializedStore):
         table_name_generator = options.get(
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
         )
-        self.table_name = table_name_generator(table)
-        self.offset_key_prefix = f"{self.table_name}_"
+        self.bt_table_name = table_name_generator(table)
+        self.offset_key_prefix = f"{self.bt_table_name}_"
 
         self.bt_start_key, self.bt_end_key = options.get(
             BigTableStore.READ_ROWS_BORDERS_KEY, [b"", b""]
@@ -64,16 +64,15 @@ class BigTableStore(base.SerializedStore):
 
             table.use_partitioner = True
         except Exception as ex:
-            logging.getLogger(__name__).error(f"Error configuring bigtable client {ex}")
             raise ex
         super().__init__(url, app, table, **kwargs)
 
     def _bigtable_setup_table(self):
-        self.bt_table: Table = self.instance.table(self.table_name)
+        self.bt_table: Table = self.instance.table(self.bt_table_name)
         self.column_family_id = "FaustColumnFamily"
         if not self.bt_table.exists():
             logging.getLogger(__name__).info(
-                f"BigTableStore: Making new bigtablestore with {self.table_name=}"
+                f"BigTableStore: Making new bigtablestore with {self.bt_table_name=}"
             )
             self.bt_table.create(
                 column_families={
@@ -82,7 +81,7 @@ class BigTableStore(base.SerializedStore):
             )
         else:
             logging.getLogger(__name__).info(
-                "BigTableStore: Using existing" f"bigtablestore with {self.table_name=}"
+                "BigTableStore: Using existing" f"bigtablestore with {self.bt_table_name=}"
             )
 
     def _bigtable_exrtact_row_data(self, row_data):
