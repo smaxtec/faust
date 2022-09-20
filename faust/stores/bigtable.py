@@ -64,6 +64,7 @@ class BigTableStore(base.SerializedStore):
 
             table.use_partitioner = True
         except Exception as ex:
+            logger.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
         super().__init__(url, app, table, **kwargs)
 
