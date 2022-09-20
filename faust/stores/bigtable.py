@@ -66,7 +66,6 @@ class BigTableStore(base.SerializedStore):
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error configuring bigtable client {ex}")
             raise ex
-        logging.getLogger(__name__).error(f"Kwargs for super are: {kwargs}")
         super().__init__(url, app, table, **kwargs)
 
     def _bigtable_setup_table(self):
