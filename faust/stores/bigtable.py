@@ -1,5 +1,6 @@
 """BigTable storage."""
 import logging
+from os import wait
 import typing
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple, Union
 
@@ -95,7 +96,7 @@ class BigTableStore(base.SerializedStore):
         return list(row_data.to_dict().values())[0][0].value
 
     def _get_key_with_partition(self, key: bytes, partition: Optional[int] = None):
-        if partition:
+        if partition is not None:
             partition_prefix = partition.to_bytes(1, "little")
         else:
             partition_prefix = get_current_partition().to_bytes(1, "little")
