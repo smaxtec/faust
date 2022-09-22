@@ -1,6 +1,5 @@
 """BigTable storage."""
 import logging
-from os import wait
 import typing
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple, Union
 
@@ -119,12 +118,10 @@ class BigTableStore(base.SerializedStore):
         row.commit()
 
     def _partitions_for_key(self, key: bytes) -> Iterable[int]:
-        # Returns cached db if key is in index, otherwise all dbs
-        # for linear search.
         try:
             return [self._key_index[key]]
         except KeyError:
-            return range(self.app.conf.topic_partitions)
+            return [x for x in range(self.app.conf.topic_partitions)]
 
     def _bigtbale_del(self, key: bytes):
         row = self.bt_table.direct_row(key)
@@ -155,10 +152,9 @@ class BigTableStore(base.SerializedStore):
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
             partition = get_current_partition()
+            key_with_partition = self._get_key_with_partition(key, partition=partition)
+            self._bigtbale_set(key_with_partition, value)
             self._key_index[key] = partition
-            key = self._get_key_with_partition(key, partition=partition)
-
-            self._bigtbale_set(key, value)
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in set for "
