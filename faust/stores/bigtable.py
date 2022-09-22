@@ -241,7 +241,6 @@ class BigTableStore(base.SerializedStore):
             partition_from_message = (
                 event is not None
                 and not self.table.is_global
-                and not self.table.use_partitioner
             )
             if partition_from_message:
                 key = self._get_key_with_partition(key, partition=event.message.partition)
@@ -250,6 +249,10 @@ class BigTableStore(base.SerializedStore):
                     return True
             else:
                 for partition in self._partitions_for_key(key):
+                    key = self._get_key_with_partition(key, partition=partition)
+                    res = self.bt_table.read_row(key, filter_=self.row_filter)
+                    if res is not None:
+                        return True
             return False
         except Exception as ex:
             self.log.error(
