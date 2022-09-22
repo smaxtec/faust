@@ -218,7 +218,7 @@ class BigTableStore(base.SerializedStore):
                     end_key=end_key,
                 ):
                     yield (
-                        row.row_key.replace(partition_prefix, b""),
+                        row.row_key[1:],
                         self._bigtable_exrtact_row_data(row),
                     )
         except Exception as ex:
