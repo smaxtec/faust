@@ -164,8 +164,8 @@ class BigTableStore(base.SerializedStore):
     def _del(self, key: bytes) -> None:
         try:
             for partition in self._partitions_for_key(key):
-                key = self._get_key_with_partition(key, partition=partition)
-                self._bigtbale_del(key)
+                key_with_partition = self._get_key_with_partition(key, partition=partition)
+                self._bigtbale_del(key_with_partition)
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in delete for "
