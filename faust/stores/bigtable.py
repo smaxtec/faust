@@ -70,7 +70,7 @@ class BigTableStore(base.SerializedStore):
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
-        self.offset_key_prefix = f"offset_partitiion:"
+        self.offset_key_prefix = "offset_partitiion:"
         super().__init__(url, app, table, **kwargs)
 
     def _bigtable_setup_table(self):
@@ -105,8 +105,7 @@ class BigTableStore(base.SerializedStore):
     def _bigtbale_get(self, key: bytes):
         res = self.bt_table.read_row(key, filter_=self.row_filter)
         if res is None:
-            self.log.warning(f"[Bigtable] KeyError in _get with {key=}")
-            raise KeyError(f"row {key} not found in bigtable {self.table=}")
+            return None
         return self._bigtable_exrtact_row_data(res)
 
     def _bigtbale_set(self, key: bytes, value: Optional[bytes]):
@@ -122,7 +121,7 @@ class BigTableStore(base.SerializedStore):
         # Returns cached db if key is in index, otherwise all dbs
         # for linear search.
         try:
-            return self._key_index[key]
+            return [self._key_index[key]]
         except KeyError:
             return range(self.table.changelog_topic.partitions)
 
@@ -133,11 +132,17 @@ class BigTableStore(base.SerializedStore):
 
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
-            key = self._get_key_with_partition(key)
-            return self._bigtbale_get(key)
-        except ValueError as ex:
-            self.log.debug(f"key not found {key} exception {ex}")
-            raise KeyError(f"key not found {key}")
+            for partition in self._partitions_for_key(key):
+                key = self._get_key_with_partition(key, partition=partition)
+                key_with_partition = self._get_key_with_partition(key)
+                value = self._bigtbale_get(key_with_partition)
+                if value is not None:
+                    self._key_index[key] = partition
+                    return value
+            raise KeyError
+        except KeyError as ke:
+            self.log.error(f"KeyError in get for table {self.table_name} for {key=}")
+            raise ke
         except Exception as ex:
             self.log.error(
                 f"Error in get for table {self.table_name} exception {ex} key {key}"
@@ -193,20 +198,31 @@ class BigTableStore(base.SerializedStore):
             )
             raise ex
 
+    def _active_partitions(self) -> Iterator[int]:
+        actives = self.app.assignor.assigned_actives()
+        topic = self.table.changelog_topic_name
+        for partition in range(self.table.partitions):
+            tp = TP(topic=topic, partition=partition)
+            # for global tables, keys from all
+            # partitions are available.
+            if tp in actives or self.table.is_global:
+                yield partition
+
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
-            partition_prefix = get_current_partition().to_bytes(1, "little")
-            start_key = b"".join([partition_prefix, self.bt_start_key])
-            end_key = b"".join([partition_prefix, self.bt_end_key])
+            for partition in self._active_partitions():
+                partition_prefix = partition.to_bytes(1, "little")
+                start_key = b"".join([partition_prefix, self.bt_start_key])
+                end_key = b"".join([partition_prefix, self.bt_end_key])
 
-            for row in self.bt_table.read_rows(
-                start_key=start_key,
-                end_key=end_key,
-            ):
-                yield (
-                    row.row_key.replace(partition_prefix, b""),
-                    self._bigtable_exrtact_row_data(row),
-                )
+                for row in self.bt_table.read_rows(
+                    start_key=start_key,
+                    end_key=end_key,
+                ):
+                    yield (
+                        row.row_key.replace(partition_prefix, b""),
+                        self._bigtable_exrtact_row_data(row),
+                    )
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error "
