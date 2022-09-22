@@ -123,7 +123,7 @@ class BigTableStore(base.SerializedStore):
         try:
             return [self._key_index[key]]
         except KeyError:
-            return range(self.table.changelog_topic.partitions)
+            return range(self.app.conf.topic_partitions)
 
     def _bigtbale_del(self, key: bytes):
         row = self.bt_table.direct_row(key)
@@ -201,7 +201,7 @@ class BigTableStore(base.SerializedStore):
     def _active_partitions(self) -> Iterator[int]:
         actives = self.app.assignor.assigned_actives()
         topic = self.table.changelog_topic_name
-        for partition in range(self.table.partitions):
+        for partition in range(self.app.conf.topic_partitions):
             tp = TP(topic=topic, partition=partition)
             # for global tables, keys from all
             # partitions are available.
@@ -237,11 +237,19 @@ class BigTableStore(base.SerializedStore):
 
     def _contains(self, key: bytes) -> bool:
         try:
-            for partition in self._partitions_for_key(key):
-                key = self._get_key_with_partition(key, partition=partition)
+            event = current_event()
+            partition_from_message = (
+                event is not None
+                and not self.table.is_global
+                and not self.table.use_partitioner
+            )
+            if partition_from_message:
+                key = self._get_key_with_partition(key, partition=event.message.partition)
                 res = self.bt_table.read_row(key, filter_=self.row_filter)
                 if res is not None:
                     return True
+            else:
+                for partition in self._partitions_for_key(key):
             return False
         except Exception as ex:
             self.log.error(
