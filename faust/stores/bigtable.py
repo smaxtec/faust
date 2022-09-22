@@ -3,6 +3,8 @@ import logging
 import typing
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple, Union
 
+from mode.utils.collections import LRUCache
+
 from faust.streams import current_event
 
 from google.cloud.bigtable import column_family
@@ -28,6 +30,8 @@ class BigTableStore(base.SerializedStore):
     client: Client
     instance: Instance
     bt_table: Table
+
+    _key_index: LRUCache[bytes, int]
     PROJECT_KEY = "project_key"
     INSTANCE_KEY = "instance_key"
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
@@ -41,6 +45,7 @@ class BigTableStore(base.SerializedStore):
         options: typing.Dict[str, Any],
         **kwargs: Any,
     ) -> None:
+        self._key_index = LRUCache(limit=app.conf.table_key_index_size)
         table_name_generator = options.get(
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
         )
@@ -89,8 +94,11 @@ class BigTableStore(base.SerializedStore):
     def _bigtable_exrtact_row_data(self, row_data):
         return list(row_data.to_dict().values())[0][0].value
 
-    def _get_key_with_partition(self, key: bytes):
-        partition_prefix = get_current_partition().to_bytes(1, "little")
+    def _get_key_with_partition(self, key: bytes, partition: Optional[int] = None):
+        if partition:
+            partition_prefix = partition.to_bytes(1, "little")
+        else:
+            partition_prefix = get_current_partition().to_bytes(1, "little")
         key = b"".join([partition_prefix, key])
         return key
 
@@ -109,6 +117,14 @@ class BigTableStore(base.SerializedStore):
             value,
         )
         row.commit()
+
+    def _partitions_for_key(self, key: bytes) -> Iterable[int]:
+        # Returns cached db if key is in index, otherwise all dbs
+        # for linear search.
+        try:
+            return self._key_index[key]
+        except KeyError:
+            return range(self.table.changelog_topic.partitions)
 
     def _bigtbale_del(self, key: bytes):
         row = self.bt_table.direct_row(key)
@@ -130,7 +146,10 @@ class BigTableStore(base.SerializedStore):
 
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
-            key = self._get_key_with_partition(key)
+            partition = get_current_partition()
+            self._key_index[key] = partition
+            key = self._get_key_with_partition(key, partition=partition)
+
             self._bigtbale_set(key, value)
         except Exception as ex:
             self.log.error(
@@ -141,8 +160,9 @@ class BigTableStore(base.SerializedStore):
 
     def _del(self, key: bytes) -> None:
         try:
-            key = self._get_key_with_partition(key)
-            self._bigtbale_del(key)
+            for partition in self._partitions_for_key(key):
+                key = self._get_key_with_partition(key, partition=partition)
+                self._bigtbale_del(key)
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in delete for "
@@ -201,10 +221,12 @@ class BigTableStore(base.SerializedStore):
 
     def _contains(self, key: bytes) -> bool:
         try:
-            partition_prefix = get_current_partition().to_bytes(1, "little")
-            key = partition_prefix + key
-            res = self.bt_table.read_row(key, filter_=self.row_filter)
-            return res is not None
+            for partition in self._partitions_for_key(key):
+                key = self._get_key_with_partition(key, partition=partition)
+                res = self.bt_table.read_row(key, filter_=self.row_filter)
+                if res is not None:
+                    return True
+            return False
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _contains for table "
