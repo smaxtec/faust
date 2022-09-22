@@ -175,8 +175,10 @@ class BigTableStore(base.SerializedStore):
 
     def _iterkeys(self) -> Iterator[bytes]:
         try:
+            self.log.info(f"Started _iterkeys for {self.table_name}")
             for row in self._iteritems():
                 yield row[0]
+            self.log.info(f"Finished _iterkeys for {self.table_name}")
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _iterkeys "
