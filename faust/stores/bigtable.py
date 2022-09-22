@@ -121,7 +121,7 @@ class BigTableStore(base.SerializedStore):
         try:
             return [self._key_index[key]]
         except KeyError:
-            return [x for x in range(self.app.conf.topic_partitions)]
+            return range(self.app.conf.topic_partitions)
 
     def _bigtbale_del(self, key: bytes):
         row = self.bt_table.direct_row(key)
@@ -131,8 +131,7 @@ class BigTableStore(base.SerializedStore):
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
             for partition in self._partitions_for_key(key):
-                key = self._get_key_with_partition(key, partition=partition)
-                key_with_partition = self._get_key_with_partition(key)
+                key_with_partition = self._get_key_with_partition(key, partition=partition)
                 value = self._bigtbale_get(key_with_partition)
                 if value is not None:
                     self._key_index[key] = partition
