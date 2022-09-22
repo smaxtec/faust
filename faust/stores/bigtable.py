@@ -131,13 +131,13 @@ class BigTableStore(base.SerializedStore):
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
             for partition in self._partitions_for_key(key):
-                key_with_partition = self._get_key_with_partition(key, partition=partition)
+                key_with_partition = self._get_key_with_partition(
+                    key, partition=partition
+                )
                 value = self._bigtbale_get(key_with_partition)
                 if value is not None:
                     self._key_index[key] = partition
                     return value
-                else:
-                    self.log.info(f"Key {key_with_partition} not in {self.table_name}")
             raise KeyError
         except KeyError as ke:
             self.log.error(f"KeyError in get for table {self.table_name} for {key=}")
@@ -236,12 +236,11 @@ class BigTableStore(base.SerializedStore):
     def _contains(self, key: bytes) -> bool:
         try:
             event = current_event()
-            partition_from_message = (
-                event is not None
-                and not self.table.is_global
-            )
+            partition_from_message = event is not None and not self.table.is_global
             if partition_from_message:
-                key = self._get_key_with_partition(key, partition=event.message.partition)
+                key = self._get_key_with_partition(
+                    key, partition=event.message.partition
+                )
                 res = self.bt_table.read_row(key, filter_=self.row_filter)
                 if res is not None:
                     return True
