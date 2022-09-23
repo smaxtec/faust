@@ -65,8 +65,6 @@ class BigTableStore(base.SerializedStore):
             self.row_filter = CellsColumnLimitFilter(1)
             self.column_name = "DATA"
             self._bigtable_setup_table()
-
-            table.use_partitioner = True
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
@@ -164,8 +162,12 @@ class BigTableStore(base.SerializedStore):
     def _del(self, key: bytes) -> None:
         try:
             for partition in self._partitions_for_key(key):
-                key_with_partition = self._get_key_with_partition(key, partition=partition)
+                key_with_partition = self._get_key_with_partition(
+                    key, partition=partition
+                )
                 self._bigtbale_del(key_with_partition)
+            if key in self._key_index:
+                del self._key_index[key]
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in delete for "
@@ -237,6 +239,9 @@ class BigTableStore(base.SerializedStore):
 
     def _contains(self, key: bytes) -> bool:
         try:
+            if key in self._key_index:
+                return True
+
             event = current_event()
             partition_from_message = event is not None and not self.table.is_global
             if partition_from_message:
