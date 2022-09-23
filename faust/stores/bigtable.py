@@ -45,6 +45,9 @@ class BigTableStore(base.SerializedStore):
         options: typing.Dict[str, Any],
         **kwargs: Any,
     ) -> None:
+        
+        # if we ask if a key exist, we may need it soon.
+        self._contains_cache = LRUCache(limit=10000)
         self._key_index = LRUCache(limit=app.conf.table_key_index_size)
         table_name_generator = options.get(
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
@@ -92,11 +95,6 @@ class BigTableStore(base.SerializedStore):
     def _bigtable_exrtact_row_data(self, row_data):
         return list(row_data.to_dict().values())[0][0].value
 
-    def _get_key_with_partition(self, key: bytes, partition):
-        partition_prefix = partition.to_bytes(1, "little")
-        key = b"".join([partition_prefix, key])
-        return key
-
     def _bigtbale_get(self, key: bytes):
         res = self.bt_table.read_row(key, filter_=self.row_filter)
         if res is None:
@@ -134,7 +132,16 @@ class BigTableStore(base.SerializedStore):
         else:
             return None
 
+    def _get_key_with_partition(self, key: bytes, partition):
+        partition_prefix = partition.to_bytes(1, "little")
+        key = b"".join([partition_prefix, key])
+        return key
+
     def _get(self, key: bytes) -> Optional[bytes]:
+        if key in self._contains_cache:
+            val = self._contains_cache[key]
+            return val
+
         try:
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
@@ -170,6 +177,8 @@ class BigTableStore(base.SerializedStore):
             key_with_partition = self._get_key_with_partition(key, partition=partition)
             self._bigtbale_set(key_with_partition, value)
             self._key_index[key] = partition
+            if key in self._contains_cache:
+                del self._contains_cache[key]
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in set for "
@@ -186,6 +195,8 @@ class BigTableStore(base.SerializedStore):
                 self._bigtbale_del(key_with_partition)
             if key in self._key_index:
                 del self._key_index[key]
+            if key in self._contains_cache:
+                del self._contains_cache[key]
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in delete for "
@@ -267,6 +278,7 @@ class BigTableStore(base.SerializedStore):
                 )
                 res = self.bt_table.read_row(key, filter_=self.row_filter)
                 if res is not None:
+                    self._contains_cache[key] = self._bigtable_exrtact_row_data(res)
                     return True
             else:
                 for partition in self._partitions_for_key(key):
