@@ -92,11 +92,8 @@ class BigTableStore(base.SerializedStore):
     def _bigtable_exrtact_row_data(self, row_data):
         return list(row_data.to_dict().values())[0][0].value
 
-    def _get_key_with_partition(self, key: bytes, partition: Optional[int] = None):
-        if partition is not None:
-            partition_prefix = partition.to_bytes(1, "little")
-        else:
-            partition_prefix = get_current_partition().to_bytes(1, "little")
+    def _get_key_with_partition(self, key: bytes, partition):
+        partition_prefix = partition.to_bytes(1, "little")
         key = b"".join([partition_prefix, key])
         return key
 
@@ -126,21 +123,27 @@ class BigTableStore(base.SerializedStore):
         row.delete()
         row.commit()
 
-    def _get(self, key: bytes) -> Optional[bytes]:
+    def _maybe_get_partition_from_message(self) -> Optional[int]:
         event = current_event()
-        partition_from_message = (
+        if (
             event is not None
             and not self.table.is_global
             and not self.table.use_partitioner
-        )
+        ):
+            return event.message.partition
+        else:
+            return None
+
+    def _get(self, key: bytes) -> Optional[bytes]:
         try:
-            if partition_from_message:
+            partition = self._maybe_get_partition_from_message()
+            if partition is not None:
                 key_with_partition = self._get_key_with_partition(
-                    key, partition=event.message.partition
+                    key, partition=partition
                 )
                 value = self._bigtbale_get(key_with_partition)
                 if value is not None:
-                    self._key_index[key] = event.message.partition
+                    self._key_index[key] = partition
                     return value
             else:
                 for partition in self._partitions_for_key(key):
@@ -257,11 +260,10 @@ class BigTableStore(base.SerializedStore):
             if key in self._key_index:
                 return True
 
-            event = current_event()
-            partition_from_message = event is not None and not self.table.is_global
-            if partition_from_message:
+            partition = self._maybe_get_partition_from_message()
+            if partition is not None:
                 key = self._get_key_with_partition(
-                    key, partition=event.message.partition
+                    key, partition=partition,
                 )
                 res = self.bt_table.read_row(key, filter_=self.row_filter)
                 if res is not None:
