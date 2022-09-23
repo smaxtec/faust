@@ -127,15 +127,30 @@ class BigTableStore(base.SerializedStore):
         row.commit()
 
     def _get(self, key: bytes) -> Optional[bytes]:
+        event = current_event()
+        partition_from_message = (
+            event is not None
+            and not self.table.is_global
+            and not self.table.use_partitioner
+        )
         try:
-            for partition in self._partitions_for_key(key):
+            if partition_from_message:
                 key_with_partition = self._get_key_with_partition(
-                    key, partition=partition
+                    key, partition=event.message.partition
                 )
                 value = self._bigtbale_get(key_with_partition)
                 if value is not None:
-                    self._key_index[key] = partition
+                    self._key_index[key] = event.message.partition
                     return value
+            else:
+                for partition in self._partitions_for_key(key):
+                    key_with_partition = self._get_key_with_partition(
+                        key, partition=partition
+                    )
+                    value = self._bigtbale_get(key_with_partition)
+                    if value is not None:
+                        self._key_index[key] = partition
+                        return value
             raise KeyError
         except KeyError as ke:
             self.log.error(f"KeyError in get for table {self.table_name} for {key=}")
