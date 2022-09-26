@@ -80,6 +80,8 @@ class BigTableStore(base.SerializedStore):
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
+        self._key_index = LRUCache(limit=app.conf.table_key_index_size)
+        self._cache = None
         super().__init__(url, app, table, **kwargs)
 
     def _set_options(self, app, options) -> None:
@@ -118,7 +120,6 @@ class BigTableStore(base.SerializedStore):
         self, active_tps: Set[TP], standby_tps: Set[TP]
     ) -> None:
         self._setup_value_cache()
-        self._key_index = LRUCache(limit=self.app.conf.table_key_index_size)
         return await super().on_recovery_completed(active_tps, standby_tps)
 
     def _bigtable_setup(self, table, options: Dict[str, Any]):
