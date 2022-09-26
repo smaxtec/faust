@@ -81,6 +81,7 @@ class BigTableStore(base.SerializedStore):
     ) -> None:
         self._set_options(app, options)
         self._key_index = LRUCache(limit=app.conf.table_key_index_size)
+        self._cache = None
         try:
             self._bigtable_setup(table, options)
         except Exception as ex:
