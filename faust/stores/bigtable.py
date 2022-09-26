@@ -21,28 +21,31 @@ def get_current_partition():
     return event.message.partition
 
 
-class BigtableStartupCache(dict):
+class BigtableStartupCache():
     """
     This is a dictionary which is only filled once, after that, every
     successful access to a key, will remove it.
     """
+    data: Dict = {}
+
+    def __len__(self):
+        return len(self.data)
 
     def __getitem__(self, key):
-        value = super().__getitem__(key)
-        del self[key]
+        value = self.data.pop(key)
         return value
 
     def __setitem__(self, key, _) -> None:
-        if key in self.keys():
-            del self[key]
+        if key in self.data.keys():
+            self.data.pop(key, None)
 
     def __delitem__(self, key):
-        if key in self.keys():
-            super().__delitem__(key)
+        if key in self.data.keys():
+            self.data.pop(key, None)
 
     def fill(self, iter: Iterator[Tuple[bytes, bytes]]) -> None:
         for k, v in iter:
-            super().__setitem__(k, v)
+            self.data[k] = v
 
 
 class BigTableStore(base.SerializedStore):
@@ -54,14 +57,14 @@ class BigTableStore(base.SerializedStore):
 
     _key_index: LRUCache[bytes, int]
     _cache: Optional[Union[LRUCache[bytes, bytes], Dict[bytes, bytes]]]
-    PROJECT_KEY = "project_key"
-    INSTANCE_KEY = "instance_key"
-    BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
-    BT_READ_ROWS_BORDERS_KEY = "bt_read_rows_borders_key"
     VALUE_CACHE_TYPE_KEY = "value_cache_type_key"
     VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
+    BT_PROJECT_KEY = "bt_project_key"
+    BT_INSTANCE_KEY = "bt_instance_key"
+    BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
+    BT_READ_ROWS_BORDERS_KEY = "bt_read_rows_borders_key"
     BT_COLUMN_NAME_KEY = "bt_column_name_key"
-    BT_ROW_FILTER_KEY = "bt_row_filter_key"
+    BT_ROW_FILTERS_KEY = "bt_row_filter_key"
     BT_OFFSET_KEY_PREFIX = "bt_offset_key_prefix"
 
     def __init__(
@@ -95,7 +98,7 @@ class BigTableStore(base.SerializedStore):
         )
         self.column_name = options.get(BigTableStore.BT_COLUMN_NAME_KEY, "DATA")
         self.row_filter = options.get(
-            BigTableStore.BT_ROW_FILTER_KEY, CellsColumnLimitFilter(1)
+            BigTableStore.BT_ROW_FILTERS_KEY, CellsColumnLimitFilter(1)
         )
         self.offset_key_prefix = options.get(
             BigTableStore.BT_OFFSET_KEY_PREFIX, "offset_partitiion:"
@@ -105,11 +108,12 @@ class BigTableStore(base.SerializedStore):
         if self.value_cache_type == "startup":
             self.log.info("Setting up BigtableStartupCache")
             self._cache = BigtableStartupCache()
-            self.log.info("Start filling satrtup cache")
+            self.log.error("Start filling satrtup cache")
             self._cache.fill(self._iteritems())
-            self.log.info(
+            self.log.error(
                 "Finished setup of BigtableStartupCache. "
-                f"Has {len(self._cache)} entries"
+                f"Has {len(self._cache)} entries. "
+                f"First key is {list(self._cache.keys())[0]}"
             )
         elif self.value_cache_type == "forever":
             self._cache = LRUCache(limit=self.value_cache_size)
@@ -121,11 +125,11 @@ class BigTableStore(base.SerializedStore):
     def _bigtable_setup(self, table, options: Dict[str, Any]):
         self.bt_table_name = self.table_name_generator(table)
         self.client: Client = Client(
-            options.get(BigTableStore.PROJECT_KEY),
+            options.get(BigTableStore.BT_PROJECT_KEY),
             admin=True,
         )
         self.instance: Instance = self.client.instance(
-            options.get(BigTableStore.INSTANCE_KEY)
+            options.get(BigTableStore.BT_INSTANCE_KEY)
         )
         self.bt_table: Table = self.instance.table(self.bt_table_name)
         self.column_family_id = "FaustColumnFamily"
@@ -133,6 +137,7 @@ class BigTableStore(base.SerializedStore):
             logging.getLogger(__name__).info(
                 f"BigTableStore: Making new bigtablestore with {self.bt_table_name=}"
             )
+            # TODO: add columns families to options
             self.bt_table.create(
                 column_families={
                     self.column_family_id: column_family.MaxVersionsGCRule(1)
@@ -140,7 +145,7 @@ class BigTableStore(base.SerializedStore):
             )
         else:
             logging.getLogger(__name__).info(
-                "BigTableStore: Using existing"
+                "BigTableStore: Using existing "
                 f"bigtablestore with {self.bt_table_name=}"
             )
 
@@ -306,6 +311,7 @@ class BigTableStore(base.SerializedStore):
                 for row in self.bt_table.read_rows(
                     start_key=start_key,
                     end_key=end_key,
+                    filter=self.row_filter,
                 ):
                     yield (
                         row.row_key[1:],
