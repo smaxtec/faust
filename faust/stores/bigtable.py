@@ -1,6 +1,6 @@
 """BigTable storage."""
 import logging
-from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple, Union
 
 from google.cloud.bigtable import column_family
 from google.cloud.bigtable.client import Client
@@ -27,6 +27,9 @@ class BigtableStartupCache():
     successful access to a key, will remove it.
     """
     data: Dict = {}
+
+    def keys(self):
+        return self.data.keys()
 
     def __len__(self):
         return len(self.data)
