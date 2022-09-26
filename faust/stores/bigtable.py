@@ -21,11 +21,12 @@ def get_current_partition():
     return event.message.partition
 
 
-class BigtableStartupCache():
+class BigtableStartupCache:
     """
     This is a dictionary which is only filled once, after that, every
     successful access to a key, will remove it.
     """
+
     data: Dict = {}
 
     def keys(self):
@@ -86,7 +87,6 @@ class BigTableStore(base.SerializedStore):
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
         super().__init__(url, app, table, **kwargs)
-        self._setup_value_cache()
 
     def _set_options(self, app, options) -> None:
         self.table_name_generator = options.get(
@@ -95,6 +95,7 @@ class BigTableStore(base.SerializedStore):
         self.bt_start_key, self.bt_end_key = options.get(
             BigTableStore.BT_READ_ROWS_BORDERS_KEY, [b"", b""]
         )
+        self._cache_setup_done = False
         self.value_cache_type = options.get(BigTableStore.VALUE_CACHE_TYPE_KEY, None)
         self.value_cache_size = options.get(
             BigTableStore.VALUE_CACHE_SIZE_KEY, app.conf.table_key_index_size
@@ -119,10 +120,9 @@ class BigTableStore(base.SerializedStore):
             )
         elif self.value_cache_type == "forever":
             self._cache = LRUCache(limit=self.value_cache_size)
-        elif self.value_cache_type is None:
-            self._cache = None
         else:
             raise NotImplementedError(f"VALUE_CACHE_TYPE '{self.value_cache_type}'")
+        self._cache_setup_done = True
 
     def _bigtable_setup(self, table, options: Dict[str, Any]):
         self.bt_table_name = self.table_name_generator(table)
@@ -197,10 +197,15 @@ class BigTableStore(base.SerializedStore):
             return range(self.app.conf.topic_partitions)
 
     def _get(self, key: bytes) -> Optional[bytes]:
+        # If the cache was not yet initialised, we want to do it here.
+        # This function will immediately abort if no cache is set
+        if not self._cache_setup_done:
+            self._setup_value_cache()
+
         if self._cache is not None:
             if key in self._cache.keys():
                 self.log.info(
-                    f"Took value from {key=} from cache, "
+                    f"Took value with {key=} from cache of {self.table_name}, "
                     f"cachesize={len(self._cache)}"
                 )
                 return self._cache[key]
