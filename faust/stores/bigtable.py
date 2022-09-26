@@ -74,7 +74,7 @@ class BigTableStore(base.SerializedStore):
         options: Dict[str, Any],
         **kwargs: Any,
     ) -> None:
-        self._set_options(options)
+        self._set_options(app, options)
         try:
             self._bigtable_setup(table, options)
         except Exception as ex:
@@ -82,7 +82,7 @@ class BigTableStore(base.SerializedStore):
             raise ex
         super().__init__(url, app, table, **kwargs)
 
-    def _set_options(self, options) -> None:
+    def _set_options(self, app, options) -> None:
         self.table_name_generator = options.get(
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
         )
@@ -91,7 +91,7 @@ class BigTableStore(base.SerializedStore):
         )
         self.value_cache_type = options.get(BigTableStore.VALUE_CACHE_TYPE_KEY, None)
         self.value_cache_size = options.get(
-            BigTableStore.VALUE_CACHE_SIZE_KEY, self.app.conf.table_key_index_size
+            BigTableStore.VALUE_CACHE_SIZE_KEY, app.conf.table_key_index_size
         )
         self.column_name = options.get(BigTableStore.BT_COLUMN_NAME_KEY, "DATA")
         self.row_filter = options.get(
