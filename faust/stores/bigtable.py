@@ -204,10 +204,6 @@ class BigTableStore(base.SerializedStore):
 
         if self._cache is not None:
             if key in self._cache.keys():
-                self.log.info(
-                    f"Took value with {key=} from cache of {self.table_name}, "
-                    f"cachesize={len(self._cache)}"
-                )
                 return self._cache[key]
         try:
             partition = self._maybe_get_partition_from_message()
