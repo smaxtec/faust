@@ -57,7 +57,7 @@ class BigTableStore(base.SerializedStore):
     PROJECT_KEY = "project_key"
     INSTANCE_KEY = "instance_key"
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
-    READ_ROWS_BORDERS_KEY = "bt_read_rows_borders_key"
+    BT_READ_ROWS_BORDERS_KEY = "bt_read_rows_borders_key"
     VALUE_CACHE_TYPE_KEY = "value_cache_type_key"
     VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
     BT_COLUMN_NAME_KEY = "bt_column_name_key"
@@ -87,7 +87,7 @@ class BigTableStore(base.SerializedStore):
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
         )
         self.bt_start_key, self.bt_end_key = options.get(
-            BigTableStore.READ_ROWS_BORDERS_KEY, [b"", b""]
+            BigTableStore.BT_READ_ROWS_BORDERS_KEY, [b"", b""]
         )
         self.value_cache_type = options.get(BigTableStore.VALUE_CACHE_TYPE_KEY, None)
         self.value_cache_size = options.get(
