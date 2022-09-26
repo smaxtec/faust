@@ -80,12 +80,7 @@ class BigTableStore(base.SerializedStore):
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
         super().__init__(url, app, table, **kwargs)
-
-    async def on_recovery_completed(
-        self, active_tps: Set[TP], standby_tps: Set[TP]
-    ) -> None:
         self._setup_value_cache()
-        return await super().on_recovery_completed(active_tps, standby_tps)
 
     def _set_options(self, app, options) -> None:
         self.table_name_generator = options.get(
