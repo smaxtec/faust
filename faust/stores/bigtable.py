@@ -80,7 +80,12 @@ class BigTableStore(base.SerializedStore):
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
         super().__init__(url, app, table, **kwargs)
+
+    async def on_recovery_completed(
+        self, active_tps: Set[TP], standby_tps: Set[TP]
+    ) -> None:
         self._setup_value_cache()
+        return await super().on_recovery_completed(active_tps, standby_tps)
 
     def _set_options(self, app, options) -> None:
         self.table_name_generator = options.get(
@@ -105,8 +110,12 @@ class BigTableStore(base.SerializedStore):
         if self.value_cache_type == "startup":
             self.log.info("Setting up BigtableStartupCache")
             self._cache = BigtableStartupCache()
+            self.log.info("Start filling satrtup cache")
             self._cache.fill(self._iteritems())
-            self.log.info("Finished setup of BigtableStartupCache")
+            self.log.info(
+                "Finished setup of BigtableStartupCache. "
+                f"Has {len(self._cache)} entries"
+            )
         elif self.value_cache_type == "forever":
             self._cache = LRUCache(limit=self.value_cache_size)
         elif self.value_cache_type is None:
@@ -188,6 +197,10 @@ class BigTableStore(base.SerializedStore):
     def _get(self, key: bytes) -> Optional[bytes]:
         if self._cache is not None:
             if key in self._cache.keys():
+                self.log.info(
+                    f"Took value from {key=} from cache, "
+                    f"cachesize={len(self._cache)}"
+                )
                 return self._cache[key]
         try:
             partition = self._maybe_get_partition_from_message()
