@@ -114,9 +114,8 @@ class BigTableStore(base.SerializedStore):
             self.log.error("Start filling satrtup cache")
             self._cache.fill(self._iteritems())
             self.log.error(
-                "Finished setup of BigtableStartupCache. "
+                f"Finished setup of BigtableStartupCache for {self.table_name}. "
                 f"Has {len(self._cache)} entries. "
-                f"First key is {list(self._cache.keys())[0]}"
             )
         elif self.value_cache_type == "forever":
             self._cache = LRUCache(limit=self.value_cache_size)
