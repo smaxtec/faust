@@ -2,18 +2,16 @@
 import logging
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple, Union
 
-from mode.utils.collections import LRUCache
-
-from faust.streams import current_event
-
 from google.cloud.bigtable import column_family
 from google.cloud.bigtable.client import Client
 from google.cloud.bigtable.instance import Instance
 from google.cloud.bigtable.row_filters import CellsColumnLimitFilter
 from google.cloud.bigtable.table import Table
+from mode.utils.collections import LRUCache
 from yarl import URL
 
 from faust.stores import base
+from faust.streams import current_event
 from faust.types import TP, AppT, CollectionT, EventT
 
 
@@ -75,14 +73,14 @@ class BigTableStore(base.SerializedStore):
         **kwargs: Any,
     ) -> None:
         self._set_options(app, options)
+        self._key_index = LRUCache(limit=app.conf.table_key_index_size)
         try:
             self._bigtable_setup(table, options)
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
-        self._key_index = LRUCache(limit=app.conf.table_key_index_size)
-        self._setup_value_cache()
         super().__init__(url, app, table, **kwargs)
+        self._setup_value_cache()
 
     def _set_options(self, app, options) -> None:
         self.table_name_generator = options.get(
@@ -114,7 +112,7 @@ class BigTableStore(base.SerializedStore):
         elif self.value_cache_type is None:
             self._cache = None
         else:
-            raise NotImplemented(f"VALUE_CACHE_TYPE '{self.value_cache_type}'")
+            raise NotImplementedError(f"VALUE_CACHE_TYPE '{self.value_cache_type}'")
 
     def _bigtable_setup(self, table, options: Dict[str, Any]):
         self.bt_table_name = self.table_name_generator(table)
