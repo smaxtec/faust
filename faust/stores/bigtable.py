@@ -229,7 +229,8 @@ class BigTableStore(base.SerializedStore):
                     if value is not None:
                         self._key_index[key] = partition
                         return value
-            raise KeyError
+            # No key was found
+            return None
         except KeyError as ke:
             self.log.error(f"KeyError in get for table {self.table_name} for {key=}")
             raise ke
