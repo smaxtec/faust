@@ -318,7 +318,6 @@ class BigTableStore(base.SerializedStore):
                 for row in self.bt_table.read_rows(
                     start_key=start_key,
                     end_key=end_key,
-                    filter=self.row_filter,
                 ):
                     yield (
                         row.row_key[1:],
