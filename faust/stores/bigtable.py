@@ -1,7 +1,6 @@
 """BigTable storage."""
 import logging
-import typing
-from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple, Union
 
 from mode.utils.collections import LRUCache
 
@@ -24,6 +23,30 @@ def get_current_partition():
     return event.message.partition
 
 
+class BigtableStartupCache(dict):
+    """
+    This is a dictionary which is only filled once, after that, every
+    successful access to a key, will remove it.
+    """
+
+    def __getitem__(self, key):
+        value = super().__getitem__(key)
+        del self[key]
+        return value
+
+    def __setitem__(self, key, _) -> None:
+        if key in self.keys():
+            del self[key]
+
+    def __delitem__(self, key):
+        if key in self.keys():
+            super().__delitem__(key)
+
+    def fill(self, iter: Iterator[Tuple[bytes, bytes]]) -> None:
+        for k, v in iter:
+            super().__setitem__(k, v)
+
+
 class BigTableStore(base.SerializedStore):
     """Bigtable table storage."""
 
@@ -32,49 +55,81 @@ class BigTableStore(base.SerializedStore):
     bt_table: Table
 
     _key_index: LRUCache[bytes, int]
+    _cache: Optional[Union[LRUCache[bytes, bytes], Dict[bytes, bytes]]]
     PROJECT_KEY = "project_key"
     INSTANCE_KEY = "instance_key"
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
     READ_ROWS_BORDERS_KEY = "bt_read_rows_borders_key"
+    VALUE_CACHE_TYPE_KEY = "value_cache_type_key"
+    VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
+    BT_COLUMN_NAME_KEY = "bt_column_name_key"
+    BT_ROW_FILTER_KEY = "bt_row_filter_key"
+    BT_OFFSET_KEY_PREFIX = "bt_offset_key_prefix"
 
     def __init__(
         self,
         url: Union[str, URL],
         app: AppT,
         table: CollectionT,
-        options: typing.Dict[str, Any],
+        options: Dict[str, Any],
         **kwargs: Any,
     ) -> None:
-        
-        # if we ask if a key exist, we may need it soon.
-        self._contains_cache = LRUCache(limit=10000)
-        self._key_index = LRUCache(limit=app.conf.table_key_index_size)
-        table_name_generator = options.get(
-            BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
-        )
-        self.bt_table_name = table_name_generator(table)
-
-        self.bt_start_key, self.bt_end_key = options.get(
-            BigTableStore.READ_ROWS_BORDERS_KEY, [b"", b""]
-        )
+        self._set_options(options)
         try:
-            self.client: Client = Client(
-                options.get(BigTableStore.PROJECT_KEY),
-                admin=True,
-            )
-            self.instance: Instance = self.client.instance(
-                options.get(BigTableStore.INSTANCE_KEY)
-            )
-            self.row_filter = CellsColumnLimitFilter(1)
-            self.column_name = "DATA"
-            self._bigtable_setup_table()
+            self._bigtable_setup(table, options)
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
-        self.offset_key_prefix = "offset_partitiion:"
         super().__init__(url, app, table, **kwargs)
 
-    def _bigtable_setup_table(self):
+    def _set_options(self, options) -> None:
+        self.table_name_generator = options.get(
+            BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
+        )
+        self.bt_start_key, self.bt_end_key = options.get(
+            BigTableStore.READ_ROWS_BORDERS_KEY, [b"", b""]
+        )
+        self.value_cache_type = options.get(BigTableStore.VALUE_CACHE_TYPE_KEY, None)
+        self.value_cache_size = options.get(
+            BigTableStore.VALUE_CACHE_SIZE_KEY, self.app.conf.table_key_index_size
+        )
+        self.column_name = options.get(BigTableStore.BT_COLUMN_NAME_KEY, "DATA")
+        self.row_filter = options.get(
+            BigTableStore.BT_ROW_FILTER_KEY, CellsColumnLimitFilter(1)
+        )
+        self.offset_key_prefix = options.get(
+            BigTableStore.BT_OFFSET_KEY_PREFIX, "offset_partitiion:"
+        )
+
+    def _setup_value_cache(self) -> None:
+        if self.value_cache_type == "startup":
+            self.log.info("Setting up BigtableStartupCache")
+            self._cache = BigtableStartupCache()
+            self._cache.fill(self._iteritems())
+            self.log.info("Finished setup of BigtableStartupCache")
+        elif self.value_cache_type == "forever":
+            self._cache = LRUCache(limit=self.value_cache_size)
+        elif self.value_cache_type is None:
+            self._cache = None
+        else:
+            raise NotImplemented(f"VALUE_CACHE_TYPE '{self.value_cache_type}'")
+
+    async def on_recovery_completed(
+        self, active_tps: Set[TP], standby_tps: Set[TP]
+    ) -> None:
+        self._setup_value_cache()
+        self._key_index = LRUCache(limit=self.app.conf.table_key_index_size)
+        return await super().on_recovery_completed(active_tps, standby_tps)
+
+    def _bigtable_setup(self, table, options: Dict[str, Any]):
+        self.bt_table_name = self.table_name_generator(table)
+        self.client: Client = Client(
+            options.get(BigTableStore.PROJECT_KEY),
+            admin=True,
+        )
+        self.instance: Instance = self.client.instance(
+            options.get(BigTableStore.INSTANCE_KEY)
+        )
         self.bt_table: Table = self.instance.table(self.bt_table_name)
         self.column_family_id = "FaustColumnFamily"
         if not self.bt_table.exists():
@@ -110,12 +165,6 @@ class BigTableStore(base.SerializedStore):
         )
         row.commit()
 
-    def _partitions_for_key(self, key: bytes) -> Iterable[int]:
-        try:
-            return [self._key_index[key]]
-        except KeyError:
-            return range(self.app.conf.topic_partitions)
-
     def _bigtbale_del(self, key: bytes):
         row = self.bt_table.direct_row(key)
         row.delete()
@@ -137,11 +186,16 @@ class BigTableStore(base.SerializedStore):
         key = b"".join([partition_prefix, key])
         return key
 
-    def _get(self, key: bytes) -> Optional[bytes]:
-        if key in self._contains_cache:
-            val = self._contains_cache[key]
-            return val
+    def _partitions_for_key(self, key: bytes) -> Iterable[int]:
+        try:
+            return [self._key_index[key]]
+        except KeyError:
+            return range(self.app.conf.topic_partitions)
 
+    def _get(self, key: bytes) -> Optional[bytes]:
+        if self._cache is not None:
+            if key in self._cache.keys():
+                return self._cache[key]
         try:
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
@@ -176,9 +230,9 @@ class BigTableStore(base.SerializedStore):
             partition = get_current_partition()
             key_with_partition = self._get_key_with_partition(key, partition=partition)
             self._bigtbale_set(key_with_partition, value)
+            if self._cache is not None:
+                self._cache[key] = value
             self._key_index[key] = partition
-            if key in self._contains_cache:
-                del self._contains_cache[key]
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in set for "
@@ -193,10 +247,12 @@ class BigTableStore(base.SerializedStore):
                     key, partition=partition
                 )
                 self._bigtbale_del(key_with_partition)
+
+            if self._cache is not None:
+                if key in self._cache:
+                    del self._cache[key]
             if key in self._key_index:
                 del self._key_index[key]
-            if key in self._contains_cache:
-                del self._contains_cache[key]
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in delete for "
@@ -274,11 +330,11 @@ class BigTableStore(base.SerializedStore):
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
                 key = self._get_key_with_partition(
-                    key, partition=partition,
+                    key,
+                    partition=partition,
                 )
                 res = self.bt_table.read_row(key, filter_=self.row_filter)
                 if res is not None:
-                    self._contains_cache[key] = self._bigtable_exrtact_row_data(res)
                     return True
             else:
                 for partition in self._partitions_for_key(key):
