@@ -241,7 +241,7 @@ class BigTableStore(base.SerializedStore):
             row: DirectRow
             partition = key[0]
             if key in self._mutation_buffer.rows[partition].keys():
-                row = self._mutation_buffer.rows[partition][key]
+                row = self._mutation_buffer.rows[partition][key][0]
             else:
                 row = self.bt_table.direct_row(key)
             row.delete()
