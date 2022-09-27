@@ -108,7 +108,7 @@ class BigTableStore(base.SerializedStore):
     BT_ROW_FILTERS_KEY = "bt_row_filter_key"
     BT_OFFSET_KEY_PREFIX = "bt_offset_key_prefix"
     BT_MUTATION_BUFFER_LIMIT_KEY = "bt_mutation_buffer_limit_key"
-    BT_ENABLE_MUTATION_BUFER_KEY = "bt_enable_mutation_bufer_key"
+    BT_ENABLE_MUTATION_BUFFER_KEY = "bt_enable_mutation_buffer_key"
 
     def __init__(
         self,
@@ -145,7 +145,7 @@ class BigTableStore(base.SerializedStore):
             BigTableStore.VALUE_CACHE_SIZE_KEY, app.conf.table_key_index_size
         )
         self.mutation_buffer_enabled = options.get(
-            BigTableStore.BT_ENABLE_MUTATION_BUFER_KEY, False
+            BigTableStore.BT_ENABLE_MUTATION_BUFFER_KEY, False
         )
         self.column_name = options.get(
             BigTableStore.BT_COLUMN_NAME_KEY, "DATA"
@@ -162,7 +162,7 @@ class BigTableStore(base.SerializedStore):
             limit = options.get(
                 BigTableStore.BT_MUTATION_BUFFER_LIMIT_KEY, 100
             )
-            self._mutattion_buffer = BigtableMutationBuffer(
+            self._mutation_buffer = BigtableMutationBuffer(
                 self.bt_table, limit
             )
 
