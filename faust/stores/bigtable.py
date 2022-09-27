@@ -424,7 +424,7 @@ class BigTableStore(base.SerializedStore):
                 if self.mutation_buffer_enabled:
                     if (
                         key in self._mutation_buffer.rows[partition]
-                        and self._mutation_buffer.rows[partition][key] is not None
+                        and self._mutation_buffer.rows[partition][key][1] is not None
                     ):
                         return True
                 res = self.bt_table.read_row(key, filter_=self.row_filter)
