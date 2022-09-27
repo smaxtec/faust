@@ -46,9 +46,7 @@ class BigtableMutationBuffer:
     def full(self, partition: int) -> bool:
         return len(self.rows[partition]) > self.mutation_limit
 
-    def submit(
-        self, row: DirectRow, partition: int, value: Optional[bytes] = None
-    ):
+    def submit(self, row: DirectRow, partition: int, value: Optional[bytes] = None):
         self.rows[partition][row.row_key] = row, value
 
     def flush(self, partition):
@@ -138,18 +136,14 @@ class BigTableStore(base.SerializedStore):
             BigTableStore.BT_READ_ROWS_BORDERS_KEY, [b"", b""]
         )
         self._cache_setup_done = False
-        self.value_cache_type = options.get(
-            BigTableStore.VALUE_CACHE_TYPE_KEY, None
-        )
+        self.value_cache_type = options.get(BigTableStore.VALUE_CACHE_TYPE_KEY, None)
         self.value_cache_size = options.get(
             BigTableStore.VALUE_CACHE_SIZE_KEY, app.conf.table_key_index_size
         )
         self.mutation_buffer_enabled = options.get(
             BigTableStore.BT_ENABLE_MUTATION_BUFFER_KEY, False
         )
-        self.column_name = options.get(
-            BigTableStore.BT_COLUMN_NAME_KEY, "DATA"
-        )
+        self.column_name = options.get(BigTableStore.BT_COLUMN_NAME_KEY, "DATA")
         self.row_filter = options.get(
             BigTableStore.BT_ROW_FILTERS_KEY, CellsColumnLimitFilter(1)
         )
@@ -159,12 +153,8 @@ class BigTableStore(base.SerializedStore):
 
     def _setup_mutation_buffer(self, options) -> None:
         if self.mutation_buffer_enabled:
-            limit = options.get(
-                BigTableStore.BT_MUTATION_BUFFER_LIMIT_KEY, 100
-            )
-            self._mutation_buffer = BigtableMutationBuffer(
-                self.bt_table, limit
-            )
+            limit = options.get(BigTableStore.BT_MUTATION_BUFFER_LIMIT_KEY, 100)
+            self._mutation_buffer = BigtableMutationBuffer(self.bt_table, limit)
 
     def _setup_value_cache(self) -> None:
         if self.value_cache_type == "startup":
@@ -178,9 +168,7 @@ class BigTableStore(base.SerializedStore):
         elif self.value_cache_type == "forever":
             self._cache = LRUCache(limit=self.value_cache_size)
         else:
-            raise NotImplementedError(
-                f"VALUE_CACHE_TYPE '{self.value_cache_type}'"
-            )
+            raise NotImplementedError(f"VALUE_CACHE_TYPE '{self.value_cache_type}'")
         self._cache_setup_done = True
 
     def _bigtable_setup(self, table, options: Dict[str, Any]):
@@ -214,35 +202,55 @@ class BigTableStore(base.SerializedStore):
         return list(row_data.to_dict().values())[0][0].value
 
     def _bigtbale_get(self, key: bytes):
-        res = self.bt_table.read_row(key, filter_=self.row_filter)
-        if res is None:
-            return None
-        if self.mutation_buffer_enabled:
-            partition = key[0]
-            if key in self._mutation_buffer.rows[partition].keys():
-                return self._mutation_buffer.rows[partition][key][1]
-        return self._bigtable_exrtact_row_data(res)
+        partition = key[0]
+        if (
+            self.mutation_buffer_enabled
+            and key in self._mutation_buffer.rows[partition].keys()
+        ):
+            return self._mutation_buffer.rows[partition][key][1]
+        else:
+            res = self.bt_table.read_row(key, filter_=self.row_filter)
+            if res is None:
+                return None
+            return self._bigtable_exrtact_row_data(res)
 
     def _bigtbale_set(self, key: bytes, value: Optional[bytes]):
         row = self.bt_table.direct_row(key)
-        row.set_cell(
-            self.column_family_id,
-            self.column_name,
-            value,
-        )
         if self.mutation_buffer_enabled:
+            row: DirectRow
             partition = key[0]
+            if key in self._mutation_buffer.rows[partition].keys():
+                row = self._mutation_buffer.rows[partition][key]
+            else:
+                row = self.bt_table.direct_row(key)
+            row.set_cell(
+                self.column_family_id,
+                self.column_name,
+                value,
+            )
             self._mutation_buffer.submit(row, partition, value)
         else:
+            row = self.bt_table.direct_row(key)
+            row.set_cell(
+                self.column_family_id,
+                self.column_name,
+                value,
+            )
             row.commit()
 
     def _bigtbale_del(self, key: bytes):
-        row = self.bt_table.direct_row(key)
-        row.delete()
         if self.mutation_buffer_enabled:
+            row: DirectRow
             partition = key[0]
+            if key in self._mutation_buffer.rows[partition].keys():
+                row = self._mutation_buffer.rows[partition][key]
+            else:
+                row = self.bt_table.direct_row(key)
+            row.delete()
             self._mutation_buffer.submit(row, partition, None)
         else:
+            row = self.bt_table.direct_row(key)
+            row.delete()
             row.commit()
 
     def _maybe_get_partition_from_message(self) -> Optional[int]:
@@ -298,9 +306,7 @@ class BigTableStore(base.SerializedStore):
             # No key was found
             return None
         except KeyError as ke:
-            self.log.error(
-                f"KeyError in get for table {self.table_name} for {key=}"
-            )
+            self.log.error(f"KeyError in get for table {self.table_name} for {key=}")
             raise ke
         except Exception as ex:
             self.log.error(
@@ -311,9 +317,7 @@ class BigTableStore(base.SerializedStore):
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
             partition = get_current_partition()
-            key_with_partition = self._get_key_with_partition(
-                key, partition=partition
-            )
+            key_with_partition = self._get_key_with_partition(key, partition=partition)
             self._bigtbale_set(key_with_partition, value)
             if self._cache is not None:
                 self._cache[key] = value
@@ -419,14 +423,15 @@ class BigTableStore(base.SerializedStore):
                     key,
                     partition=partition,
                 )
+                if self.mutation_buffer_enabled:
+                    if key in self._mutation_buffer.rows[partition][key]:
+                        return True
                 res = self.bt_table.read_row(key, filter_=self.row_filter)
                 if res is not None:
                     return True
             else:
                 for partition in self._partitions_for_key(key):
-                    key = self._get_key_with_partition(
-                        key, partition=partition
-                    )
+                    key = self._get_key_with_partition(key, partition=partition)
                     res = self.bt_table.read_row(key, filter_=self.row_filter)
                     if res is not None:
                         return True
@@ -481,7 +486,9 @@ class BigTableStore(base.SerializedStore):
             if self.mutation_buffer_enabled and not recovery:
                 if self._mutation_buffer.full(tp.partition):
                     self._mutation_buffer.flush(tp.partition)
-                    self.log.info(f"Flushed BigtableMutationBuffer partition={tp.partition}")
+                    self.log.info(
+                        f"Flushed BigtableMutationBuffer partition={tp.partition}"
+                    )
                     offset_key = self.get_offset_key(tp).encode()
                     self._bigtbale_set(offset_key, str(offset).encode())
             else:
