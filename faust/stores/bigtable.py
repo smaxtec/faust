@@ -212,9 +212,8 @@ class BigTableStore(base.SerializedStore):
                 return None
             return self._bigtable_exrtact_row_data(res)
 
-    def _bigtbale_set(self, key: bytes, value: Optional[bytes]):
-        row = self.bt_table.direct_row(key)
-        if self.mutation_buffer_enabled:
+    def _bigtbale_set(self, key: bytes, value: Optional[bytes], persist_offset=False):
+        if self.mutation_buffer_enabled and not persist_offset:
             row: DirectRow
             partition = key[0]
             if key in self._mutation_buffer.rows[partition].keys():
@@ -488,13 +487,14 @@ class BigTableStore(base.SerializedStore):
                 if self._mutation_buffer.full(tp.partition):
                     self._mutation_buffer.flush(tp.partition)
                     self.log.info(
-                        f"Flushed BigtableMutationBuffer partition={tp.partition}"
+                        f"Flushed BigtableMutationBuffer partition={tp.partition} "
+                        f"for table {self.table_name}"
                     )
                     offset_key = self.get_offset_key(tp).encode()
-                    self._bigtbale_set(offset_key, str(offset).encode())
+                    self._bigtbale_set(offset_key, str(offset).encode(), persist_offset=True)
             else:
                 offset_key = self.get_offset_key(tp).encode()
-                self._bigtbale_set(offset_key, str(offset).encode())
+                self._bigtbale_set(offset_key, str(offset).encode(), persist_offset=True)
         except Exception as e:
             self.log.error(
                 f"Failed to commit offset for {self.table.name}"
