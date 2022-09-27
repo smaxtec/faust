@@ -199,7 +199,7 @@ class BigTableStore(base.SerializedStore):
     def _bigtable_exrtact_row_data(self, row_data):
         return list(row_data.to_dict().values())[0][0].value
 
-    def _bigtbale_get(self, key: bytes):
+    def _bigtable_get(self, key: bytes):
         partition = key[0]
         if (
             self.mutation_buffer_enabled
@@ -212,7 +212,7 @@ class BigTableStore(base.SerializedStore):
                 return None
             return self._bigtable_exrtact_row_data(res)
 
-    def _bigtbale_set(self, key: bytes, value: Optional[bytes], persist_offset=False):
+    def _bigtable_set(self, key: bytes, value: Optional[bytes], persist_offset=False):
         if self.mutation_buffer_enabled and not persist_offset:
             row: DirectRow
             partition = key[0]
@@ -235,7 +235,7 @@ class BigTableStore(base.SerializedStore):
             )
             row.commit()
 
-    def _bigtbale_del(self, key: bytes):
+    def _bigtable_del(self, key: bytes):
         if self.mutation_buffer_enabled:
             row: DirectRow
             partition = key[0]
@@ -287,7 +287,7 @@ class BigTableStore(base.SerializedStore):
                 key_with_partition = self._get_key_with_partition(
                     key, partition=partition
                 )
-                value = self._bigtbale_get(key_with_partition)
+                value = self._bigtable_get(key_with_partition)
                 if value is not None:
                     self._key_index[key] = partition
                     return value
@@ -296,7 +296,7 @@ class BigTableStore(base.SerializedStore):
                     key_with_partition = self._get_key_with_partition(
                         key, partition=partition
                     )
-                    value = self._bigtbale_get(key_with_partition)
+                    value = self._bigtable_get(key_with_partition)
                     if value is not None:
                         self._key_index[key] = partition
                         return value
@@ -315,7 +315,7 @@ class BigTableStore(base.SerializedStore):
         try:
             partition = get_current_partition()
             key_with_partition = self._get_key_with_partition(key, partition=partition)
-            self._bigtbale_set(key_with_partition, value)
+            self._bigtable_set(key_with_partition, value)
             if self._cache is not None:
                 self._cache[key] = value
             self._key_index[key] = partition
@@ -332,7 +332,7 @@ class BigTableStore(base.SerializedStore):
                 key_with_partition = self._get_key_with_partition(
                     key, partition=partition
                 )
-                self._bigtbale_del(key_with_partition)
+                self._bigtable_del(key_with_partition)
 
             if self._cache is not None:
                 if key in self._cache:
@@ -491,10 +491,10 @@ class BigTableStore(base.SerializedStore):
                         f"for table {self.table_name}"
                     )
                     offset_key = self.get_offset_key(tp).encode()
-                    self._bigtbale_set(offset_key, str(offset).encode(), persist_offset=True)
+                    self._bigtable_set(offset_key, str(offset).encode(), persist_offset=True)
             else:
                 offset_key = self.get_offset_key(tp).encode()
-                self._bigtbale_set(offset_key, str(offset).encode(), persist_offset=True)
+                self._bigtable_set(offset_key, str(offset).encode(), persist_offset=True)
         except Exception as e:
             self.log.error(
                 f"Failed to commit offset for {self.table.name}"
