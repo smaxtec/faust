@@ -218,7 +218,7 @@ class BigTableStore(base.SerializedStore):
         if res is None:
             return None
         if self.mutation_buffer_enabled:
-            partition = int.from_bytes(key[0], "little")
+            partition = key[0]
             if key in self._mutation_buffer.rows[partition].keys():
                 return self._mutation_buffer.rows[partition][key][1]
         return self._bigtable_exrtact_row_data(res)
@@ -231,7 +231,7 @@ class BigTableStore(base.SerializedStore):
             value,
         )
         if self.mutation_buffer_enabled:
-            partition = int.from_bytes(key[0], "little")
+            partition = key[0]
             self._mutation_buffer.submit(row, partition, value)
         else:
             row.commit()
@@ -240,8 +240,8 @@ class BigTableStore(base.SerializedStore):
         row = self.bt_table.direct_row(key)
         row.delete()
         if self.mutation_buffer_enabled:
-            partition = int.from_bytes(key[0], "little")
-            self._mutation_buffer.submit(row, partition, value)
+            partition = key[0]
+            self._mutation_buffer.submit(row, partition, None)
         else:
             row.commit()
 
