@@ -469,7 +469,7 @@ class BigTableStore(base.SerializedStore):
             return offset
         return None
 
-    def set_persisted_offset(self, tp: TP, offset: int) -> None:
+    def set_persisted_offset(self, tp: TP, offset: int, recovery=False) -> None:
         """Set the last persisted offset for this table.
 
         This will remember the last offset that we wrote to BigTableStore,
@@ -478,7 +478,7 @@ class BigTableStore(base.SerializedStore):
         we were not an active replica.
         """
         try:
-            if self.mutation_buffer_enabled and not self.recovery_active:
+            if self.mutation_buffer_enabled and not recovery:
                 if self._mutation_buffer.full(tp.partition):
                     self._mutation_buffer.flush(tp.partition)
                     self.log.info(f"Flushed BigtableMutationBuffer partition={tp.partition}")
@@ -494,12 +494,6 @@ class BigTableStore(base.SerializedStore):
             )
             self.app._crash(e)
 
-    async def on_recovery_completed(
-        self, active_tps: Set[TP], standby_tps: Set[TP]
-    ) -> None:
-        self.recovery_active = False
-        return await super().on_recovery_completed(active_tps, standby_tps)
-
     def _persist_changelog_batch(self, row_mutations, tp_offsets):
         response = self.bt_table.mutate_rows(row_mutations)
         for i, status in enumerate(response):
@@ -507,7 +501,7 @@ class BigTableStore(base.SerializedStore):
                 self.log.error("Row number {} failed to write".format(i))
 
         for tp, offset in tp_offsets.items():
-            self.set_persisted_offset(tp, offset)
+            self.set_persisted_offset(tp, offset, recovery=True)
 
     def apply_changelog_batch(
         self,
@@ -524,7 +518,6 @@ class BigTableStore(base.SerializedStore):
             to_value: A callable you can use to deserialize the value
                 of a changelog event.
         """
-        self.recovery_active = True
         tp_offsets: Dict[TP, int] = {}
         row_mutations = []
         for event in batch:
