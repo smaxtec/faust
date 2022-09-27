@@ -112,10 +112,10 @@ class BigTableStore(base.SerializedStore):
     def _setup_value_cache(self) -> None:
         if self.value_cache_type == "startup":
             self._cache = BigtableStartupCache()
-            self.log.info("Start filling satrtup cache")
+            self.log.info(f"Start filling satrtup cache for {self.table_name}")
             self._cache.fill(self._iteritems())
             self.log.info(
-                f"Finished setup of BigtableStartupCache for {self.table_name}. "
+                f"Finished setup of BigtableStartupCache for {self.table_name} "
                 f"Has {len(self._cache)} entries. "
             )
         elif self.value_cache_type == "forever":
