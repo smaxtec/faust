@@ -1,5 +1,6 @@
 """BigTable storage."""
 import logging
+import traceback
 from typing import (
     Any,
     Callable,
@@ -51,7 +52,7 @@ class BigtableMutationBuffer:
         self.bigtable_table.mutate_rows(mutations)
         self.rows.clear()
 
-    def get(self, key: bytes) -> Tuple[DirectRow, Optional[bytes]]:
+    def get(self, key: bytes) -> Tuple[Optional[DirectRow], Optional[bytes]]:
         return self.rows.get(key, (None, None))
 
 
@@ -340,7 +341,8 @@ class BigTableStore(base.SerializedStore):
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in set for "
-                f"table {self.table_name} exception {ex} key {key}"
+                f"table {self.table_name} exception {ex} key {key} "
+                f"Traceback: {traceback.format_exc()}"
             )
             raise ex
 
@@ -456,7 +458,8 @@ class BigTableStore(base.SerializedStore):
             self.log.error(
                 f"FaustBigtableException Error in _contains for table "
                 f"{self.table_name} exception "
-                f"{ex} key {key}"
+                f"{ex} key {key}. "
+                f"Traceback: {traceback.format_exc()}"
             )
             raise ex
 
