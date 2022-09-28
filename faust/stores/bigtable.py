@@ -1,6 +1,5 @@
 """BigTable storage."""
 import logging
-from collections import defaultdict
 from typing import (
     Any,
     Callable,
@@ -104,7 +103,7 @@ class BigTableStore(base.SerializedStore):
     bt_table: Table
 
     _key_index: LRUCache[bytes, int]
-    _cache: Optional[Union[LRUCache[bytes, bytes], Dict[bytes, bytes]]]
+    _cache: Optional[Union[LRUCache[bytes, bytes], BigtableStartupCache]]
     _mutation_buffer: Optional[BigtableMutationBuffer]
     VALUE_CACHE_TYPE_KEY = "value_cache_type_key"
     VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
@@ -133,6 +132,7 @@ class BigTableStore(base.SerializedStore):
         try:
             self._bigtable_setup(table, options)
             self._setup_mutation_buffer(options)
+            self._setup_value_cache()
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
@@ -337,8 +337,6 @@ class BigTableStore(base.SerializedStore):
             partition = get_current_partition()
             key_with_partition = self._get_key_with_partition(key, partition=partition)
             self._bigtable_set(key_with_partition, value)
-            if self._cache is not None:
-                self._cache[key] = value
             self._key_index[key] = partition
         except Exception as ex:
             self.log.error(
@@ -355,9 +353,6 @@ class BigTableStore(base.SerializedStore):
                 )
                 self._bigtable_del(key_with_partition)
 
-            if self._cache is not None:
-                if key in self._cache:
-                    del self._cache[key]
             if key in self._key_index:
                 del self._key_index[key]
         except Exception as ex:
@@ -431,28 +426,29 @@ class BigTableStore(base.SerializedStore):
 
     def _contains(self, key: bytes) -> bool:
         try:
-            if self._cache is not None:
-                if key in self._cache.keys():
-                    return True
-
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
                 key = self._get_key_with_partition(
                     key,
                     partition=partition,
                 )
-                if self.mutation_buffer_enabled:
-                    if (
-                        key in self._mutation_buffer.rows[partition]
-                        and self._mutation_buffer.rows[partition][key][1] is not None
-                    ):
-                        return True
+                row, val = self._cache_get(key)
+                if row is not None and val is None:
+                    return False
+                elif val is not None:
+                    return True
+
                 res = self.bt_table.read_row(key, filter_=self.row_filter)
                 if res is not None:
                     return True
             else:
                 for partition in self._partitions_for_key(key):
                     key = self._get_key_with_partition(key, partition=partition)
+                    row, val = self._cache_get(key)
+                    if row is not None and val is None:
+                        return False
+                    elif val is not None:
+                        return True
                     res = self.bt_table.read_row(key, filter_=self.row_filter)
                     if res is not None:
                         return True
