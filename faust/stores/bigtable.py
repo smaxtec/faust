@@ -52,9 +52,6 @@ class BigtableMutationBuffer:
         self.bigtable_table.mutate_rows(mutations)
         self.rows.clear()
 
-    def get(self, key: bytes) -> Tuple[Optional[DirectRow], Optional[bytes]]:
-        return self.rows.get(key, (None, None))
-
 
 class BigtableStartupCache:
     """
@@ -192,7 +189,7 @@ class BigTableStore(base.SerializedStore):
         row = None
         value = None
         if self.mutation_buffer_enabled:
-            row, value = self._mutation_buffer.get(key)
+            row, value = self._mutation_buffer.rows.get(key, tuple(None, None))
         if self._cache:
             if self.value_cache_type == "startup":
                 partition = key[0]
