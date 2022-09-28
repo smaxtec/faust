@@ -189,7 +189,7 @@ class BigTableStore(base.SerializedStore):
         row = None
         value = None
         if self.mutation_buffer_enabled:
-            row, value = self._mutation_buffer.rows.get(key, tuple(None, None))
+            row, value = self._mutation_buffer.rows.get(key, (None, None))
         if self._cache:
             if self.value_cache_type == "startup":
                 partition = key[0]
