@@ -246,7 +246,7 @@ class BigTableStore(base.SerializedStore):
 
     def _bigtable_set(self, key: bytes, value: Optional[bytes], persist_offset=False):
         if not persist_offset:
-            row, value = self._cache_get(key)
+            row, _ = self._cache_get(key)
             if row is None:
                 row = self.bt_table.direct_row(key)
             row.set_cell(
