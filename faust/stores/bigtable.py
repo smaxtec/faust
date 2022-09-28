@@ -500,8 +500,8 @@ class BigTableStore(base.SerializedStore):
         """
         try:
             if self.mutation_buffer_enabled and not recovery:
-                if self._mutation_buffer.full(tp.partition):
-                    self._mutation_buffer.flush(tp.partition)
+                if self._mutation_buffer.full():
+                    self._mutation_buffer.flush()
                     self.log.info(
                         f"Flushed BigtableMutationBuffer partition={tp.partition} "
                         f"for table {self.table_name}"
