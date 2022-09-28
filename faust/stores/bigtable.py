@@ -183,7 +183,6 @@ class BigTableStore(base.SerializedStore):
 
     def _cache_del(self, key: bytes, row: DirectRow) -> None:
         if self.mutation_buffer_enabled:
-            row = self._mutation_buffer.get(key)[0]
             self._mutation_buffer.submit(row, None)
         if self._cache:
             del self._cache[key]
@@ -192,7 +191,8 @@ class BigTableStore(base.SerializedStore):
         row = None
         value = None
         if self.mutation_buffer_enabled:
-            row, value = self._mutation_buffer.get(key)
+            if key in self._mutation_buffer.rows.keys():
+                row, value = self._mutation_buffer.get(key)
         if self._cache:
             if self.value_cache_type == "startup":
                 partition = key[0]
