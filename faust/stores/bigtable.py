@@ -195,7 +195,7 @@ class BigTableStore(base.SerializedStore):
                 partition = key[0]
                 if not self._cache.filled(partition):
                     self._cache.fill(self.bt_table, partition)
-            if key in self._cache:
+            if key in self._cache.data():
                 self.log.info(
                     f"Took value from startup cache, "
                     f"remaining size: {len(self._cache.data)} "
