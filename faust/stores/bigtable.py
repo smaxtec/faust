@@ -501,10 +501,11 @@ class BigTableStore(base.SerializedStore):
         try:
             if self.mutation_buffer_enabled and not recovery:
                 if self._mutation_buffer.full():
+                    num_mutations = len(self._mutation_buffer.rows)
                     self._mutation_buffer.flush()
                     self.log.info(
-                        f"Flushed BigtableMutationBuffer partition={tp.partition} "
-                        f"for table {self.table_name}"
+                        f"Flushed BigtableMutationBuffer with {num_mutations} "
+                        f"mutations for table {self.table_name}"
                     )
                     offset_key = self.get_offset_key(tp).encode()
                     self._bigtable_set(
