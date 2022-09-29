@@ -42,7 +42,7 @@ class BigtableMutationBuffer:
         self.rows = {}
 
     def full(self) -> bool:
-        return len(self.rows) > self.mutation_limit
+        return len(self.rows) >= self.mutation_limit
 
     def submit(self, row: DirectRow, value: Optional[bytes] = None):
         self.rows[row.row_key] = row, value
@@ -87,17 +87,15 @@ class BigtableStartupCache:
     def fill(self, table, partition) -> None:
         start_key = partition.to_bytes(1, "little")
         end_key = (partition + 1).to_bytes(1, "little")
+        self.log.info(f"Will fill BigtableStartupCache with {len(self.data)}...")
         for row in table.read_rows(
             start_key=start_key,
             end_key=end_key,
         ):
             row_val = BigTableStore.bigtable_exrtact_row_data(row)
             self.data[row.row_key] = row_val
+        self.log.info(f"Filled BigtableStartupCache with {len(self.data)} entries")
         self._filled_partitions[partition] = True
-        self.log.info(
-            f"Filled BigtableStartupCache with {len(self.data)} "
-            "entries"
-        )
 
 
 class BigTableStore(base.SerializedStore):
@@ -242,8 +240,6 @@ class BigTableStore(base.SerializedStore):
 
     def _bigtable_get(self, key: bytes):
         row, value = self._cache_get(key)
-        partition = key[0]
-
         if value is not None:
             return value
         elif row is not None and value is None:
