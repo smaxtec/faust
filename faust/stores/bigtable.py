@@ -535,12 +535,13 @@ class BigTableStore(base.SerializedStore):
             if self.mutation_buffer_enabled and not recovery:
                 if self._mutation_buffer.full():
                     num_mutations = len(self._mutation_buffer.rows)
-                    self._mutation_buffer.flush()
-
                     self.log.info(
-                        f"Flushed BigtableMutationBuffer with {num_mutations} "
-                        f"mutations for table {self.table_name}"
+                        f"Will flush BigtableMutationBuffer with {num_mutations} "
+                        f"mutations for table {self.table_name}..."
                     )
+                    self._mutation_buffer.flush()
+                    self.log.info("Flushed BigtableMutationBuffer")
+
                     if self.value_cache_type is "startup":
                         self.log.info(
                             f"Current size of ValueCache for {self.table_name}"
