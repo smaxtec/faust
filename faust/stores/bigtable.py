@@ -7,6 +7,7 @@ from typing import (
     Dict,
     Iterable,
     Iterator,
+    List,
     Optional,
     Tuple,
     Union,
@@ -37,9 +38,21 @@ class BigtableMutationBuffer:
     mutation_limit: int
 
     def __init__(self, bigtable_table: Table, mutation_limit: int) -> None:
-        self.mutation_limit = mutation_limit
-        self.bigtable_table = bigtable_table
+        self.mutation_limit: int = mutation_limit
+        self.bigtable_table: Table = bigtable_table
         self.rows = {}
+
+    def _apply_mutations(self) -> None:
+        for row, val in self.rows.values():
+            if val is None:
+                row.delete()
+            else:
+                column_family = list(self.bigtable_table.list_column_families().keys())[0]
+                row.set_cell(
+                    column_family,
+                    "DATA",
+                    val,
+                )
 
     def full(self) -> bool:
         return len(self.rows) >= self.mutation_limit
@@ -48,8 +61,9 @@ class BigtableMutationBuffer:
         self.rows[row.row_key] = row, value
 
     def flush(self):
-        mutations = list(zip(*self.rows.values()))[0]
-        self.bigtable_table.mutate_rows(mutations)
+        rows = list(zip(*self.rows.values()))[0]
+        self._apply_mutations()
+        self.bigtable_table.mutate_rows(rows)
         self.rows.clear()
 
 
@@ -59,11 +73,11 @@ class BigtableStartupCache:
     successful access to a key, will remove it.
     """
 
-    data: Dict = {}
-    _filled_partitions = {}
 
     def __init__(self) -> None:
         self.log = logging.getLogger(self.__class__.__name__)
+        self._filled_partitions = {}
+        self.data: Dict = {}
 
     def keys(self):
         return self.data.keys()
@@ -87,14 +101,19 @@ class BigtableStartupCache:
     def fill(self, table, partition) -> None:
         start_key = partition.to_bytes(1, "little")
         end_key = (partition + 1).to_bytes(1, "little")
-        self.log.info(f"Will fill BigtableStartupCache with {len(self.data)}...")
+        self.log.info(
+            f"Will fill BigtableStartupCache with {len(self.data)}..."
+        )
         for row in table.read_rows(
             start_key=start_key,
             end_key=end_key,
         ):
             row_val = BigTableStore.bigtable_exrtact_row_data(row)
             self.data[row.row_key] = row_val
-        self.log.info(f"Filled BigtableStartupCache with {len(self.data)} entries")
+        self.log.info(
+            f"Filled BigtableStartupCache with {len(self.data)} "
+            "entries"
+        )
         self._filled_partitions[partition] = True
 
 
@@ -271,13 +290,12 @@ class BigTableStore(base.SerializedStore):
             row.commit()
 
     def _bigtable_del(self, key: bytes):
+        row = self._cache_get(key)[0]
+        if row is None:
+            row = self.bt_table.direct_row(key)
         if not self.mutation_buffer_enabled:
             row.delete()
             row.commit()
-        else:
-            row = self._cache_get(key)[0]
-            if row is None:
-                row = self.bt_table.direct_row(key)
         self._cache_del(key, row)
 
     def _maybe_get_partition_from_message(self) -> Optional[int]:
