@@ -62,6 +62,9 @@ class BigtableStartupCache:
     data: Dict = {}
     _filled_partitions = {}
 
+    def __init__(self) -> None:
+        self.log = logging.getLogger(self.__class__.__name__)
+
     def keys(self):
         return self.data.keys()
 
@@ -91,6 +94,10 @@ class BigtableStartupCache:
             row_val = BigTableStore.bigtable_exrtact_row_data(row)
             self.data[row.row_key] = row_val
         self._filled_partitions[partition] = True
+        self.log.info(
+            f"Filled BigtableStartupCache with {len(self.data)} "
+            "entries"
+        )
 
 
 class BigTableStore(base.SerializedStore):
@@ -143,7 +150,6 @@ class BigTableStore(base.SerializedStore):
         self.bt_start_key, self.bt_end_key = options.get(
             BigTableStore.BT_READ_ROWS_BORDERS_KEY, [b"", b""]
         )
-        self._cache_setup_done = {}
         self.value_cache_type = options.get(BigTableStore.VALUE_CACHE_TYPE_KEY, None)
         self.value_cache_size = options.get(
             BigTableStore.VALUE_CACHE_SIZE_KEY, app.conf.table_key_index_size
@@ -171,10 +177,9 @@ class BigTableStore(base.SerializedStore):
             self._cache = LRUCache(limit=self.value_cache_size)
         else:
             raise NotImplementedError(f"VALUE_CACHE_TYPE '{self.value_cache_type}'")
-        self._cache_setup_done = True
 
-    def _cache_set(self, key: bytes, row: DirectRow, value: Optional[bytes]) -> None:
-        if self._cache:
+    def _cache_set(self, key: bytes, row: DirectRow, value: bytes) -> None:
+        if self._cache is not None:
             self._cache[key] = value
         if self.mutation_buffer_enabled:
             self._mutation_buffer.submit(row, value)
@@ -198,7 +203,7 @@ class BigTableStore(base.SerializedStore):
             if key in self._cache.keys():
                 self.log.info(
                     f"Took value from startup cache, "
-                    f"remaining size: {len(self._cache.data)} " # TODO: REMOVE
+                    f"remaining size: {len(self._cache.data)} "  # TODO: REMOVE
                     f"for table {self.table_name}:{partition}"
                 )
                 value = self._cache[key]
@@ -251,7 +256,7 @@ class BigTableStore(base.SerializedStore):
 
     def _bigtable_set(self, key: bytes, value: Optional[bytes], persist_offset=False):
         if not persist_offset:
-            row, _ = self._cache_get(key)
+            row = self._cache_get(key)[0]
             if row is None:
                 row = self.bt_table.direct_row(key)
             row.set_cell(
@@ -270,13 +275,14 @@ class BigTableStore(base.SerializedStore):
             row.commit()
 
     def _bigtable_del(self, key: bytes):
-        row = self._cache_get(key)[0]
-        if row is None:
-            row = self.bt_table.direct_row(key)
-        self._cache_del(key, row)
         if not self.mutation_buffer_enabled:
             row.delete()
             row.commit()
+        else:
+            row = self._cache_get(key)[0]
+            if row is None:
+                row = self.bt_table.direct_row(key)
+        self._cache_del(key, row)
 
     def _maybe_get_partition_from_message(self) -> Optional[int]:
         event = current_event()
@@ -516,10 +522,16 @@ class BigTableStore(base.SerializedStore):
                 if self._mutation_buffer.full():
                     num_mutations = len(self._mutation_buffer.rows)
                     self._mutation_buffer.flush()
+
                     self.log.info(
                         f"Flushed BigtableMutationBuffer with {num_mutations} "
                         f"mutations for table {self.table_name}"
                     )
+                    if self.value_cache_type is "startup":
+                        self.log.info(
+                            "Current size of ValueCache is:"
+                            f"{self._cache.data}"
+                        )
                     offset_key = self.get_offset_key(tp).encode()
                     self._bigtable_set(
                         offset_key, str(offset).encode(), persist_offset=True
