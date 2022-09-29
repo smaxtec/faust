@@ -529,8 +529,8 @@ class BigTableStore(base.SerializedStore):
                     )
                     if self.value_cache_type is "startup":
                         self.log.info(
-                            "Current size of ValueCache is:"
-                            f"{self._cache.data}"
+                            f"Current size of ValueCache for {self.table_name}"
+                            f" is:{self._cache.data}"
                         )
                     offset_key = self.get_offset_key(tp).encode()
                     self._bigtable_set(
