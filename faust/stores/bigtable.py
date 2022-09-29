@@ -196,6 +196,11 @@ class BigTableStore(base.SerializedStore):
                 if not self._cache.filled(partition):
                     self._cache.fill(self.bt_table, partition)
             if key in self._cache:
+                self.log.info(
+                    f"Took value from startup cache, "
+                    f"remaining size: {len(self._cache.data)} "
+                    f"for table {self.table_name}:{partition}"
+                )
                 value = self._cache[key]
         return row, value
 
@@ -406,6 +411,14 @@ class BigTableStore(base.SerializedStore):
                     start_key=start_key,
                     end_key=end_key,
                 ):
+                    if self.mutation_buffer_enabled:
+                        # We want to yield the mutation if any us buffered
+                        mut_row, value = self._mutation_buffer.rows.get(
+                            row.row_key, (None, None)
+                        )
+                        if mut_row is not None and value is not None:
+                            yield (row.row_key[1:], value)
+                            continue
                     yield (
                         row.row_key[1:],
                         self.bigtable_exrtact_row_data(row),
