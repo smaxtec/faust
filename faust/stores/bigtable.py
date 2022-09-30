@@ -7,7 +7,6 @@ from typing import (
     Dict,
     Iterable,
     Iterator,
-    List,
     Optional,
     Tuple,
     Union,
@@ -97,14 +96,12 @@ class BigtableStartupCache:
     def fill(self, table, partition) -> None:
         start_key = partition.to_bytes(1, "little")
         end_key = (partition + 1).to_bytes(1, "little")
-        self.log.info(f"Will fill BigtableStartupCache with {len(self.data)}...")
         for row in table.read_rows(
             start_key=start_key,
             end_key=end_key,
         ):
             row_val = BigTableStore.bigtable_exrtact_row_data(row)
             self.data[row.row_key] = row_val
-        self.log.info(f"Filled BigtableStartupCache with {len(self.data)} entries")
         self._filled_partitions[partition] = True
 
 
@@ -208,6 +205,10 @@ class BigTableStore(base.SerializedStore):
                 partition = key[0]
                 if not self._cache.filled(partition):
                     self._cache.fill(self.bt_table, partition)
+                    self.log.info(
+                        f"Filled BigtableStartupCache for {self.table_name}"
+                        f":{partition}, with {len(self._cache.data)} keys"
+                    )
             if key in self._cache.keys():
                 value = self._cache[key]
         return row, value
@@ -527,9 +528,7 @@ class BigTableStore(base.SerializedStore):
                         f"mutations for table {self.table_name}..."
                     )
                     self._mutation_buffer.flush()
-                    self.log.info("Flushed BigtableMutationBuffer")
-
-                    if self.value_cache_type is "startup":
+                    if self.value_cache_type == "startup":
                         self.log.info(
                             f"Current size of ValueCache for {self.table_name}"
                             f" is:{len(self._cache.data)}"
