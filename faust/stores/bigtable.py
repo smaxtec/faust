@@ -549,7 +549,8 @@ class BigTableStore(base.SerializedStore):
         except Exception as e:
             self.log.error(
                 f"Failed to commit offset for {self.table.name}"
-                " -> will crash faust app!"
+                " -> will crash faust app! "
+                f"TRACEBACK: {traceback.format_exc()}"
             )
             self.app._crash(e)
 
