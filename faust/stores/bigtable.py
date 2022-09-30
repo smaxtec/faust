@@ -54,6 +54,7 @@ class BigtableMutationBuffer:
                     "DATA",
                     val,
                 )
+            self.rows[row.row_key] = (row, val)
 
     def full(self) -> bool:
         return len(self.rows) >= self.mutation_limit
@@ -264,11 +265,12 @@ class BigTableStore(base.SerializedStore):
             row = self._cache_get(key)[0]
             if row is None:
                 row = self.bt_table.direct_row(key)
-            row.set_cell(
-                self.column_family_id,
-                self.column_name,
-                value,
-            )
+            if not self.mutation_buffer_enabled:
+                row.set_cell(
+                    self.column_family_id,
+                    self.column_name,
+                    value,
+                )
             self._cache_set(key, row, value)
         else:
             row = self.bt_table.direct_row(key)
