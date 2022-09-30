@@ -7,6 +7,7 @@ from typing import (
     Dict,
     Iterable,
     Iterator,
+    List,
     Optional,
     Tuple,
     Union,
@@ -41,32 +42,26 @@ class BigtableMutationBuffer:
         self.bigtable_table: Table = bigtable_table
         self.rows = {}
 
-    def _apply_mutations(self) -> None:
+    def flush(self) -> None:
+        mutated_rows = []
         for row, val in self.rows.values():
             if val is None:
                 row.delete()
             else:
-                column_family = list(self.bigtable_table.list_column_families().keys())[
-                    0
-                ]
                 row.set_cell(
-                    column_family,
+                    "FaustColumnFamily",
                     "DATA",
                     val,
                 )
-            self.rows[row.row_key] = (row, val)
+            mutated_rows.append(row)
+        self.bigtable_table.mutate_rows(mutated_rows)
+        self.rows.clear()
 
     def full(self) -> bool:
         return len(self.rows) >= self.mutation_limit
 
     def submit(self, row: DirectRow, value: Optional[bytes] = None):
         self.rows[row.row_key] = row, value
-
-    def flush(self):
-        rows = list(zip(*self.rows.values()))[0]
-        self._apply_mutations()
-        self.bigtable_table.mutate_rows(rows)
-        self.rows.clear()
 
 
 class BigtableStartupCache:
