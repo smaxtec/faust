@@ -461,6 +461,8 @@ class BigTableStore(base.SerializedStore):
                 if res is not None:
                     return True
             else:
+                self.log.info("Searching all partittions in _contains")
+                # First we want to check all caches
                 for partition in self._partitions_for_key(key):
                     key = self._get_key_with_partition(key, partition=partition)
                     row, val = self._cache_get(key)
@@ -468,6 +470,9 @@ class BigTableStore(base.SerializedStore):
                         return False
                     elif val is not None:
                         return True
+                # Now search the real table
+                for partition in self._partitions_for_key(key):
+                    key = self._get_key_with_partition(key, partition=partition)
                     res = self.bt_table.read_row(key, filter_=self.row_filter)
                     if res is not None:
                         return True
