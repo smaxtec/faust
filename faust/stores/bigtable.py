@@ -444,47 +444,8 @@ class BigTableStore(base.SerializedStore):
         return 0
 
     def _contains(self, key: bytes) -> bool:
-        try:
-            partition = self._maybe_get_partition_from_message()
-            if partition is not None:
-                key = self._get_key_with_partition(
-                    key,
-                    partition=partition,
-                )
-                row, val = self._cache_get(key)
-                if row is not None and val is None:
-                    return False
-                elif val is not None:
-                    return True
-
-                res = self.bt_table.read_row(key, filter_=self.row_filter)
-                if res is not None:
-                    return True
-            else:
-                self.log.info("Searching all partittions in _contains")
-                # First we want to check all caches
-                for partition in self._partitions_for_key(key):
-                    key = self._get_key_with_partition(key, partition=partition)
-                    row, val = self._cache_get(key)
-                    if row is not None and val is None:
-                        return False
-                    elif val is not None:
-                        return True
-                # Now search the real table
-                for partition in self._partitions_for_key(key):
-                    key = self._get_key_with_partition(key, partition=partition)
-                    res = self.bt_table.read_row(key, filter_=self.row_filter)
-                    if res is not None:
-                        return True
-            return False
-        except Exception as ex:
-            self.log.error(
-                f"FaustBigtableException Error in _contains for table "
-                f"{self.table_name} exception "
-                f"{ex} key {key}. "
-                f"Traceback: {traceback.format_exc()}"
-            )
-            raise ex
+        # NOT IMPLEMENTED FOR BIGTABLE
+        return False
 
     def _clear(self) -> None:
         """This is typically used to clear data.
