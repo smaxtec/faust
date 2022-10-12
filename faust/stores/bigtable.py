@@ -210,7 +210,6 @@ class BigTableStore(base.SerializedStore):
     ) -> Tuple[Optional[DirectRow], Optional[bytes]]:
         row = None
         value = None
-        self.log.info(f"called _bigtable_get with {key=}")
         if self.mutation_buffer_enabled:
             row, value = self._mutation_buffer.rows.get(key, (None, None))
         if self._cache is not None:
@@ -223,7 +222,11 @@ class BigTableStore(base.SerializedStore):
                         f":{partition}, with {len(self._cache.data)} keys"
                     )
             if key in self._cache.keys():
-                value = self._cache[key]
+                value_cache = self._cache[key]
+                if value is not None and value != value_cache:
+                    self.log.error(
+                        f"Cache inconsintency, mut_buf:{value}, cache{value_cache}"
+                    )
         if row is None and value is None:
             self.log.info(f"Cache miss for {key=} in {self.table_name}")
         return row, value
@@ -260,13 +263,14 @@ class BigTableStore(base.SerializedStore):
         return list(row_data.to_dict().values())[0][0].value
 
     def _bigtable_get(self, key: bytes):
-        self.log.info(f"called _bigtable_get with {key=}")
+        self.log.info(f"called _cache_get with {key=}")
         row, value = self._cache_get(key)
         if value is not None:
             return value
         elif row is not None and value is None:
             return value
         else:
+            self.log.info(f"called bigtable.read_row with {key=}")
             res = self.bt_table.read_row(key, filter_=self.row_filter)
             if res is None:
                 self.log.info(f"{key=} not found in {self.table_name}")
@@ -445,12 +449,14 @@ class BigTableStore(base.SerializedStore):
                     end_key=end_key,
                 ):
                     if self.mutation_buffer_enabled:
-                        # We want to yield the mutation if any us buffered
+                        # We want to yield the mutation if any is buffered
                         mut_row, value = self._mutation_buffer.rows.get(
                             row.row_key, (None, None)
                         )
-                        if mut_row is not None and value is not None:
+                        if value is not None:
                             yield (row.row_key[1:], value)
+                            continue
+                        elif mut_row is not None:
                             continue
                     yield (
                         row.row_key[1:],
