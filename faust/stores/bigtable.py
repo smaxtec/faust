@@ -210,6 +210,7 @@ class BigTableStore(base.SerializedStore):
     ) -> Tuple[Optional[DirectRow], Optional[bytes]]:
         row = None
         value = None
+        self.log.info(f"called _bigtable_get with {key=}")
         if self.mutation_buffer_enabled:
             row, value = self._mutation_buffer.rows.get(key, (None, None))
         if self._cache is not None:
@@ -223,6 +224,8 @@ class BigTableStore(base.SerializedStore):
                     )
             if key in self._cache.keys():
                 value = self._cache[key]
+        if row is None and value is None:
+            self.log.info(f"Cache miss for {key=} in {self.table_name}")
         return row, value
 
     def _bigtable_setup(self, table, options: Dict[str, Any]):
@@ -274,6 +277,7 @@ class BigTableStore(base.SerializedStore):
         self, key: bytes, value: Optional[bytes], persist_offset=False
     ):
         if not persist_offset:
+            self.log.info(f"called _bigtable_set with {key=}")
             row = self._cache_get(key)[0]
             if row is None:
                 row = self.bt_table.direct_row(key)
