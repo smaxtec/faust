@@ -227,8 +227,6 @@ class BigTableStore(base.SerializedStore):
                     self.log.error(
                         f"Cache inconsintency, mut_buf:{value}, cache{value_cache}"
                     )
-        if row is None and value is None:
-            self.log.info(f"Cache miss for {key=} in {self.table_name}")
         return row, value
 
     def _bigtable_setup(self, table, options: Dict[str, Any]):
@@ -263,7 +261,7 @@ class BigTableStore(base.SerializedStore):
         return list(row_data.to_dict().values())[0][0].value
 
     def _bigtable_get(self, key: bytes):
-        self.log.info(f"called _cache_get with {key=}")
+        self.log.info(f"called _cache_get with {key=} in {self.table_name}")
         row, value = self._cache_get(key)
         if value is not None:
             return value
@@ -281,7 +279,7 @@ class BigTableStore(base.SerializedStore):
         self, key: bytes, value: Optional[bytes], persist_offset=False
     ):
         if not persist_offset:
-            self.log.info(f"called _bigtable_set with {key=}")
+            self.log.info(f"called _bigtable_set with {key=} in {self.table_name}")
             row = self._cache_get(key)[0]
             if row is None:
                 row = self.bt_table.direct_row(key)
@@ -334,11 +332,13 @@ class BigTableStore(base.SerializedStore):
 
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
+            self.log.info(f"called _get with {key=} in {self.table_name}")
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
                 key_with_partition = self._get_key_with_partition(
                     key, partition=partition
                 )
+                self.log.info(f"will call _bigtable_get with {key=} in {self.table_name}:{partition}")
                 value = self._bigtable_get(key_with_partition)
                 if value is not None:
                     self._key_index[key] = partition
@@ -347,6 +347,7 @@ class BigTableStore(base.SerializedStore):
                     f"{key=} not found in {self.table_name} on {partition=}"
                 )
             else:
+                self.log.info(f"will call _bigtable_get with {key=} in {self.table_name}:all")
                 for partition in self._partitions_for_key(key):
                     key_with_partition = self._get_key_with_partition(
                         key, partition=partition
