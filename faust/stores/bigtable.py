@@ -295,6 +295,7 @@ class BigTableStore(base.SerializedStore):
             # FIXME: This is just a hack to abuse the mutation buffer
             # as a shortterm get cache 
             self._cache_set(key, row, value)
+        return value
 
     def _bigtable_set(
         self, key: bytes, value: Optional[bytes], persist_offset=False
