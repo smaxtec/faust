@@ -1,5 +1,6 @@
 """BigTable storage."""
 import logging
+import time
 import traceback
 from typing import (
     Any,
@@ -69,26 +70,39 @@ class BigtableStartupCache:
     successful access to a key, will remove it.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, ttl: Optional[int]) -> None:
         self.log = logging.getLogger(self.__class__.__name__)
         self._filled_partitions = {}
         self.data: Dict = {}
-
-    def keys(self):
-        return self.data.keys()
+        self.ttl = ttl
+        self.init_ts = int(time.time())
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, key):
-        return self.data.pop(key, None)
+        res = self.data.pop(key, None)
+        self._maybe_ttl_clear()
+        return res
 
     def __setitem__(self, key, _) -> None:
         if key in self.data.keys():
             self.data.pop(key, None)
+        self._maybe_ttl_clear()
 
     def __delitem__(self, key):
         self.data.pop(key, None)
+
+    def _maybe_ttl_clear(self):
+        if self.ttl is not None:
+            now = int(time.time())
+            if now > self.init_ts + self.ttl:
+                self.data = {}
+                self.ttl = None
+                self.log.info("Cleard startupcache because TTL is over")
+
+    def keys(self):
+        return self.data.keys()
 
     def filled(self, partition):
         return self._filled_partitions.get(partition, False)
@@ -117,6 +131,7 @@ class BigTableStore(base.SerializedStore):
     _mutation_buffer: Optional[BigtableMutationBuffer]
     VALUE_CACHE_TYPE_KEY = "value_cache_type_key"
     VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
+    STARTUPCACHE_TTL_KEY = "startupcache_ttl_key"
     BT_PROJECT_KEY = "bt_project_key"
     BT_INSTANCE_KEY = "bt_instance_key"
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
@@ -142,7 +157,7 @@ class BigTableStore(base.SerializedStore):
         try:
             self._bigtable_setup(table, options)
             self._setup_mutation_buffer(options)
-            self._setup_value_cache()
+            self._setup_value_cache(options)
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
@@ -183,9 +198,12 @@ class BigTableStore(base.SerializedStore):
                 self.bt_table, limit
             )
 
-    def _setup_value_cache(self) -> None:
+    def _setup_value_cache(self, options) -> None:
         if self.value_cache_type == "startup":
-            self._cache = BigtableStartupCache()
+            startup_cache_ttl = options.get(
+                BigTableStore.STARTUPCACHE_TTL_KEY, None
+            )
+            self._cache = BigtableStartupCache(startup_cache_ttl)
         elif self.value_cache_type == "forever":
             self._cache = LRUCache(limit=self.value_cache_size)
         else:
