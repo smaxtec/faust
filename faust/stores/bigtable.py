@@ -478,7 +478,7 @@ class BigTableStore(base.SerializedStore):
 
     def _contains(self, key: bytes) -> bool:
         # NOT IMPLEMENTED FOR BIGTABLE
-        return False
+        return True
 
     def _clear(self) -> None:
         """This is typically used to clear data.
