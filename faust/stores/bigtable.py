@@ -376,6 +376,7 @@ class BigTableStore(base.SerializedStore):
             key_with_partition = self._get_key_with_partition(
                 key, partition=partition
             )
+            self.log.info(f"called _set with {key=} in {self.table_name}:{partition}")
             self._bigtable_set(key_with_partition, value)
             self._key_index[key] = partition
         except Exception as ex:
