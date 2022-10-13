@@ -286,10 +286,15 @@ class BigTableStore(base.SerializedStore):
             return value
         else:
             res = self.bt_table.read_row(key, filter_=self.row_filter)
+            row = self.bt_table.direct_row(key)
             if res is None:
                 self.log.info(f"{key=} not found in {self.table_name}")
-                return None
-            return self.bigtable_exrtact_row_data(res)
+                value = None
+            else:
+                value: bytes = self.bigtable_exrtact_row_data(res)
+            # FIXME: This is just a hack to abuse the mutation buffer
+            # as a shortterm get cache 
+            self._cache_set(key, row, value)
 
     def _bigtable_set(
         self, key: bytes, value: Optional[bytes], persist_offset=False
@@ -489,41 +494,7 @@ class BigTableStore(base.SerializedStore):
 
     def _contains(self, key: bytes) -> bool:
         try:
-            partition = self._maybe_get_partition_from_message()
-            if partition is not None:
-                key = self._get_key_with_partition(
-                    key,
-                    partition=partition,
-                )
-                row, val = self._cache_get(key)
-                if val is not None:
-                    return True
-                elif row is not None:
-                    return False
-                else:
-                    res = self.bt_table.read_row(key, filter_=self.row_filter)
-                    return res is not None
-            else:
-                self.log.info("Searching all partittions in _contains")
-                # First we want to check all caches
-                for partition in self._partitions_for_key(key):
-                    key = self._get_key_with_partition(
-                        key, partition=partition
-                    )
-                    row, val = self._cache_get(key)
-                    if row is not None and val is None:
-                        return False
-                    elif val is not None:
-                        return True
-                # Now search the real table
-                for partition in self._partitions_for_key(key):
-                    key = self._get_key_with_partition(
-                        key, partition=partition
-                    )
-                    res = self.bt_table.read_row(key, filter_=self.row_filter)
-                    if res is not None:
-                        return True
-            return False
+            return self._get(key) is not None
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _contains for table "
