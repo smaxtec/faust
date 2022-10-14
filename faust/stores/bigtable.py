@@ -207,7 +207,7 @@ class BigTableStore(base.SerializedStore):
             )
             self._cache = BigtableStartupCache(startup_cache_ttl)
             start = time.time()
-            self._cache.fill(self.bt_table, self.offset_key_prefix)
+            self._cache.fill(self.bt_table, self.offset_key_prefix.encode())
             end = time.time()
 
             self.log.info(
@@ -225,8 +225,9 @@ class BigTableStore(base.SerializedStore):
             )
         if self.key_cache_enabled and self._key_cache is None:
             self._key_cache = set()
+            offset_prefix = self.offset_key_prefix.encode()
             for row in self.bt_table.read_rows():
-                if self.offset_key_prefix in row.row_key:
+                if offset_prefix in row.row_key:
                     continue
                 self._key_cache.add(row.row_key)
 
