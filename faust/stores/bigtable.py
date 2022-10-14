@@ -432,10 +432,8 @@ class BigTableStore(base.SerializedStore):
 
     def _iterkeys(self) -> Iterator[bytes]:
         try:
-            self.log.info(f"Started _iterkeys for {self.table_name}")
             for row in self._iteritems():
                 yield row[0]
-            self.log.info(f"Finished _iterkeys for {self.table_name}")
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _iterkeys "
@@ -510,11 +508,8 @@ class BigTableStore(base.SerializedStore):
                     key, partition=partition
                 )
                 if self._key_cache is not None:
-                    self.log.info(
-                        "Contains took value of key_cache "
-                        "with size {self._key_cache}"
-                    )
-                    return key_with_partition in self._key_cache
+                    if key_with_partition in self._key_cache:
+                        return True
                 else:
                     return self._bigtable_get(key_with_partition) is not None
             else:
@@ -527,12 +522,18 @@ class BigTableStore(base.SerializedStore):
                             "Contains took value of key_cache "
                             "with size {self._key_cache} for all partitions"
                         )
-                        return key_with_partition in self._key_cache
+                        if key_with_partition in self._key_cache:
+                            return True
                     else:
                         return (
                             self._bigtable_get(key_with_partition) is not None
                         )
-                return False
+            if self._key_cache is not None:
+                self.log.info(
+                    f"Contains miss with size {len(self._key_cache)}, "
+                    f"for {key=} in table {self.table_name}"
+                )
+            return False
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _contains for table "
