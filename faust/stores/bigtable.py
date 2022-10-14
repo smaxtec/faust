@@ -207,7 +207,7 @@ class BigTableStore(base.SerializedStore):
             self._cache.fill(self.bt_table, self.offset_key_prefix.encode())
             end = time.time()
             logging.getLogger(__name__).info(
-                f"Filled BigtableStartupCache for {self.table_name}"
+                "Filled BigtableStartupCache for"
                 f" in {start-end}s"
             )
             if self.key_cache_enabled:
