@@ -107,16 +107,12 @@ class BigtableStartupCache:
     def filled(self, partition):
         return self._filled_partitions.get(partition, False)
 
-    def fill(self, table, partition) -> None:
-        start_key = partition.to_bytes(1, "little")
-        end_key = (partition + 1).to_bytes(1, "little")
-        for row in table.read_rows(
-            start_key=start_key,
-            end_key=end_key,
-        ):
+    def fill(self, table, offset_key_prefix) -> None:
+        for row in table.read_rows():
+            if offset_key_prefix in row.row_key:
+                continue
             row_val = BigTableStore.bigtable_exrtact_row_data(row)
             self.data[row.row_key] = row_val
-        self._filled_partitions[partition] = True
 
 
 class BigTableStore(base.SerializedStore):
@@ -129,6 +125,7 @@ class BigTableStore(base.SerializedStore):
     _key_index: LRUCache[bytes, int]
     _cache: Optional[Union[LRUCache[bytes, bytes], BigtableStartupCache]]
     _mutation_buffer: Optional[BigtableMutationBuffer]
+    KEY_CACHE_ENABLE_KEY = "key_cache_enable_key"
     VALUE_CACHE_TYPE_KEY = "value_cache_type_key"
     VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
     STARTUPCACHE_TTL_KEY = "startupcache_ttl_key"
@@ -153,17 +150,22 @@ class BigTableStore(base.SerializedStore):
         self._set_options(app, options)
         self._key_index = LRUCache(limit=app.conf.table_key_index_size)
         self._cache = None
+        self._key_cache = None
         self._mutation_buffer = None
         try:
             self._bigtable_setup(table, options)
             self._setup_mutation_buffer(options)
-            self._setup_value_cache(options)
+            self._setup_key_and_value_cache(options)
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
         super().__init__(url, app, table, **kwargs)
 
     def _set_options(self, app, options) -> None:
+        self.key_cache_enabled = options.get(
+            BigTableStore.KEY_CACHE_ENABLE_KEY, False
+        )
+
         self.table_name_generator = options.get(
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
         )
@@ -198,30 +200,51 @@ class BigTableStore(base.SerializedStore):
                 self.bt_table, limit
             )
 
-    def _setup_value_cache(self, options) -> None:
+    def _setup_key_and_value_cache(self, options) -> None:
         if self.value_cache_type == "startup":
             startup_cache_ttl = options.get(
                 BigTableStore.STARTUPCACHE_TTL_KEY, None
             )
             self._cache = BigtableStartupCache(startup_cache_ttl)
+            start = time.time()
+            self._cache.fill(self.bt_table, self.offset_key_prefix)
+            end = time.time()
+
+            self.log.info(
+                f"Filled BigtableStartupCache for {self.table_name}"
+                f" in {start-end}s"
+            )
+            if self.key_cache_enabled:
+                self._key_cache = set(self._cache.keys())
+
         elif self.value_cache_type == "forever":
             self._cache = LRUCache(limit=self.value_cache_size)
         else:
             raise NotImplementedError(
                 f"VALUE_CACHE_TYPE '{self.value_cache_type}'"
             )
+        if self.key_cache_enabled and self._key_cache is None:
+            self._key_cache = set()
+            for row in self.bt_table.read_rows():
+                if self.offset_key_prefix in row.row_key:
+                    continue
+                self._key_cache.add(row.row_key)
 
     def _cache_set(self, key: bytes, row: DirectRow, value: bytes) -> None:
         if self._cache is not None:
             self._cache[key] = value
         if self.mutation_buffer_enabled:
             self._mutation_buffer.submit(row, value)
+        if self._key_cache:
+            self._key_cache.add(key)
 
     def _cache_del(self, key: bytes, row: DirectRow) -> None:
         if self.mutation_buffer_enabled:
             self._mutation_buffer.submit(row, None)
         if self._cache:
             del self._cache[key]
+        if self._key_cache:
+            self._key_cache.discard(key)
 
     def _cache_get(
         self, key: bytes
@@ -293,7 +316,7 @@ class BigTableStore(base.SerializedStore):
             else:
                 value: bytes = self.bigtable_exrtact_row_data(res)
             # FIXME: This is just a hack to abuse the mutation buffer
-            # as a shortterm get cache 
+            # as a shortterm get cache
             self._cache_set(key, row, value)
         return value
 
@@ -495,7 +518,27 @@ class BigTableStore(base.SerializedStore):
 
     def _contains(self, key: bytes) -> bool:
         try:
-            return self._get(key) is not None
+            partition = self._maybe_get_partition_from_message()
+            if partition is not None:
+                key_with_partition = self._get_key_with_partition(
+                    key, partition=partition
+                )
+                if self._key_cache:
+                    return key_with_partition in self._key_cache
+                else:
+                    return self._bigtable_get(key_with_partition) is not None
+            else:
+                for partition in self._partitions_for_key(key):
+                    key_with_partition = self._get_key_with_partition(
+                        key, partition=partition
+                    )
+                    if self._key_cache:
+                        return key_with_partition in self._key_cache
+                    else:
+                        return (
+                            self._bigtable_get(key_with_partition) is not None
+                        )
+                return False
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _contains for table "
