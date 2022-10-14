@@ -158,6 +158,7 @@ class BigTableStore(base.SerializedStore):
             raise ex
         super().__init__(url, app, table, **kwargs)
 
+
     def _set_options(self, app, options) -> None:
         self.key_cache_enabled = options.get(
             BigTableStore.KEY_CACHE_ENABLE_KEY, False
@@ -650,12 +651,14 @@ class BigTableStore(base.SerializedStore):
             row = self.bt_table.direct_row(offset_key)
             if msg.value is None:
                 row.delete()
+                self._cache_del(key, row)
             else:
                 row.set_cell(
                     self.column_family_id,
                     self.column_name,
                     msg.value,
                 )
+                self._cache_set(offset_key, row, msg.value)
             row_mutations.append(row)
         self._persist_changelog_batch(
             row_mutations,
