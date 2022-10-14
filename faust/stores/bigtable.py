@@ -104,9 +104,6 @@ class BigtableStartupCache:
     def keys(self):
         return self.data.keys()
 
-    def filled(self, partition):
-        return self._filled_partitions.get(partition, False)
-
     def fill(self, table, offset_key_prefix) -> None:
         for row in table.read_rows():
             if offset_key_prefix in row.row_key:
@@ -255,14 +252,6 @@ class BigTableStore(base.SerializedStore):
         if self.mutation_buffer_enabled:
             row, value = self._mutation_buffer.rows.get(key, (None, None))
         if self._cache is not None:
-            if self.value_cache_type == "startup":
-                partition = key[0]
-                if not self._cache.filled(partition):
-                    self._cache.fill(self.bt_table, partition)
-                    self.log.info(
-                        f"Filled BigtableStartupCache for {self.table_name}"
-                        f":{partition}, with {len(self._cache.data)} keys"
-                    )
             if key in self._cache.keys():
                 value_cache = self._cache[key]
                 if value is not None and value != value_cache:
