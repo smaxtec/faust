@@ -522,6 +522,10 @@ class BigTableStore(base.SerializedStore):
                         key, partition=partition
                     )
                     if self._key_cache:
+                        self.log.info(
+                            "Contains took value of key_cache "
+                            "with size {self._key_cache} for all partitions"
+                        )
                         return key_with_partition in self._key_cache
                     else:
                         return (
