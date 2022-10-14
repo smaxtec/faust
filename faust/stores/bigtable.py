@@ -207,8 +207,7 @@ class BigTableStore(base.SerializedStore):
             self._cache.fill(self.bt_table, self.offset_key_prefix.encode())
             end = time.time()
             logging.getLogger(__name__).info(
-                "Filled BigtableStartupCache for"
-                f" in {start-end}s"
+                f"Filled BigtableStartupCache for in {start-end}s"
             )
             if self.key_cache_enabled:
                 self._key_cache = set(self._cache.keys())
@@ -304,9 +303,6 @@ class BigTableStore(base.SerializedStore):
                 value = None
             else:
                 value: bytes = self.bigtable_exrtact_row_data(res)
-            # FIXME: This is just a hack to abuse the mutation buffer
-            # as a shortterm get cache
-            self._cache_set(key, row, value)
         return value
 
     def _bigtable_set(
@@ -512,7 +508,11 @@ class BigTableStore(base.SerializedStore):
                 key_with_partition = self._get_key_with_partition(
                     key, partition=partition
                 )
-                if self._key_cache:
+                if self._key_cache is not None:
+                    self.log.info(
+                        "Contains took value of key_cache "
+                        "with size {self._key_cache}"
+                    )
                     return key_with_partition in self._key_cache
                 else:
                     return self._bigtable_get(key_with_partition) is not None
