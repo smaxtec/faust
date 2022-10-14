@@ -518,21 +518,12 @@ class BigTableStore(base.SerializedStore):
                         key, partition=partition
                     )
                     if self._key_cache:
-                        self.log.info(
-                            "Contains took value of key_cache "
-                            "with size {self._key_cache} for all partitions"
-                        )
                         if key_with_partition in self._key_cache:
                             return True
                     else:
                         return (
                             self._bigtable_get(key_with_partition) is not None
                         )
-            if self._key_cache is not None:
-                self.log.info(
-                    f"Contains miss with size {len(self._key_cache)}, "
-                    f"for {key=} in table {self.table_name}"
-                )
             return False
         except Exception as ex:
             self.log.error(
