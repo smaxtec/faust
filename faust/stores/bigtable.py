@@ -325,7 +325,7 @@ class BigTableStore(base.SerializedStore):
         for row in self.bt_table.read_rows(row_set=rows):
             # First hit will return
             return row.row_key, BigTableStore.bigtable_exrtact_row_data(
-                row.data
+                row
             )
 
     def _bigtable_set(
