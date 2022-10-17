@@ -395,9 +395,6 @@ class BigTableStore(base.SerializedStore):
                 key_with_partition = self._get_key_with_partition(
                     key, partition=partition
                 )
-                if self.key_cache_enabled:
-                    if self._check_key_cache(key_with_partition):
-                        return None
 
                 value = self._bigtable_get(key_with_partition)
                 if value is not None:
@@ -412,14 +409,7 @@ class BigTableStore(base.SerializedStore):
                     key_with_partition = self._get_key_with_partition(
                         key, partition=partition
                     )
-                    if self.key_cache_enabled:
-                        if self._check_key_cache(key):
-                            keys.add(key_with_partition)
-                    else:
-                        keys.add(key_with_partition)
-
-                if len(keys) == 0:
-                    return None
+                    keys.add(key_with_partition)
 
                 key, value = self._bigtable_get_range(keys)
                 if value is not None:
