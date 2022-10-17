@@ -9,6 +9,7 @@ from typing import (
     Iterable,
     Iterator,
     Optional,
+    Set,
     Tuple,
     Union,
 )
@@ -17,6 +18,7 @@ from google.cloud.bigtable import column_family
 from google.cloud.bigtable.client import Client
 from google.cloud.bigtable.instance import Instance
 from google.cloud.bigtable.row import DirectRow
+from google.cloud.bigtable.row_set import RowSet
 from google.cloud.bigtable.row_filters import CellsColumnLimitFilter
 from google.cloud.bigtable.table import Table
 from mode.utils.collections import LRUCache
@@ -306,6 +308,24 @@ class BigTableStore(base.SerializedStore):
                 value: bytes = self.bigtable_exrtact_row_data(res)
         return value
 
+    def _bigtable_get_range(self, keys: Set[bytes]) -> Tuple[bytes, Optional[bytes]]:
+        # first search cache:
+        for key in keys:
+            row, value = self._cache_get(key)
+            if value is not None:
+                return key, value
+            elif row is not None and value is None:
+                return key, value
+
+        rows = RowSet()
+        for key in keys:
+            rows.add_row_key(key)
+
+        for row in self.bt_table.read_rows(row_set=rows):
+            # First hit will return
+            return row.row_key, BigTableStore.bigtable_exrtact_row_data(row.data)
+
+
     def _bigtable_set(
         self, key: bytes, value: Optional[bytes], persist_offset=False
     ):
@@ -375,14 +395,17 @@ class BigTableStore(base.SerializedStore):
                     f"{key=} not found in {self.table_name} on {partition=}"
                 )
             else:
+                keys = set()
                 for partition in self._partitions_for_key(key):
                     key_with_partition = self._get_key_with_partition(
                         key, partition=partition
                     )
-                    value = self._bigtable_get(key_with_partition)
-                    if value is not None:
-                        self._key_index[key] = partition
-                        return value
+                    keys.add(key_with_partition)
+
+                key, value = self._bigtable_get_range(keys)
+                if value is not None:
+                    self._key_index[key] = partition
+                    return value
             # No key was found
             self.log.warning(f"{key=} not found in {self.table_name}")
             return None
