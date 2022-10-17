@@ -382,19 +382,23 @@ class BigTableStore(base.SerializedStore):
         except KeyError:
             return range(self.app.conf.topic_partitions)
 
-    def _get(self, key: bytes) -> Optional[bytes]:
+    def _check_key_cache(self, key):
         if self._key_cache:
-            if key not in self._key_cache:
-                self.log.info(
-                    "Key was not found in key_cache, will return None"
-                )
-                return None
+            return key in self._key_cache
+        else:
+            return False
+
+    def _get(self, key: bytes) -> Optional[bytes]:
         try:
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
                 key_with_partition = self._get_key_with_partition(
                     key, partition=partition
                 )
+                if self.key_cache_enabled:
+                    if self._check_key_cache(key_with_partition):
+                        return None
+
                 value = self._bigtable_get(key_with_partition)
                 if value is not None:
                     self._key_index[key] = partition
@@ -408,7 +412,14 @@ class BigTableStore(base.SerializedStore):
                     key_with_partition = self._get_key_with_partition(
                         key, partition=partition
                     )
-                    keys.add(key_with_partition)
+                    if self.key_cache_enabled:
+                        if self._check_key_cache(key):
+                            keys.add(key_with_partition)
+                    else:
+                        keys.add(key_with_partition)
+
+                if len(keys) == 0:
+                    return None
 
                 key, value = self._bigtable_get_range(keys)
                 if value is not None:
@@ -539,9 +550,8 @@ class BigTableStore(base.SerializedStore):
                 key_with_partition = self._get_key_with_partition(
                     key, partition=partition
                 )
-                if self._key_cache is not None:
-                    if key_with_partition in self._key_cache:
-                        return True
+                if self.key_cache_enabled:
+                    return self._check_key_cache(key_with_partition)
                 else:
                     return self._bigtable_get(key_with_partition) is not None
             else:
@@ -549,8 +559,8 @@ class BigTableStore(base.SerializedStore):
                     key_with_partition = self._get_key_with_partition(
                         key, partition=partition
                     )
-                    if self._key_cache:
-                        if key_with_partition in self._key_cache:
+                    if self.key_cache_enabled:
+                        if self._check_key_cache(key_with_partition):
                             return True
                     else:
                         return (
