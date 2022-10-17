@@ -160,7 +160,6 @@ class BigTableStore(base.SerializedStore):
             raise ex
         super().__init__(url, app, table, **kwargs)
 
-
     def _set_options(self, app, options) -> None:
         self.key_cache_enabled = options.get(
             BigTableStore.KEY_CACHE_ENABLE_KEY, False
@@ -308,7 +307,9 @@ class BigTableStore(base.SerializedStore):
                 value: bytes = self.bigtable_exrtact_row_data(res)
         return value
 
-    def _bigtable_get_range(self, keys: Set[bytes]) -> Tuple[bytes, Optional[bytes]]:
+    def _bigtable_get_range(
+        self, keys: Set[bytes]
+    ) -> Tuple[bytes, Optional[bytes]]:
         # first search cache:
         for key in keys:
             row, value = self._cache_get(key)
@@ -323,8 +324,9 @@ class BigTableStore(base.SerializedStore):
 
         for row in self.bt_table.read_rows(row_set=rows):
             # First hit will return
-            return row.row_key, BigTableStore.bigtable_exrtact_row_data(row.data)
-
+            return row.row_key, BigTableStore.bigtable_exrtact_row_data(
+                row.data
+            )
 
     def _bigtable_set(
         self, key: bytes, value: Optional[bytes], persist_offset=False
@@ -404,7 +406,8 @@ class BigTableStore(base.SerializedStore):
 
                 key, value = self._bigtable_get_range(keys)
                 if value is not None:
-                    self._key_index[key] = partition
+                    partition = key[1]
+                    self._key_index[key[1:]] = partition
                     return value
             # No key was found
             self.log.warning(f"{key=} not found in {self.table_name}")
