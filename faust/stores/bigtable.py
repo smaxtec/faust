@@ -383,6 +383,12 @@ class BigTableStore(base.SerializedStore):
             return range(self.app.conf.topic_partitions)
 
     def _get(self, key: bytes) -> Optional[bytes]:
+        if self._key_cache:
+            if key not in self._key_cache:
+                self.log.info(
+                    "Key was not found in key_cache, will return None"
+                )
+                return None
         try:
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
