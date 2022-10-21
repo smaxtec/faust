@@ -74,23 +74,24 @@ class BigtableStartupCache:
 
     def __init__(self, ttl: Optional[int]) -> None:
         self.log = logging.getLogger(self.__class__.__name__)
-        self._filled_partitions = {}
         self.data: Dict = {}
         self.ttl = ttl
+        self.ttl_over = False
         self.init_ts = int(time.time())
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, key):
-        res = self.data.pop(key, None)
-        self._maybe_ttl_clear()
-        return res
+        if self.ttl is not None:
+            res = self.data[key]
+            self._maybe_ttl_clear()
+            return res
 
-    def __setitem__(self, key, _) -> None:
-        if key in self.data.keys():
-            self.data.pop(key, None)
+    def __setitem__(self, key, value) -> None:
         self._maybe_ttl_clear()
+        if self.ttl is not None:
+            self.data[key] = value
 
     def __delitem__(self, key):
         self.data.pop(key, None)
@@ -324,9 +325,7 @@ class BigTableStore(base.SerializedStore):
 
         for row in self.bt_table.read_rows(row_set=rows):
             # First hit will return
-            return row.row_key, BigTableStore.bigtable_exrtact_row_data(
-                row
-            )
+            return row.row_key, BigTableStore.bigtable_exrtact_row_data(row)
 
     def _bigtable_set(
         self, key: bytes, value: Optional[bytes], persist_offset=False
