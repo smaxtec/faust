@@ -547,6 +547,7 @@ class BigTableStore(base.SerializedStore):
                     found = self._bigtable_get(key_with_partition) is not None
                 if found:
                     self._key_index[key] = partition
+                return found
             else:
                 for partition in self._partitions_for_key(key):
                     key_with_partition = self._get_key_with_partition(
