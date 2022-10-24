@@ -43,7 +43,7 @@ class BigtableMutationBuffer:
         self, bigtable_table: Table, mutation_freq: int, mutation_limit: int
     ) -> None:
         self.mutation_freq: int = mutation_freq
-        self.last_flush = int(time.time()) # set to now
+        self.last_flush = int(time.time())  # set to now
         self.mutation_limit: int = mutation_limit
         self.bigtable_table: Table = bigtable_table
         self.rows = {}
@@ -62,7 +62,7 @@ class BigtableMutationBuffer:
             mutated_rows.append(row)
         self.bigtable_table.mutate_rows(mutated_rows)
         self.rows.clear()
-        self.last_flush = int(time.time()) # set to now
+        self.last_flush = int(time.time())  # set to now
 
     def check_flush(self) -> bool:
         limit_reached = len(self.rows) >= self.mutation_limit
