@@ -630,11 +630,6 @@ class BigTableStore(base.SerializedStore):
                         f"mutations for table {self.table_name}..."
                     )
                     self._mutation_buffer.flush()
-                    if self.value_cache_type == "startup":
-                        self.log.info(
-                            f"Current size of ValueCache for {self.table_name}"
-                            f" is:{len(self._cache.data)}"
-                        )
                     offset_key = self.get_offset_key(tp).encode()
                     self._bigtable_set(
                         offset_key, str(offset).encode(), persist_offset=True
