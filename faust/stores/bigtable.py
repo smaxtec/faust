@@ -556,8 +556,6 @@ class BigTableStore(base.SerializedStore):
                     found = self._check_key_cache(key_with_partition)
                 else:
                     found = self._bigtable_get(key_with_partition) is not None
-                if found:
-                    self._key_index[key] = partition
                 return found
             else:
                 for partition in self._partitions_for_key(key):
@@ -566,7 +564,6 @@ class BigTableStore(base.SerializedStore):
                     )
                     if self.key_cache_enabled:
                         if self._check_key_cache(key_with_partition):
-                            self._key_index[key] = partition
                             return True
                     else:
                         return (
