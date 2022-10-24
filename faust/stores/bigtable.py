@@ -270,6 +270,7 @@ class BigTableStore(base.SerializedStore):
                     self.log.error(
                         f"Cache inconsintency, mut_buf:{value}, cache{value_cache}"
                     )
+                value = value_cache
         return row, value
 
     def _bigtable_setup(self, table, options: Dict[str, Any]):
