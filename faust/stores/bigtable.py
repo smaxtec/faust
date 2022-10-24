@@ -287,7 +287,8 @@ class BigTableStore(base.SerializedStore):
         self.column_family_id = "FaustColumnFamily"
         if not self.bt_table.exists():
             logging.getLogger(__name__).info(
-                f"BigTableStore: Making new bigtablestore with {self.bt_table_name=}"
+                f"BigTableStore: Making new bigtablestore with {self.bt_table_name=} "
+                f"for {self.table_name}"
             )
             # TODO: add columns families to options
             self.bt_table.create(
