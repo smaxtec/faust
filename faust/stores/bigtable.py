@@ -50,7 +50,8 @@ class BigtableMutationBuffer:
 
     def flush(self) -> None:
         mutated_rows = []
-        for row, val in self.rows.values():
+        rows_to_flush = list(self.rows.values()) # Needed for threadsafety
+        for row, val in rows_to_flush:
             if val is None:
                 row.delete()
             else:
