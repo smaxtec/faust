@@ -39,7 +39,11 @@ class BigtableMutationBuffer:
     rows: Dict[bytes, Tuple[DirectRow, Optional[bytes]]]
     mutation_limit: int
 
-    def __init__(self, bigtable_table: Table, mutation_limit: int) -> None:
+    def __init__(
+        self, bigtable_table: Table, mutation_freq: int, mutation_limit: int
+    ) -> None:
+        self.mutation_freq: int = mutation_freq
+        self.last_flush = time.time()  # set to now
         self.mutation_limit: int = mutation_limit
         self.bigtable_table: Table = bigtable_table
         self.rows = {}
@@ -59,8 +63,10 @@ class BigtableMutationBuffer:
         self.bigtable_table.mutate_rows(mutated_rows)
         self.rows.clear()
 
-    def full(self) -> bool:
-        return len(self.rows) >= self.mutation_limit
+    def check_flush(self) -> bool:
+        should_flush = (len(self.rows) >= self.mutation_limit) or (
+            (self.last_flush + self.mutation_freq) < time.time()
+        )
 
     def submit(self, row: DirectRow, value: Optional[bytes] = None):
         self.rows[row.row_key] = row, value
@@ -125,19 +131,20 @@ class BigTableStore(base.SerializedStore):
     _key_index: LRUCache[bytes, int]
     _cache: Optional[Union[LRUCache[bytes, bytes], BigtableStartupCache]]
     _mutation_buffer: Optional[BigtableMutationBuffer]
-    KEY_CACHE_ENABLE_KEY = "key_cache_enable_key"
-    VALUE_CACHE_TYPE_KEY = "value_cache_type_key"
-    VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
-    STARTUPCACHE_TTL_KEY = "startupcache_ttl_key"
-    BT_PROJECT_KEY = "bt_project_key"
-    BT_INSTANCE_KEY = "bt_instance_key"
-    BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
-    BT_READ_ROWS_BORDERS_KEY = "bt_read_rows_borders_key"
     BT_COLUMN_NAME_KEY = "bt_column_name_key"
-    BT_ROW_FILTERS_KEY = "bt_row_filter_key"
-    BT_OFFSET_KEY_PREFIX = "bt_offset_key_prefix"
-    BT_MUTATION_BUFFER_LIMIT_KEY = "bt_mutation_buffer_limit_key"
     BT_ENABLE_MUTATION_BUFFER_KEY = "bt_enable_mutation_buffer_key"
+    BT_INSTANCE_KEY = "bt_instance_key"
+    BT_MUTATION_BUFFER_FREQ_KEY = "bt_mutation_buffer_freq_key"
+    BT_MUTATION_BUFFER_LIMIT_KEY = "bt_mutation_buffer_limit_key"
+    BT_OFFSET_KEY_PREFIX = "bt_offset_key_prefix"
+    BT_PROJECT_KEY = "bt_project_key"
+    BT_READ_ROWS_BORDERS_KEY = "bt_read_rows_borders_key"
+    BT_ROW_FILTERS_KEY = "bt_row_filter_key"
+    BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
+    KEY_CACHE_ENABLE_KEY = "key_cache_enable_key"
+    STARTUPCACHE_TTL_KEY = "startupcache_ttl_key"
+    VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
+    VALUE_CACHE_TYPE_KEY = "value_cache_type_key"
 
     def __init__(
         self,
@@ -196,8 +203,11 @@ class BigTableStore(base.SerializedStore):
             limit = options.get(
                 BigTableStore.BT_MUTATION_BUFFER_LIMIT_KEY, 100
             )
+            freq = options.get(
+                BigTableStore.BT_MUTATION_BUFFER_FREQ_KEY, 30*60
+            )
             self._mutation_buffer = BigtableMutationBuffer(
-                self.bt_table, limit
+                self.bt_table, ,limit
             )
 
     def _setup_key_and_value_cache(self, options) -> None:
@@ -612,7 +622,7 @@ class BigTableStore(base.SerializedStore):
         """
         try:
             if self.mutation_buffer_enabled and not recovery:
-                if self._mutation_buffer.full():
+                if self._mutation_buffer.check_flush():
                     num_mutations = len(self._mutation_buffer.rows)
                     self.log.info(
                         f"Will flush BigtableMutationBuffer with {num_mutations} "
