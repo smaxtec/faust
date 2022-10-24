@@ -265,12 +265,7 @@ class BigTableStore(base.SerializedStore):
             row, value = self._mutation_buffer.rows.get(key, (None, None))
         if self._cache is not None:
             if key in self._cache.keys():
-                value_cache = self._cache[key]
-                if value is not None and value != value_cache:
-                    self.log.error(
-                        f"Cache inconsintency, mut_buf:{value}, cache{value_cache}"
-                    )
-                value = value_cache
+                value = self._cache[key]
         return row, value
 
     def _bigtable_setup(self, table, options: Dict[str, Any]):
