@@ -62,11 +62,12 @@ class BigtableMutationBuffer:
             mutated_rows.append(row)
         self.bigtable_table.mutate_rows(mutated_rows)
         self.rows.clear()
+        self.last_flush = time.time()  # set to now
 
     def check_flush(self) -> bool:
-        should_flush = (len(self.rows) >= self.mutation_limit) or (
-            (self.last_flush + self.mutation_freq) < time.time()
-        )
+        limit_reached = len(self.rows) >= self.mutation_limit)
+        time_exceeded = self.last_flush + self.mutation_freq < time.time()
+        return limit_reached or time_exceeded
 
     def submit(self, row: DirectRow, value: Optional[bytes] = None):
         self.rows[row.row_key] = row, value
