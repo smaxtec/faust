@@ -111,7 +111,9 @@ class BigtableStartupCache:
             if now > self.init_ts + self.ttl:
                 self.data = {}
                 self.ttl = None
-                self.log.info("BigtableStore: Cleard startupcache because TTL is over")
+                self.log.info(
+                    "BigtableStore: Cleard startupcache because TTL is over"
+                )
 
     def keys(self):
         return self.data.keys()
@@ -470,14 +472,14 @@ class BigTableStore(base.SerializedStore):
 
     def _iterkeys(self) -> Iterator[bytes]:
         try:
-            if self._key_cache is not None:
-                for partition in self._active_partitions():
-                    for k in self._key_cache:
-                        if k[0] == partition:
-                            yield k[1:]
-            else:
-                for row in self._iteritems():
-                    yield row[0]
+            # if self._key_cache is not None:
+            # for partition in self._active_partitions():
+            # for k in self._key_cache:
+            # if k[0] == partition:
+            # yield k[1:]
+            # else:
+            for row in self._iteritems():
+                yield row[0]
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _iterkeys "
