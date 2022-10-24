@@ -43,7 +43,7 @@ class BigtableMutationBuffer:
         self, bigtable_table: Table, mutation_freq: int, mutation_limit: int
     ) -> None:
         self.mutation_freq: int = mutation_freq
-        self.last_flush = time.time()  # set to now
+        self.last_flush = int(time.time()) # set to now
         self.mutation_limit: int = mutation_limit
         self.bigtable_table: Table = bigtable_table
         self.rows = {}
@@ -62,11 +62,11 @@ class BigtableMutationBuffer:
             mutated_rows.append(row)
         self.bigtable_table.mutate_rows(mutated_rows)
         self.rows.clear()
-        self.last_flush = time.time()  # set to now
+        self.last_flush = int(time.time()) # set to now
 
     def check_flush(self) -> bool:
-        limit_reached = len(self.rows) >= self.mutation_limit)
-        time_exceeded = self.last_flush + self.mutation_freq < time.time()
+        limit_reached = len(self.rows) >= self.mutation_limit
+        time_exceeded = self.last_flush + self.mutation_freq < int(time.time())
         return limit_reached or time_exceeded
 
     def submit(self, row: DirectRow, value: Optional[bytes] = None):
@@ -475,6 +475,11 @@ class BigTableStore(base.SerializedStore):
 
     def _iterkeys(self) -> Iterator[bytes]:
         try:
+            if self._key_cache is not None:
+                for partition in self._active_partitions():
+                    for k in self._key_cache:
+                        if k[0] == partition:
+                            yield k[1:]
             for row in self._iteritems():
                 yield row[0]
         except Exception as ex:
