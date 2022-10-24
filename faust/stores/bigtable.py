@@ -263,6 +263,8 @@ class BigTableStore(base.SerializedStore):
         value = None
         if self.mutation_buffer_enabled:
             row, value = self._mutation_buffer.rows.get(key, (None, None))
+            if value is not None:
+                return row, value
         if self._cache is not None:
             if key in self._cache.keys():
                 value = self._cache[key]
