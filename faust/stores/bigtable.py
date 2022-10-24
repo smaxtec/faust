@@ -478,8 +478,9 @@ class BigTableStore(base.SerializedStore):
                     for k in self._key_cache:
                         if k[0] == partition:
                             yield k[1:]
-            for row in self._iteritems():
-                yield row[0]
+            else:
+                for row in self._iteritems():
+                    yield row[0]
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _iterkeys "
