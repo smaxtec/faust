@@ -42,6 +42,7 @@ class BigtableMutationBuffer:
     def __init__(
         self, bigtable_table: Table, mutation_freq: int, mutation_limit: int
     ) -> None:
+
         self.mutation_freq: int = mutation_freq
         self.last_flush = int(time.time())  # set to now
         self.mutation_limit: int = mutation_limit
@@ -50,7 +51,8 @@ class BigtableMutationBuffer:
 
     def flush(self) -> None:
         mutated_rows = []
-        rows_to_flush = list(self.rows.values()) # Needed for threadsafety
+        rows_to_flush = self.rows.copy()
+        self.rows.clear()
         for row, val in rows_to_flush:
             if val is None:
                 row.delete()
@@ -62,7 +64,6 @@ class BigtableMutationBuffer:
                 )
             mutated_rows.append(row)
         self.bigtable_table.mutate_rows(mutated_rows)
-        self.rows.clear()
         self.last_flush = int(time.time())  # set to now
 
     def check_flush(self) -> bool:
@@ -110,7 +111,7 @@ class BigtableStartupCache:
             if now > self.init_ts + self.ttl:
                 self.data = {}
                 self.ttl = None
-                self.log.info("Cleard startupcache because TTL is over")
+                self.log.info("BigtableStore: Cleard startupcache because TTL is over")
 
     def keys(self):
         return self.data.keys()
@@ -409,9 +410,6 @@ class BigTableStore(base.SerializedStore):
                 if value is not None:
                     self._key_index[key] = partition
                     return value
-                self.log.warning(
-                    f"{key=} not found in {self.table_name} on {partition=}"
-                )
             else:
                 keys = set()
                 for partition in self._partitions_for_key(key):
@@ -425,8 +423,6 @@ class BigTableStore(base.SerializedStore):
                     partition = key[1]
                     self._key_index[key[1:]] = partition
                     return value
-            # No key was found
-            self.log.warning(f"{key=} not found in {self.table_name}")
             return None
         except KeyError as ke:
             self.log.error(
