@@ -204,10 +204,10 @@ class BigTableStore(base.SerializedStore):
                 BigTableStore.BT_MUTATION_BUFFER_LIMIT_KEY, 100
             )
             freq = options.get(
-                BigTableStore.BT_MUTATION_BUFFER_FREQ_KEY, 30*60
+                BigTableStore.BT_MUTATION_BUFFER_FREQ_KEY, 30 * 60
             )
             self._mutation_buffer = BigtableMutationBuffer(
-                self.bt_table, ,limit
+                self.bt_table, freq, limit
             )
 
     def _setup_key_and_value_cache(self, options) -> None:
