@@ -68,7 +68,7 @@ class BigtableMutationBuffer:
             if status.code != 0:
                 self.log.error(
                     "BigTableStore: BigtableMutationBuffer, "
-                    f"Row number {row[0].row_key} failed to write"
+                    f"Row {row[0].row_key} failed to write"
                 )
             else:
                 # Remove only rows that were successfully written
