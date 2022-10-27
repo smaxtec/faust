@@ -47,12 +47,12 @@ class BigtableMutationBuffer:
         self.last_flush = int(time.time())  # set to now
         self.mutation_limit: int = mutation_limit
         self.bigtable_table: Table = bigtable_table
+        self.log = logging.getLogger(self.__class__.__name__)
         self.rows = {}
 
     def flush(self) -> None:
         mutated_rows = []
         rows_to_flush = self.rows.copy().values()
-        self.rows.clear()
         for row, val in rows_to_flush:
             if val is None:
                 row.delete()
@@ -63,7 +63,17 @@ class BigtableMutationBuffer:
                     val,
                 )
             mutated_rows.append(row)
-        self.bigtable_table.mutate_rows(mutated_rows)
+        response = self.bigtable_table.mutate_rows(mutated_rows)
+        for (status, row) in zip(response, rows_to_flush):
+            if status.code != 0:
+                self.log.error(
+                    "BigTableStore: BigtableMutationBuffer, "
+                    f"Row number {row[0].row_key} failed to write"
+                )
+            else:
+                # Remove only rows that were successfully written
+                self.rows.pop(row[0].row_key, None)
+
         self.last_flush = int(time.time())  # set to now
 
     def check_flush(self) -> bool:
