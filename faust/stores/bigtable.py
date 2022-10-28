@@ -97,6 +97,7 @@ class BigtableStartupCache:
         self.ttl = ttl
         self.ttl_over = False
         self.init_ts = int(time.time())
+        self._filled_partitions: Set[int] = set()
 
     def __len__(self):
         return len(self.data)
@@ -128,17 +129,45 @@ class BigtableStartupCache:
     def keys(self):
         return self.data.keys()
 
-    def fill(self, table: Table, offset_key_prefix) -> None:
+    def fill(self, table: Table, partition: int) -> None:
         start_time = time.time()
-        for row in table.read_rows():
-            if offset_key_prefix in row.row_key:
-                continue
+        start_key = partition.to_bytes(1, "little")
+        end_key = (partition + 1).to_bytes(1, "little")
+        for row in table.read_rows(start_key, end_key):
             row_val = BigTableStore.bigtable_exrtact_row_data(row)
             self.data[row.row_key] = row_val
         self.log.info(
             f"BigtableStore: StartupCache finished fill for {table.table_id} "
             f"took {time.time() - start_time}s"
         )
+        self._filled_partitions.add(partition)
+
+    def check_filled(self, partition: int) -> bool:
+        return partition in self._filled_partitions
+
+
+class BigTableKeyCache:
+    _filled_partitions: Set[int] = set()
+    _keys: Set[bytes] = set()
+
+    def fill(self, table: Table, partition: int):
+        start_key = partition.to_bytes(1, "little")
+        end_key = (partition + 1).to_bytes(1, "little")
+        for row in table.read_rows(start_key, end_key):
+            self.add(row.row_key)
+        self._filled_partitions.add(partition)
+
+    def add(self, key: bytes):
+        self.add(key)
+
+    def discard(self, key: bytes):
+        self._keys.discard(key)
+
+    def exists(self, key: bytes) -> bool:
+        return key in self._keys
+
+    def check_filled(self, partition: int) -> bool:
+        return partition in self._filled_partitions
 
 
 class BigTableStore(base.SerializedStore):
@@ -151,6 +180,7 @@ class BigTableStore(base.SerializedStore):
     _key_index: LRUCache[bytes, int]
     _cache: Optional[Union[LRUCache[bytes, bytes], BigtableStartupCache]]
     _mutation_buffer: Optional[BigtableMutationBuffer]
+    _key_cache: Optional[BigTableKeyCache]
     BT_COLUMN_NAME_KEY = "bt_column_name_key"
     BT_ENABLE_MUTATION_BUFFER_KEY = "bt_enable_mutation_buffer_key"
     BT_INSTANCE_KEY = "bt_instance_key"
@@ -236,15 +266,6 @@ class BigTableStore(base.SerializedStore):
                 BigTableStore.STARTUPCACHE_TTL_KEY, None
             )
             self._cache = BigtableStartupCache(startup_cache_ttl)
-            start = time.time()
-            self._cache.fill(self.bt_table, self.offset_key_prefix.encode())
-            end = time.time()
-            logging.getLogger(__name__).info(
-                f"Filled BigtableStartupCache in {start-end}s"
-            )
-            if self.key_cache_enabled:
-                self._key_cache = set(self._cache.keys())
-
         elif self.value_cache_type == "forever":
             self._cache = LRUCache(limit=self.value_cache_size)
         else:
@@ -252,14 +273,19 @@ class BigTableStore(base.SerializedStore):
                 f"VALUE_CACHE_TYPE '{self.value_cache_type}'"
             )
         if self.key_cache_enabled and self._key_cache is None:
-            self._key_cache = set()
-            offset_prefix = self.offset_key_prefix.encode()
-            for row in self.bt_table.read_rows():
-                if offset_prefix in row.row_key:
-                    continue
-                self._key_cache.add(row.row_key)
+            self._key_cache = BigTableKeyCache()
+
+    def _fill_caches_if_empty(self, partition: int):
+        if self._key_cache is not None:
+            if self._key_cache.check_filled(partition):
+                self._key_cache.fill(self.bt_table, partition)
+        if isinstance(self._cache, BigtableStartupCache):
+            if self._cache.check_filled(partition):
+                self._cache.fill(self.bt_table, partition)
 
     def _cache_set(self, key: bytes, row: DirectRow, value: bytes) -> None:
+        partition = key[0]
+        self._fill_caches_if_empty(partition)
         if self._cache is not None:
             self._cache[key] = value
         if self.mutation_buffer_enabled:
@@ -268,6 +294,8 @@ class BigTableStore(base.SerializedStore):
             self._key_cache.add(key)
 
     def _cache_del(self, key: bytes, row: DirectRow) -> None:
+        partition = key[0]
+        self._fill_caches_if_empty(partition)
         if self.mutation_buffer_enabled:
             self._mutation_buffer.submit(row, None)
         if self._cache:
@@ -280,6 +308,8 @@ class BigTableStore(base.SerializedStore):
     ) -> Tuple[Optional[DirectRow], Optional[bytes]]:
         row = None
         value = None
+        partition = key[0]
+        self._fill_caches_if_empty(partition)
         if self.mutation_buffer_enabled:
             row, value = self._mutation_buffer.rows.get(key, (None, None))
             if value is not None:
@@ -412,7 +442,7 @@ class BigTableStore(base.SerializedStore):
 
     def _check_key_cache(self, key):
         if self._key_cache:
-            return key in self._key_cache
+            return self._key_cache.exists(key)
         else:
             return False
 
@@ -488,12 +518,6 @@ class BigTableStore(base.SerializedStore):
 
     def _iterkeys(self) -> Iterator[bytes]:
         try:
-            # if self._key_cache is not None:
-            # for partition in self._active_partitions():
-            # for k in self._key_cache:
-            # if k[0] == partition:
-            # yield k[1:]
-            # else:
             for row in self._iteritems():
                 yield row[0]
         except Exception as ex:
@@ -570,8 +594,9 @@ class BigTableStore(base.SerializedStore):
                     key, partition=partition
                 )
                 found = False
-                if self.key_cache_enabled:
-                    found = self._check_key_cache(key_with_partition)
+                if self._key_cache is not None:
+                    self._fill_caches_if_empty(partition)
+                    found = self._key_cache.exists(key_with_partition)
                 else:
                     found = self._bigtable_get(key_with_partition) is not None
                 return found
@@ -580,8 +605,9 @@ class BigTableStore(base.SerializedStore):
                     key_with_partition = self._get_key_with_partition(
                         key, partition=partition
                     )
-                    if self.key_cache_enabled:
-                        if self._check_key_cache(key_with_partition):
+                    if self._key_cache is not None:
+                        self._fill_caches_if_empty(partition)
+                        if self._key_cache.exists(key_with_partition):
                             return True
                     else:
                         return (
