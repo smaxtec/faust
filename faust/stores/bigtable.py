@@ -128,12 +128,17 @@ class BigtableStartupCache:
     def keys(self):
         return self.data.keys()
 
-    def fill(self, table, offset_key_prefix) -> None:
+    def fill(self, table: Table, offset_key_prefix) -> None:
+        start_time = time.time()
         for row in table.read_rows():
             if offset_key_prefix in row.row_key:
                 continue
             row_val = BigTableStore.bigtable_exrtact_row_data(row)
             self.data[row.row_key] = row_val
+        self.log.info(
+            f"BigtableStore: StartupCache finished fill for {table.table_id} "
+            f"took {time.time() - start_time}s"
+        )
 
 
 class BigTableStore(base.SerializedStore):
