@@ -727,14 +727,12 @@ class BigTableStore(base.SerializedStore):
             row = self.bt_table.direct_row(offset_key)
             if msg.value is None:
                 row.delete()
-                self._cache_del(key, row)
             else:
                 row.set_cell(
                     self.column_family_id,
                     self.column_name,
                     msg.value,
                 )
-                self._cache_set(offset_key, row, msg.value)
             row_mutations.append(row)
         self._persist_changelog_batch(
             row_mutations,
