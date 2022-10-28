@@ -158,7 +158,7 @@ class BigTableKeyCache:
         self._filled_partitions.add(partition)
 
     def add(self, key: bytes):
-        self.add(key)
+        self._keys.add(key)
 
     def discard(self, key: bytes):
         self._keys.discard(key)
