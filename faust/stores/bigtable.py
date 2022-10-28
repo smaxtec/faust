@@ -437,7 +437,7 @@ class BigTableStore(base.SerializedStore):
         try:
             return [self._key_index[key]]
         except KeyError:
-            return self._active_partitions()
+            return set(self._active_partitions())
 
     def _check_key_cache(self, key):
         if self._key_cache:
