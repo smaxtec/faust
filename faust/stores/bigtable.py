@@ -276,11 +276,15 @@ class BigTableStore(base.SerializedStore):
                 start_time = time.time()
                 self._key_cache.fill(self.bt_table, partition)
                 td = time.time() - start_time
-                self.log.info(f"KeyCache fill took {td}s for {self.table_name}:{partition}")
+                self.log.info(
+                    f"KeyCache fill took {td}s for {self.table_name}:{partition}"
+                )
         if isinstance(self._cache, BigtableStartupCache):
             if not self._cache.check_filled(partition):
                 self._cache.fill(self.bt_table, partition)
-                self.log.info(f"KeyCache fill took {td}s for {self.table_name}:{partition}")
+                self.log.info(
+                    f"KeyCache fill took {td}s for {self.table_name}:{partition}"
+                )
 
     def _cache_set(self, key: bytes, row: DirectRow, value: bytes) -> None:
         partition = key[0]
@@ -437,7 +441,19 @@ class BigTableStore(base.SerializedStore):
         try:
             return [self._key_index[key]]
         except KeyError:
-            return set(self._active_partitions())
+            active_partitions = set(self._active_partitions())
+            if self._key_cache is not None:
+                for partition in active_partitions:
+                    if not self._key_cache.check_filled(partition):
+                        continue
+                    else:
+                        self._fill_caches_if_empty(partition)
+                        key_with_partition = self._get_key_with_partition(
+                            key, partition
+                        )
+                        if self._key_cache.exists(key_with_partition):
+                            return [partition]
+            return active_partitions
 
     def _check_key_cache(self, key):
         if self._key_cache:
