@@ -277,10 +277,10 @@ class BigTableStore(base.SerializedStore):
 
     def _fill_caches_if_empty(self, partition: int):
         if self._key_cache is not None:
-            if self._key_cache.check_filled(partition):
+            if not self._key_cache.check_filled(partition):
                 self._key_cache.fill(self.bt_table, partition)
         if isinstance(self._cache, BigtableStartupCache):
-            if self._cache.check_filled(partition):
+            if not self._cache.check_filled(partition):
                 self._cache.fill(self.bt_table, partition)
 
     def _cache_set(self, key: bytes, row: DirectRow, value: bytes) -> None:
