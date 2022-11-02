@@ -169,7 +169,7 @@ def _register_partition(func):
     def inner(self, bt_key: bytes, *args):
         partition = bt_key[0]
         if partition not in self._registered_partitions:
-            self._fill_caches(self, partition)
+            self._fill_caches(partition)
         return func(self, bt_key)
 
     return inner
