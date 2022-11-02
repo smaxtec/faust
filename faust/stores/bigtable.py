@@ -170,7 +170,7 @@ def _register_partition(func):
         partition = bt_key[0]
         if partition not in self._registered_partitions:
             self._fill_caches(partition)
-        return func(self, bt_key)
+        return func(self, bt_key, *args)
 
     return inner
 
