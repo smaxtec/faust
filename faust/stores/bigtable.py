@@ -170,6 +170,7 @@ def _register_partition(func):
         partition = bt_key[0]
         if partition not in self._registered_partitions:
             self._fill_caches(partition)
+            self._registered_partitions.add(partition)
         return func(self, bt_key, *args)
 
     return inner
@@ -192,10 +193,17 @@ class BigTableCacheManager:
         self._init_mutation_buffer(options, bt_table)
 
     def _fill_caches(self, partition: int):
+        log = logging.getLogger(__name__)
+        start = time.time()
         if self._key_cache is not None:
             self._key_cache.fill(self.bt_table, partition)
         if isinstance(self._value_cache, BigtableStartupCache):
             self._value_cache.fill(self.bt_table, partition)
+        td = time.time() - start
+        log.info(
+            f"BigtabeStore: filled cache for {self.bt_table.id}:"
+            f"{partition} in {td}s"
+        )
 
     @_register_partition
     def get(
