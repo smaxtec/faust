@@ -165,6 +165,16 @@ class BigTableKeyCache:
         return partition in self._filled_partitions
 
 
+def _register_partition(func):
+    def inner(self, bt_key: bytes, *args):
+        partition = bt_key[0]
+        if partition not in self._registered_partitions:
+            self._fill_caches(self, partition)
+        return func(self, bt_key)
+
+    return inner
+
+
 class BigTableCacheManager:
     _partition_cache: LRUCache[bytes, int]
     _value_cache: Optional[
@@ -186,16 +196,6 @@ class BigTableCacheManager:
             self._key_cache.fill(self.bt_table, partition)
         if isinstance(self._value_cache, BigtableStartupCache):
             self._value_cache.fill(self.bt_table, partition)
-
-    @staticmethod
-    def _register_partition(func):
-        def inner(self, bt_key: bytes, *args):
-            partition = bt_key[0]
-            if partition not in self._registered_partitions:
-                self._fill_caches(self, partition)
-            return func(self, bt_key)
-
-        return inner
 
     @_register_partition
     def get(
