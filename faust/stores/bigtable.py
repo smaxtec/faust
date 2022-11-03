@@ -201,7 +201,7 @@ class BigTableCacheManager:
             self._value_cache.fill(self.bt_table, partition)
         td = time.time() - start
         log.info(
-            f"BigtabeStore: filled cache for {self.bt_table.table_id}:"
+            f"BigTabeStore: filled cache for {self.bt_table.table_id}:"
             f"{partition} in {td}s"
         )
 
@@ -435,7 +435,7 @@ class BigTableStore(base.SerializedStore):
 
     def _bigtable_get_range(
         self, keys: Set[bytes]
-    ) -> Tuple[bytes, Optional[bytes]]:
+    ) -> Tuple[Optional[bytes], Optional[bytes]]:
         # first search cache:
         for key in keys:
             row, value = self._cache.get(key)
@@ -451,6 +451,8 @@ class BigTableStore(base.SerializedStore):
         for row in self.bt_table.read_rows(row_set=rows):
             # First hit will return
             return row.row_key, BigTableStore.bigtable_exrtact_row_data(row)
+        # Not found
+        return None, None
 
     def _bigtable_set(
         self, key: bytes, value: Optional[bytes], persist_offset=False
