@@ -184,7 +184,7 @@ class BigTableCacheManager:
     _mutation_buffer: Optional[BigtableMutationBuffer]
     _key_cache: Optional[BigTableKeyCache]
 
-    def __init__(self, app, options: Dict, bt_table) -> None:
+    def __init__(self, app, options: Dict, bt_table: Table) -> None:
         self._registered_partitions = set()
         self.bt_table = bt_table
         self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
@@ -201,7 +201,7 @@ class BigTableCacheManager:
             self._value_cache.fill(self.bt_table, partition)
         td = time.time() - start
         log.info(
-            f"BigtabeStore: filled cache for {self.bt_table.id}:"
+            f"BigtabeStore: filled cache for {self.bt_table.table_id}:"
             f"{partition} in {td}s"
         )
 
