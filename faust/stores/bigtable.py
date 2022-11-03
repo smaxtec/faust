@@ -195,13 +195,16 @@ class BigTableCacheManager:
     def _fill_caches(self, partition: int):
         log = logging.getLogger(__name__)
         start = time.time()
-        if self._key_cache is not None:
-            self._key_cache.fill(self.bt_table, partition)
         if isinstance(self._value_cache, BigtableStartupCache):
             self._value_cache.fill(self.bt_table, partition)
+            if self._key_cache is not None:
+                self._key_cache._keys = set(self._value_cache.keys())
+        else:
+            if self._key_cache is not None:
+                self._key_cache.fill(self.bt_table, partition)
         td = time.time() - start
         log.info(
-            f"BigTabeStore: filled cache for {self.bt_table.table_id}:"
+            f"BigTableStore: filled cache for {self.bt_table.table_id}:"
             f"{partition} in {td}s"
         )
 
