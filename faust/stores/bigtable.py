@@ -142,7 +142,6 @@ class BigtableStartupCache:
 
 
 class BigTableKeyCache:
-    _filled_partitions: Set[int] = set()
     _keys: Set[bytes] = set()
 
     def fill(self, table: Table, partition: int):
@@ -150,7 +149,6 @@ class BigTableKeyCache:
         end_key = (partition + 1).to_bytes(1, "little")
         for row in table.read_rows(start_key, end_key):
             self.add(row.row_key)
-        self._filled_partitions.add(partition)
 
     def add(self, key: bytes):
         self._keys.add(key)
@@ -160,9 +158,6 @@ class BigTableKeyCache:
 
     def exists(self, key: bytes) -> bool:
         return key in self._keys
-
-    def check_filled(self, partition: int) -> bool:
-        return partition in self._filled_partitions
 
 
 def _register_partition(func):
@@ -242,17 +237,38 @@ class BigTableCacheManager:
         if user_key in self._partition_cache.keys():
             return True
         if self._key_cache is not None:
-            if self._key_cache.exists(bt_key):
-                return True
-            else:
-                return False
-        if self._value_cache is not None:
-            if bt_key in self._value_cache.keys():
-                return True
+            return self._key_cache.exists(bt_key)
         if self._mutation_buffer is not None:
             value = self._mutation_buffer.rows.get(bt_key, (None, None))[1]
             if value is not None:
                 return True
+        if self._value_cache is not None:
+            if (
+                isinstance(self._value_cache, BigtableStartupCache)
+                and self._value_cache.ttl_over is False
+            ):
+                return bt_key in self._value_cache.keys()
+            else:
+                if bt_key in self._value_cache.keys():
+                    return True
+        return None
+
+    def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
+        definately_not_found = []
+        for key in key_set:
+            found = self.contains(key)
+            if found is True:
+                return True
+            elif found is None:
+                definately_not_found.append(False)
+            else:
+                definately_not_found.append(True)
+
+        if all(definately_not_found):
+            # Now we can be sure that the key does not exist
+            return False
+        # No assumption possible
+        return None
 
     def get_key_iterator_if_exists(self) -> Optional[Iterable]:
         if (
@@ -667,16 +683,17 @@ class BigTableStore(base.SerializedStore):
                     found = self._bigtable_get(key_with_partition) is not None
                 return found
             else:
-                searched_keys = set()
+                keys_to_search = set()
                 for partition in self._partitions_for_key(key):
                     key_with_partition = self._get_key_with_partition(
                         key, partition=partition
                     )
-                    if self._cache.contains(key_with_partition):
-                        return True
-                    searched_keys.add(key_with_partition)
+                    keys_to_search.add(key_with_partition)
 
-                return self._bigtable_get_range(searched_keys)[1] is not None
+                found = self._cache.contains_any(keys_to_search)
+                if found is None:
+                    found = self._bigtable_get_range(keys_to_search)[1] is not None
+                return found
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _contains for table "
