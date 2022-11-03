@@ -128,22 +128,9 @@ class BigtableStartupCache:
     def keys(self):
         return self.data.keys()
 
-    def fill(self, table: Table, partition: int) -> None:
-        start_key = partition.to_bytes(1, "little")
-        end_key = (partition + 1).to_bytes(1, "little")
-        for row in table.read_rows(start_key, end_key):
-            row_val = BigTableStore.bigtable_exrtact_row_data(row)
-            self.data[row.row_key] = row_val
-
 
 class BigTableKeyCache:
     _keys: Set[bytes] = set()
-
-    def fill(self, table: Table, partition: int):
-        start_key = partition.to_bytes(1, "little")
-        end_key = (partition + 1).to_bytes(1, "little")
-        for row in table.read_rows(start_key, end_key):
-            self.add(row.row_key)
 
     def add(self, key: bytes):
         self._keys.add(key)
@@ -159,8 +146,7 @@ def _register_partition(func):
     def inner(self, bt_key: bytes, *args):
         partition = bt_key[0]
         if partition not in self._registered_partitions:
-            self._fill_caches(partition)
-            self._registered_partitions.add(partition)
+            self._fill_caches({partition})
         return func(self, bt_key, *args)
 
     return inner
@@ -183,19 +169,28 @@ class BigTableCacheManager:
         self._init_key_cache(options)
         self._init_mutation_buffer(options, bt_table)
 
-    def _fill_caches(self, partition: int):
+    def _fill_caches(self, partitions: Set[int]):
+        partitions = self._registered_partitions.difference(partitions)
+        if len(partitions) == 0:
+            return #  Nothing todo
+        row_set = RowSet()
+        for p in partitions:
+            row_set.add_row_range_with_prefix(
+                p.to_bytes(1, byteorder="little")
+            )
+
         start = time.time()
-        if isinstance(self._value_cache, BigtableStartupCache):
-            self._value_cache.fill(self.bt_table, partition)
+        for row in self.bt_table.read_rows(row_set=row_set):
+            if isinstance(self._value_cache, BigtableStartupCache):
+                row_val = BigTableStore.bigtable_exrtact_row_data(row)
+                self._value_cache.data[row.row_key] = row_val
             if self._key_cache is not None:
-                self._key_cache._keys = set(self._value_cache.keys())
-        else:
-            if self._key_cache is not None:
-                self._key_cache.fill(self.bt_table, partition)
+                self._key_cache.add(row.row_key)
+        self._registered_partitions.update(partitions)
         td = time.time() - start
         self.log.info(
             f"BigTableStore: filled cache for {self.bt_table.table_id}:"
-            f"{partition} in {td}s"
+            f"{partitions=} in {td}s"
         )
 
     @_register_partition
@@ -250,15 +245,15 @@ class BigTableCacheManager:
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
         partitions = {k[0] for k in key_set}
-        # Check if all partitions are already registered
-        if self._registered_partitions.issuperset(partitions):
-            if self._key_cache is not None:
-                return not self._key_cache._keys.isdisjoint(key_set)
-            if (
-                isinstance(self._value_cache, BigtableStartupCache)
-                and not self._value_cache.ttl_over
-            ):
-                return not self._value_cache.keys().isdisjoint(key_set)
+        self._fill_caches(partitions)
+
+        if self._key_cache is not None:
+            return not self._key_cache._keys.isdisjoint(key_set)
+        if (
+            isinstance(self._value_cache, BigtableStartupCache)
+            and not self._value_cache.ttl_over
+        ):
+            return not self._value_cache.keys().isdisjoint(key_set)
 
         definately_not_found = []
         for key in key_set:
