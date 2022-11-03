@@ -97,7 +97,6 @@ class BigtableStartupCache:
         self.ttl = ttl
         self.ttl_over = False
         self.init_ts = int(time.time())
-        self._filled_partitions: Set[int] = set()
 
     def __len__(self):
         return len(self.data)
@@ -135,10 +134,6 @@ class BigtableStartupCache:
         for row in table.read_rows(start_key, end_key):
             row_val = BigTableStore.bigtable_exrtact_row_data(row)
             self.data[row.row_key] = row_val
-        self._filled_partitions.add(partition)
-
-    def check_filled(self, partition: int) -> bool:
-        return partition in self._filled_partitions
 
 
 class BigTableKeyCache:
@@ -180,6 +175,7 @@ class BigTableCacheManager:
     _key_cache: Optional[BigTableKeyCache]
 
     def __init__(self, app, options: Dict, bt_table: Table) -> None:
+        self.log = logging.getLogger(__name__)
         self._registered_partitions = set()
         self.bt_table = bt_table
         self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
@@ -188,7 +184,6 @@ class BigTableCacheManager:
         self._init_mutation_buffer(options, bt_table)
 
     def _fill_caches(self, partition: int):
-        log = logging.getLogger(__name__)
         start = time.time()
         if isinstance(self._value_cache, BigtableStartupCache):
             self._value_cache.fill(self.bt_table, partition)
@@ -198,7 +193,7 @@ class BigTableCacheManager:
             if self._key_cache is not None:
                 self._key_cache.fill(self.bt_table, partition)
         td = time.time() - start
-        log.info(
+        self.log.info(
             f"BigTableStore: filled cache for {self.bt_table.table_id}:"
             f"{partition} in {td}s"
         )
@@ -254,6 +249,17 @@ class BigTableCacheManager:
         return None
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
+        partitions = {k[0] for k in key_set}
+        # Check if all partitions are already registered
+        if self._registered_partitions.issuperset(partitions):
+            if self._key_cache is not None:
+                return not self._key_cache._keys.isdisjoint(key_set)
+            if (
+                isinstance(self._value_cache, BigtableStartupCache)
+                and not self._value_cache.ttl_over
+            ):
+                return not self._value_cache.keys().isdisjoint(key_set)
+
         definately_not_found = []
         for key in key_set:
             found = self.contains(key)
@@ -692,7 +698,9 @@ class BigTableStore(base.SerializedStore):
 
                 found = self._cache.contains_any(keys_to_search)
                 if found is None:
-                    found = self._bigtable_get_range(keys_to_search)[1] is not None
+                    found = (
+                        self._bigtable_get_range(keys_to_search)[1] is not None
+                    )
                 return found
         except Exception as ex:
             self.log.error(
