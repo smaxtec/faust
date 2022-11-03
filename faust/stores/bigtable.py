@@ -172,7 +172,7 @@ class BigTableCacheManager:
     def _fill_caches(self, partitions: Set[int]):
         partitions = self._registered_partitions.difference(partitions)
         if len(partitions) == 0:
-            return #  Nothing todo
+            return  # Nothing todo
         row_set = RowSet()
         for p in partitions:
             row_set.add_row_range_with_prefix(
