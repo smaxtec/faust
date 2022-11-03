@@ -360,7 +360,7 @@ class BigTableStore(base.SerializedStore):
         options: Dict[str, Any],
         **kwargs: Any,
     ) -> None:
-        self._set_options(app, options)
+        self._set_options(options)
         try:
             self._bigtable_setup(table, options)
             self._cache = BigTableCacheManager(app, options, self.bt_table)
@@ -369,7 +369,7 @@ class BigTableStore(base.SerializedStore):
             raise ex
         super().__init__(url, app, table, **kwargs)
 
-    def _set_options(self, app, options) -> None:
+    def _set_options(self, options) -> None:
         self.table_name_generator = options.get(
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
         )
@@ -430,7 +430,7 @@ class BigTableStore(base.SerializedStore):
                 self.log.info(f"{key=} not found in {self.table_name}")
                 value = None
             else:
-                value: bytes = self.bigtable_exrtact_row_data(res)
+                value = self.bigtable_exrtact_row_data(res)
         return value
 
     def _bigtable_get_range(
