@@ -147,8 +147,7 @@ class BigTableKeyCache:
 def _register_partition(func):
     def inner(self, bt_key: bytes, *args):
         partition = bt_key[0]
-        if partition not in self._registered_partitions:
-            self._fill_caches({partition})
+        self._fill_caches({partition})
         return func(self, bt_key, *args)
 
     return inner
@@ -173,7 +172,7 @@ class BigTableCacheManager:
 
     def _fill_caches(self, partitions: Set[int]):
 
-        partitions = self._registered_partitions.difference(partitions)
+        partitions = partitions.difference(self._registered_partitions)
         if len(partitions) == 0:
             return  # Nothing todo
         start = time.time()
@@ -184,8 +183,11 @@ class BigTableCacheManager:
             )
 
         for row in self.bt_table.read_rows(
-            row_set=row_set, filter_=CellsColumnLimitFilter(1),
-            retry=DEFAULT_RETRY_READ_ROWS.with_deadline(10*60) # High deadline cause slow 
+            row_set=row_set,
+            filter_=CellsColumnLimitFilter(1),
+            retry=DEFAULT_RETRY_READ_ROWS.with_deadline(
+                10 * 60
+            ),  # High deadline cause slow
         ):
             if isinstance(self._value_cache, BigtableStartupCache):
                 row_val = BigTableStore.bigtable_exrtact_row_data(row)
