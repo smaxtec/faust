@@ -178,9 +178,7 @@ class BigTableCacheManager:
         start = time.time()
         row_set = RowSet()
         for p in partitions:
-            row_set.add_row_range_with_prefix(
-                p.to_bytes(1, byteorder="little")
-            )
+            row_set.add_row_range_with_prefix(bytes([p]))
 
         for row in self.bt_table.read_rows(
             row_set=row_set,
