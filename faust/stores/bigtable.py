@@ -18,8 +18,10 @@ from google.cloud.bigtable import column_family
 from google.cloud.bigtable.client import Client
 from google.cloud.bigtable.instance import Instance
 from google.cloud.bigtable.row import DirectRow
+from google.cloud.bigtable.row_data import DEFAULT_RETRY_READ_ROWS
 from google.cloud.bigtable.row_filters import CellsColumnLimitFilter
 from google.cloud.bigtable.row_set import RowSet
+from google.api_core.retry import Retry
 from google.cloud.bigtable.table import Table
 from mode.utils.collections import LRUCache
 from yarl import URL
@@ -170,17 +172,21 @@ class BigTableCacheManager:
         self._init_mutation_buffer(options, bt_table)
 
     def _fill_caches(self, partitions: Set[int]):
+
         partitions = self._registered_partitions.difference(partitions)
         if len(partitions) == 0:
             return  # Nothing todo
+        start = time.time()
         row_set = RowSet()
         for p in partitions:
             row_set.add_row_range_with_prefix(
                 p.to_bytes(1, byteorder="little")
             )
 
-        start = time.time()
-        for row in self.bt_table.read_rows(row_set=row_set):
+        for row in self.bt_table.read_rows(
+            row_set=row_set, filter_=CellsColumnLimitFilter(1),
+            retry=DEFAULT_RETRY_READ_ROWS.with_deadline(10*60) # High deadline cause slow 
+        ):
             if isinstance(self._value_cache, BigtableStartupCache):
                 row_val = BigTableStore.bigtable_exrtact_row_data(row)
                 self._value_cache.data[row.row_key] = row_val
