@@ -384,7 +384,7 @@ class BigTableStore(base.SerializedStore):
         **kwargs: Any,
     ) -> None:
         self._set_options(options)
-        self._tracked_key = None
+        self._tracked_key = b'635b961bac0a961c562f61bf'
         try:
             self._bigtable_setup(table, options)
             self._cache = BigTableCacheManager(app, options, self.bt_table)
@@ -543,10 +543,7 @@ class BigTableStore(base.SerializedStore):
             return self._active_partitions()
 
     def _log_and_maybe_set_tracked_key(self, key, msg):
-        if self._tracked_key is None:
-            self._tracked_key = key
-            self.log.info(f"Set tracked key to {key}: {msg}")
-        elif key == self._tracked_key:
+        if self._tracked_key in key:
             self.log.info(f"Tracked {key=}: {msg}")
 
     def _get(self, key: bytes) -> Optional[bytes]:
