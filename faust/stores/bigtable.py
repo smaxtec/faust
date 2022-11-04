@@ -21,7 +21,6 @@ from google.cloud.bigtable.row import DirectRow
 from google.cloud.bigtable.row_data import DEFAULT_RETRY_READ_ROWS
 from google.cloud.bigtable.row_filters import CellsColumnLimitFilter
 from google.cloud.bigtable.row_set import RowSet
-from google.api_core.retry import Retry
 from google.cloud.bigtable.table import Table
 from mode.utils.collections import LRUCache
 from yarl import URL
@@ -110,9 +109,10 @@ class BigtableStartupCache:
             return res
 
     def __setitem__(self, key, value) -> None:
-        self._maybe_ttl_clear()
-        if self.ttl is not None:
-            self.data[key] = value
+        if value is not None:
+            self._maybe_ttl_clear()
+            if self.ttl is not None:
+                self.data[key] = value
 
     def __delitem__(self, key):
         self.data.pop(key, None)
@@ -229,11 +229,13 @@ class BigTableCacheManager:
         If we return None here, this means, that no assumption
         about the current key can be made.
         """
-        user_key = bt_key[1:]
-        if user_key in self._partition_cache.keys():
-            return True
         if self._key_cache is not None:
             return self._key_cache.exists(bt_key)
+        if (
+            isinstance(self._value_cache, BigtableStartupCache)
+            and not self._value_cache.ttl_over
+        ):
+            return bt_key in self._value_cache.keys()
         if self._mutation_buffer is not None:
             value = self._mutation_buffer.rows.get(bt_key, (None, None))[1]
             if value is not None:
@@ -277,7 +279,7 @@ class BigTableCacheManager:
         # No assumption possible
         return None
 
-    def get_key_iterator_if_exists(self) -> Optional[Iterable]:
+    def get_key_iterable_if_exists(self) -> Optional[Iterable]:
         if (
             self._key_cache is not None
             and len(self._registered_partitions) > 0
@@ -294,7 +296,7 @@ class BigTableCacheManager:
             self._value_cache[bt_key] = value
         if self._mutation_buffer is not None:
             self._mutation_buffer.submit(row, value)
-        if self._key_cache:
+        if self._key_cache is not None:
             self._key_cache.add(bt_key)
 
     def delete(self, bt_key: bytes, row: DirectRow) -> None:
@@ -304,7 +306,7 @@ class BigTableCacheManager:
             self._mutation_buffer.submit(row, None)
         if self._value_cache is not None:
             del self._value_cache[bt_key]
-        if self._key_cache:
+        if self._key_cache is not None:
             self._key_cache.discard(bt_key)
 
     def _init_value_cache(
@@ -603,7 +605,7 @@ class BigTableStore(base.SerializedStore):
 
     def _iterkeys(self) -> Iterator[bytes]:
         try:
-            cache_iterator = self._cache.get_key_iterator_if_exists()
+            cache_iterator = self._cache.get_key_iterable_if_exists()
             if cache_iterator is not None:
                 for key in cache_iterator:
                     yield key[1:]
