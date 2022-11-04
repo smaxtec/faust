@@ -248,14 +248,6 @@ class BigTableCacheManager:
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
         partitions = {k[0] for k in key_set}
         self._fill_caches(partitions)
-
-        if self._mutation_buffer is not None:
-            for k in key_set:
-                row, value = self._mutation_buffer.rows.get(k, (None, None))
-                if row is not None and value is not None:
-                    return True
-                elif row is not None and value is None:
-                    return False
         if self._key_cache is not None:
             return not self._key_cache._keys.isdisjoint(key_set)
         if (
@@ -263,6 +255,16 @@ class BigTableCacheManager:
             and not self._value_cache.ttl_over
         ):
             return not self._value_cache.keys().isdisjoint(key_set)
+
+        if self._mutation_buffer is not None:
+            keys_in_buffer = key_set.intersection(self._mutation_buffer.rows.keys())
+            if len(keys_in_buffer) == 1:
+                k = keys_in_buffer.pop()
+                row, value = self._mutation_buffer.rows[k]
+                if row is not None and value is not None:
+                    return True
+                elif row is not None and value is None:
+                    return False
         # No assumption possible
         return None
 
