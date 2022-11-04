@@ -207,7 +207,7 @@ class BigTableCacheManager:
         value = None
         if self._mutation_buffer is not None:
             row, value = self._mutation_buffer.rows.get(bt_key, (None, None))
-            if value is not None:
+            if row is not None:
                 return row, value
         if self._value_cache is not None:
             if bt_key in self._value_cache.keys():
@@ -389,6 +389,7 @@ class BigTableStore(base.SerializedStore):
         **kwargs: Any,
     ) -> None:
         self._set_options(options)
+        self._tracked_key = None
         try:
             self._bigtable_setup(table, options)
             self._cache = BigTableCacheManager(app, options, self.bt_table)
@@ -452,6 +453,9 @@ class BigTableStore(base.SerializedStore):
         elif row is not None and value is None:
             return value
         else:
+            self._log_and_maybe_set_tracked_key(
+                key[1:], "'not found in cache get'"
+            )
             res = self.bt_table.read_row(key, filter_=self.row_filter)
             row = self.bt_table.direct_row(key)
             if res is None:
@@ -476,10 +480,18 @@ class BigTableStore(base.SerializedStore):
         for key in keys:
             rows.add_row_key(key)
 
-        for row in self.bt_table.read_rows(row_set=rows):
+        self._log_and_maybe_set_tracked_key(
+            keys.pop()[1:], "'not found in cache get (no partition)'"
+        )
+        for row in self.bt_table.read_rows(
+            row_set=rows, filter_=CellsColumnLimitFilter(1)
+        ):
             # First hit will return
             return row.row_key, BigTableStore.bigtable_exrtact_row_data(row)
         # Not found
+        self._log_and_maybe_set_tracked_key(
+            keys.pop()[1:], "'not found in cache get (no partition)'"
+        )
         return None, None
 
     def _bigtable_set(
@@ -506,9 +518,8 @@ class BigTableStore(base.SerializedStore):
             row.commit()
 
     def _bigtable_del(self, key: bytes):
-        row = self._cache.get(key)[0]
-        if row is None:
-            row = self.bt_table.direct_row(key)
+        row = self.bt_table.direct_row(key)
+        self._log_and_maybe_set_tracked_key(key[1:], "'deleted'")
         if self._cache.get_mutation_buffer() is None:
             row.delete()
             row.commit()
@@ -536,8 +547,16 @@ class BigTableStore(base.SerializedStore):
         except KeyError:
             return self._active_partitions()
 
+    def _log_and_maybe_set_tracked_key(self, key, msg):
+        if self._tracked_key is None:
+            self._tacked_key = key
+            self.log.info(f"Set tracked key to {key}: {msg}")
+        else:
+            self.log.info(f"Tracked {key=}: {msg}")
+
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
+            self._log_and_maybe_set_tracked_key(key, "'get'")
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
                 key_with_partition = self._get_key_with_partition(
@@ -575,6 +594,7 @@ class BigTableStore(base.SerializedStore):
 
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
+            self._log_and_maybe_set_tracked_key(key, "'set'")
             partition = get_current_partition()
             key_with_partition = self._get_key_with_partition(
                 key, partition=partition
@@ -591,6 +611,7 @@ class BigTableStore(base.SerializedStore):
 
     def _del(self, key: bytes) -> None:
         try:
+            self._log_and_maybe_set_tracked_key(key, "'del'")
             for partition in self._partitions_for_key(key):
                 key_with_partition = self._get_key_with_partition(
                     key, partition=partition
@@ -682,6 +703,7 @@ class BigTableStore(base.SerializedStore):
 
     def _contains(self, key: bytes) -> bool:
         try:
+            self._log_and_maybe_set_tracked_key(key, "'contains'")
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
                 key_with_partition = self._get_key_with_partition(
@@ -703,6 +725,14 @@ class BigTableStore(base.SerializedStore):
                 if found is None:
                     found = (
                         self._bigtable_get_range(keys_to_search)[1] is not None
+                    )
+                elif found is False:
+                    self._log_and_maybe_set_tracked_key(
+                        key, "'not found in cache'"
+                    )
+                else:
+                    self._log_and_maybe_set_tracked_key(
+                        key, "'found in cache'"
                     )
                 return found
         except Exception as ex:
