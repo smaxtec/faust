@@ -544,7 +544,7 @@ class BigTableStore(base.SerializedStore):
 
     def _log_and_maybe_set_tracked_key(self, key, msg):
         if self._tracked_key in key:
-            self.log.info(f"Tracked {key=}: {msg}")
+            self.log.info(f"Tracked {self._tracked_key=}: {msg}")
 
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
