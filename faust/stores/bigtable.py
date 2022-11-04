@@ -229,12 +229,6 @@ class BigTableCacheManager:
         If we return None here, this means, that no assumption
         about the current key can be made.
         """
-        if self._mutation_buffer is not None:
-            row, value = self._mutation_buffer.rows.get(bt_key, (None, None))
-            if row is not None and value is not None:
-                return True
-            elif row is not None and value is None:
-                return False
         if self._key_cache is not None:
             return self._key_cache.exists(bt_key)
         if (
@@ -242,15 +236,13 @@ class BigTableCacheManager:
             and not self._value_cache.ttl_over
         ):
             return bt_key in self._value_cache.keys()
-        if self._value_cache is not None:
-            if (
-                isinstance(self._value_cache, BigtableStartupCache)
-                and self._value_cache.ttl_over is False
-            ):
-                return bt_key in self._value_cache.keys()
-            else:
-                if bt_key in self._value_cache.keys():
+        if self._mutation_buffer is not None:
+            if bt_key in self._mutation_buffer.rows.keys():
+                row, value = self._mutation_buffer.rows[bt_key]
+                if row is not None and value is not None:
                     return True
+                elif row is not None and value is None:
+                    return False
         return None
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
