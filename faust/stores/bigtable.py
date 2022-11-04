@@ -124,7 +124,7 @@ class BigtableStartupCache:
                 self.data = {}
                 self.ttl = None
                 self.log.info(
-                    "BigtableStore: Cleard startupcache because TTL is over"
+                    "BigTableStore: Cleard startupcache because TTL is over"
                 )
 
     def keys(self):
@@ -229,6 +229,12 @@ class BigTableCacheManager:
         If we return None here, this means, that no assumption
         about the current key can be made.
         """
+        if self._mutation_buffer is not None:
+            row, value = self._mutation_buffer.rows.get(bt_key, (None, None))
+            if row is not None and value is not None:
+                return True
+            elif row is not None and value is None:
+                return False
         if self._key_cache is not None:
             return self._key_cache.exists(bt_key)
         if (
@@ -236,10 +242,6 @@ class BigTableCacheManager:
             and not self._value_cache.ttl_over
         ):
             return bt_key in self._value_cache.keys()
-        if self._mutation_buffer is not None:
-            value = self._mutation_buffer.rows.get(bt_key, (None, None))[1]
-            if value is not None:
-                return True
         if self._value_cache is not None:
             if (
                 isinstance(self._value_cache, BigtableStartupCache)
@@ -255,6 +257,13 @@ class BigTableCacheManager:
         partitions = {k[0] for k in key_set}
         self._fill_caches(partitions)
 
+        if self._mutation_buffer is not None:
+            for k in key_set:
+                row, value = self._mutation_buffer.rows.get(k, (None, None))
+                if row is not None and value is not None:
+                    return True
+                elif row is not None and value is None:
+                    return False
         if self._key_cache is not None:
             return not self._key_cache._keys.isdisjoint(key_set)
         if (
@@ -262,20 +271,6 @@ class BigTableCacheManager:
             and not self._value_cache.ttl_over
         ):
             return not self._value_cache.keys().isdisjoint(key_set)
-
-        definately_not_found = []
-        for key in key_set:
-            found = self.contains(key)
-            if found is True:
-                return True
-            elif found is None:
-                definately_not_found.append(False)
-            else:
-                definately_not_found.append(True)
-
-        if all(definately_not_found):
-            # Now we can be sure that the key does not exist
-            return False
         # No assumption possible
         return None
 
