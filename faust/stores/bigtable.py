@@ -551,7 +551,7 @@ class BigTableStore(base.SerializedStore):
         if self._tracked_key is None:
             self._tacked_key = key
             self.log.info(f"Set tracked key to {key}: {msg}")
-        else:
+        elif key == self._tacked_key:
             self.log.info(f"Tracked {key=}: {msg}")
 
     def _get(self, key: bytes) -> Optional[bytes]:
