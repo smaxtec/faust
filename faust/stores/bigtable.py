@@ -755,11 +755,6 @@ class BigTableStore(base.SerializedStore):
             mutation_buffer = self._cache.get_mutation_buffer()
             if mutation_buffer is not None and not recovery:
                 if mutation_buffer.check_flush():
-                    num_mutations = len(mutation_buffer.rows)
-                    self.log.info(
-                        f"Will flush BigtableMutationBuffer with {num_mutations} "
-                        f"mutations for table {self.table_name}..."
-                    )
                     mutation_buffer.flush()
                     offset_key = self.get_offset_key(tp).encode()
                     self._bigtable_set(
