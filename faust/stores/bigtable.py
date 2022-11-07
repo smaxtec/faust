@@ -586,29 +586,6 @@ class BigTableStore(base.SerializedStore):
             )
             raise ex
 
-    def _iterkeys(self) -> Iterator[bytes]:
-        try:
-            for row in self._iteritems():
-                yield row[0]
-        except Exception as ex:
-            self.log.error(
-                f"FaustBigtableException Error in _iterkeys "
-                f"for table {self.table_name} exception {ex}"
-            )
-            raise ex
-
-    def _itervalues(self) -> Iterator[bytes]:
-        try:
-            for row in self._iteritems():
-                yield row[1]
-        except Exception as ex:
-            self.log.error(
-                f"FaustBigtableException Error "
-                f"in _itervalues for table {self.table_name}"
-                f" exception {ex}"
-            )
-            raise ex
-
     def _active_partitions(self) -> Iterator[int]:
         actives = self.app.assignor.assigned_actives()
         topic = self.table.changelog_topic_name
@@ -622,7 +599,7 @@ class BigTableStore(base.SerializedStore):
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
             if (
-                isinstance(self._cache._value_cache, BigtableStartupCache) 
+                isinstance(self._cache._value_cache, BigtableStartupCache)
                 and self._cache._value_cache.ttl_over is False
             ):
                 self._cache._fill_caches(set(self._active_partitions()))
@@ -637,7 +614,7 @@ class BigTableStore(base.SerializedStore):
                     row_set.add_row_range_from_keys(start_key, end_key)
 
                 for row in self.bt_table.read_rows(
-                        row_set=row_set, filter_=self.row_filter
+                    row_set=row_set, filter_=self.row_filter
                 ):
                     mutation_buffer = self._cache.get_mutation_buffer()
                     if mutation_buffer is not None:
@@ -659,6 +636,32 @@ class BigTableStore(base.SerializedStore):
             self.log.error(
                 f"FaustBigtableException Error "
                 f"in _iteritems for table {self.table_name}"
+                f" exception {ex}"
+            )
+            raise ex
+
+    def _iterkeys(self) -> Iterator[bytes]:
+        try:
+            start = time.time()
+            for row in self._iteritems():
+                yield row[0]
+            end = time.time()
+            self.log.info(f"Finished iterkeys for {self.table_name} in {end - start}s")
+        except Exception as ex:
+            self.log.error(
+                f"FaustBigtableException Error in _iterkeys "
+                f"for table {self.table_name} exception {ex}"
+            )
+            raise ex
+
+    def _itervalues(self) -> Iterator[bytes]:
+        try:
+            for row in self._iteritems():
+                yield row[1]
+        except Exception as ex:
+            self.log.error(
+                f"FaustBigtableException Error "
+                f"in _itervalues for table {self.table_name}"
                 f" exception {ex}"
             )
             raise ex
