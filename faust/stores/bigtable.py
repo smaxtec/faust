@@ -599,15 +599,21 @@ class BigTableStore(base.SerializedStore):
 
     def _iterkeys(self) -> Iterator[bytes]:
         try:
-            cache_iterator = self._cache.get_key_iterable_if_exists(
-                set(self._active_partitions())
+            #cache_iterator = self._cache.get_key_iterable_if_exists(
+                #set(self._active_partitions())
+            #)
+            #if cache_iterator is not None:
+                #for key in cache_iterator:
+                    #yield key[1:]
+            #else:
+            start = time.time()
+            for row in self._iteritems():
+                yield row[0]
+
+            end = time.time()
+            self.log.info(
+                f"Called iterkeys for {self.bt_table_name} took {end - start}"
             )
-            if cache_iterator is not None:
-                for key in cache_iterator:
-                    yield key[1:]
-            else:
-                for row in self._iteritems():
-                    yield row[0]
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _iterkeys "
