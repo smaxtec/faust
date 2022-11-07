@@ -270,18 +270,6 @@ class BigTableCacheManager:
         # No assumption possible
         return None
 
-    def get_key_iterable_if_exists(
-        self, partitions: Set[int]
-    ) -> Optional[Iterable]:
-        self._fill_caches(partitions=partitions)
-        if (
-            self._key_cache is not None
-            and len(self._registered_partitions) > 0
-        ):
-            return self._key_cache._keys
-        else:
-            return None
-
     @_register_partition
     def set(
         self, bt_key: bytes, row: DirectRow, value: Optional[bytes]
@@ -599,16 +587,15 @@ class BigTableStore(base.SerializedStore):
 
     def _iterkeys(self) -> Iterator[bytes]:
         try:
-            #cache_iterator = self._cache.get_key_iterable_if_exists(
-                #set(self._active_partitions())
-            #)
-            #if cache_iterator is not None:
-                #for key in cache_iterator:
-                    #yield key[1:]
-            #else:
             start = time.time()
-            for row in self._iteritems():
-                yield row[0]
+            # First check if all keys are cached!
+            if self._cache._key_cache is not None:
+                self._cache._fill_caches(set(self._active_partitions()))
+                for key in self._cache._key_cache._keys:
+                    yield key[1:]
+            else:
+                for row in self._iteritems():
+                    yield row[0]
 
             end = time.time()
             self.log.info(
