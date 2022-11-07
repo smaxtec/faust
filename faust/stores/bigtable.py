@@ -587,20 +587,25 @@ class BigTableStore(base.SerializedStore):
 
     def _iterkeys(self) -> Iterator[bytes]:
         try:
-            start = time.time()
-            # First check if all keys are cached!
-            if self._cache._key_cache is not None:
-                self._cache._fill_caches(set(self._active_partitions()))
-                for key in self._cache._key_cache._keys:
-                    yield key[1:]
-            else:
-                for row in self._iteritems():
-                    yield row[0]
+            row_set = RowSet()
+            for partition in self._active_partitions():
+                row_set.add_row_range_with_prefix(chr(partition))
 
-            end = time.time()
-            self.log.info(
-                f"Called iterkeys for {self.bt_table_name} took {end - start}"
-            )
+            for row in self.bt_table.read_rows(
+                    row_set=row_set, filter_=self.row_filter
+            ):
+                if self._cache._mutation_buffer is not None:
+                    # We want to yield the mutation if any is buffered
+                    mut_row, value = self._cache._mutation_buffer.rows.get(
+                        row.row_key, (None, None)
+                    )
+                    if mut_row is not None and value is not None:
+                        yield mut_row.row_key[1:]
+                        continue
+                    elif mut_row is not None and value is None:
+                        # This means that row will be deleted on flush
+                        continue
+                yield row.row_key[1:]
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _iterkeys "
