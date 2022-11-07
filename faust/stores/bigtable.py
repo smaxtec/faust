@@ -126,6 +126,7 @@ class BigtableStartupCache:
                 self.log.info(
                     "BigTableStore: Cleard startupcache because TTL is over"
                 )
+                self.ttl_over = True
 
     def keys(self):
         return self.data.keys()
@@ -587,25 +588,8 @@ class BigTableStore(base.SerializedStore):
 
     def _iterkeys(self) -> Iterator[bytes]:
         try:
-            row_set = RowSet()
-            for partition in self._active_partitions():
-                row_set.add_row_range_with_prefix(chr(partition))
-
-            for row in self.bt_table.read_rows(
-                    row_set=row_set, filter_=self.row_filter
-            ):
-                if self._cache._mutation_buffer is not None:
-                    # We want to yield the mutation if any is buffered
-                    mut_row, value = self._cache._mutation_buffer.rows.get(
-                        row.row_key, (None, None)
-                    )
-                    if mut_row is not None and value is not None:
-                        yield mut_row.row_key[1:]
-                        continue
-                    elif mut_row is not None and value is None:
-                        # This means that row will be deleted on flush
-                        continue
-                yield row.row_key[1:]
+            for row in self._iteritems():
+                yield row[0]
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _iterkeys "
@@ -637,32 +621,40 @@ class BigTableStore(base.SerializedStore):
 
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
-            row_set = RowSet()
-            for partition in self._active_partitions():
-                partition_prefix = partition.to_bytes(1, "little")
-                start_key = b"".join([partition_prefix, self.bt_start_key])
-                end_key = b"".join([partition_prefix, self.bt_end_key])
-                row_set.add_row_range_from_keys(start_key, end_key)
-
-            for row in self.bt_table.read_rows(
-                    row_set=row_set, filter_=self.row_filter
+            if (
+                isinstance(self._cache._value_cache, BigtableStartupCache) 
+                and self._cache._value_cache.ttl_over is False
             ):
-                mutation_buffer = self._cache.get_mutation_buffer()
-                if mutation_buffer is not None:
-                    # We want to yield the mutation if any is buffered
-                    mut_row, value = mutation_buffer.rows.get(
-                        row.row_key, (None, None)
+                self._cache._fill_caches(set(self._active_partitions()))
+                for k, v in self._cache._value_cache.data.items():
+                    yield k[1:], v
+            else:
+                row_set = RowSet()
+                for partition in self._active_partitions():
+                    partition_prefix = partition.to_bytes(1, "little")
+                    start_key = b"".join([partition_prefix, self.bt_start_key])
+                    end_key = b"".join([partition_prefix, self.bt_end_key])
+                    row_set.add_row_range_from_keys(start_key, end_key)
+
+                for row in self.bt_table.read_rows(
+                        row_set=row_set, filter_=self.row_filter
+                ):
+                    mutation_buffer = self._cache.get_mutation_buffer()
+                    if mutation_buffer is not None:
+                        # We want to yield the mutation if any is buffered
+                        mut_row, value = mutation_buffer.rows.get(
+                            row.row_key, (None, None)
+                        )
+                        if value is not None:
+                            yield (row.row_key[1:], value)
+                            continue
+                        elif mut_row is not None:
+                            # This means that row will be deleted
+                            continue
+                    yield (
+                        row.row_key[1:],
+                        self.bigtable_exrtact_row_data(row),
                     )
-                    if value is not None:
-                        yield (row.row_key[1:], value)
-                        continue
-                    elif mut_row is not None:
-                        # This means that row will be deleted
-                        continue
-                yield (
-                    row.row_key[1:],
-                    self.bigtable_exrtact_row_data(row),
-                )
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error "
