@@ -634,8 +634,11 @@ class BigTableStore(base.SerializedStore):
     def _iterkeys(self) -> Iterator[bytes]:
         try:
             start = time.time()
-            for row in self._iteritems():
-                yield row[0]
+            if self._cache._key_cache is not None:
+                yield from self._cache._key_cache._keys
+            else:
+                for row in self._iteritems():
+                    yield row[0]
             end = time.time()
             self.log.info(f"Finished iterkeys for {self.table_name} in {end - start}s")
         except Exception as ex:
@@ -663,6 +666,8 @@ class BigTableStore(base.SerializedStore):
 
     def _contains(self, key: bytes) -> bool:
         try:
+            if not self.app.conf.store_check_exists:
+                return True
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
                 key_with_partition = self._get_key_with_partition(
