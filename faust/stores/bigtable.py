@@ -433,14 +433,16 @@ class BigTableStore(base.SerializedStore):
         if value is not None:
             return value
         elif row is not None and value is None:
-            raise KeyError(f"{key=} not found in {self.table_name}")
+            return value
         else:
             res = self.bt_table.read_row(key, filter_=self.row_filter)
             row = self.bt_table.direct_row(key)
             if res is None:
-                raise KeyError(f"{key=} not found in {self.table_name}")
+                self.log.info(f"{key=} not found in {self.table_name}")
+                value = None
             else:
-                return self.bigtable_exrtact_row_data(res)
+                value = self.bigtable_exrtact_row_data(res)
+        return value
 
     def _bigtable_get_range(
         self, keys: Set[bytes]
@@ -463,7 +465,7 @@ class BigTableStore(base.SerializedStore):
             # First hit will return
             return row.row_key, BigTableStore.bigtable_exrtact_row_data(row)
         # Not found
-        raise KeyError
+        return None, None
 
     def _bigtable_set(
         self, key: bytes, value: Optional[bytes], persist_offset=False
@@ -673,10 +675,7 @@ class BigTableStore(base.SerializedStore):
                 )
                 found = self._cache.contains(key_with_partition)
                 if found is None:
-                    try:
-                        found = self._bigtable_get(key_with_partition) is not None
-                    except KeyError:
-                        found = False
+                    found = self._bigtable_get(key_with_partition) is not None
                 return found
             else:
                 keys_to_search = set()
@@ -688,12 +687,9 @@ class BigTableStore(base.SerializedStore):
 
                 found = self._cache.contains_any(keys_to_search)
                 if found is None:
-                    try:
-                        found = (
-                            self._bigtable_get_range(keys_to_search)[1] is not None
-                        )
-                    except KeyError:
-                        found = False
+                    found = (
+                        self._bigtable_get_range(keys_to_search)[1] is not None
+                    )
                 return found
         except Exception as ex:
             self.log.error(
