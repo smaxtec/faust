@@ -635,7 +635,8 @@ class BigTableStore(base.SerializedStore):
         try:
             start = time.time()
             if self._cache._key_cache is not None:
-                yield from self._cache._key_cache._keys
+                for k in self._cache._key_cache._keys:
+                    yield k[1:]
             else:
                 for row in self._iteritems():
                     yield row[0]
