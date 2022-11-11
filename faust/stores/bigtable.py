@@ -377,14 +377,16 @@ class BigTableStore(base.SerializedStore):
             return None
 
     def _get_partition_prefix(self, partition: int) -> bytes:
-        return b"".join([partition, self.partition_prefix])
+        partition_bytes = partition.to_bytes(1, "little")
+        return b"".join([partition_bytes, self.partition_prefix])
 
     def _remove_partition_prefix(self, key: bytes) -> bytes:
         slice_from = key.find(self.partition_prefix) + len(self.partition_prefix)
         return key[slice_from:]
 
-    def _get_key_with_partition(self, key: bytes, partition):
-        key = b"".join([partition, self.partition_prefix , key])
+    def _get_key_with_partition(self, key: bytes, partition: int) -> bytes:
+        prefix = self._get_partition_prefix(partition)
+        key = b"".join([prefix, key])
         return key
 
     def _partitions_for_key(self, key: bytes) -> Iterable[int]:
