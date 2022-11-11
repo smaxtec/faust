@@ -685,6 +685,8 @@ class BigTableStore(base.SerializedStore):
         try:
             if not self.app.conf.store_check_exists:
                 return True
+            if self.table.default is not None:
+                return True
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
                 key_with_partition = self._get_key_with_partition(
