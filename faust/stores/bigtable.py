@@ -2,17 +2,7 @@
 import logging
 import time
 import traceback
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Iterable,
-    Iterator,
-    Optional,
-    Set,
-    Tuple,
-    Union,
-)
+from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple, Union
 
 from google.cloud.bigtable import column_family
 from google.cloud.bigtable.client import Client
@@ -118,6 +108,7 @@ class BigTableCacheManager:
         self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
         self._init_value_cache(options)
         self._init_key_cache(options)
+        self.partition_prefixes: Dict[int, bytes]
 
     def _fill_caches(self, partitions: Set[int]):
 
@@ -203,8 +194,6 @@ class BigTableCacheManager:
             self._key_cache.add(bt_key)
 
     def delete(self, bt_key: bytes) -> None:
-        user_key = bt_key[1:]
-        self._partition_cache.pop(user_key, None)
         if self._value_cache is not None:
             del self._value_cache[bt_key]
         if self._key_cache is not None:
@@ -248,6 +237,7 @@ class BigTableStore(base.SerializedStore):
     instance: Instance
     bt_table: Table
     _cache: BigTableCacheManager
+    partition_prefix = b"__"
 
     BT_COLUMN_NAME_KEY = "bt_column_name_key"
     BT_INSTANCE_KEY = "bt_instance_key"
@@ -386,9 +376,12 @@ class BigTableStore(base.SerializedStore):
         else:
             return None
 
+    def _remove_partition_prefix(self, key: bytes) -> bytes:
+        slice_from = key.find(self.partition_prefix) + len(self.partition_prefix)
+        return key[slice_from:]
+
     def _get_key_with_partition(self, key: bytes, partition):
-        partition_prefix = partition.to_bytes(1, "little")
-        key = b"".join([partition_prefix, key])
+        key = b"".join([partition, self.partition_prefix , key])
         return key
 
     def _partitions_for_key(self, key: bytes) -> Iterable[int]:
@@ -417,10 +410,10 @@ class BigTableStore(base.SerializedStore):
                     )
                     keys.add(key_with_partition)
 
-                key, value = self._bigtable_get_range(keys)
+                key_with_partition, value = self._bigtable_get_range(keys)
                 if value is not None:
                     partition = key[0]
-                    self._cache.set_partition(key[1:], partition)
+                    self._cache.set_partition(key, partition)
                     return value
             return None
         except KeyError as ke:
@@ -457,6 +450,7 @@ class BigTableStore(base.SerializedStore):
                     key, partition=partition
                 )
                 self._bigtable_del(key_with_partition)
+                self._cache._partition_cache.pop(key, None)
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in delete for "
@@ -478,13 +472,13 @@ class BigTableStore(base.SerializedStore):
         try:
             row_set = RowSet()
             for partition in self._active_partitions():
-                row_set.add_row_range_from_keys(partition, partition+1)
+                row_set.add_row_range_from_keys(partition, partition + 1)
 
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=self.row_filter
             ):
                 yield (
-                    row.row_key[1:],
+                    self._remove_partition_prefix(row.row_key),
                     self.bigtable_exrtact_row_data(row),
                 )
         except Exception as ex:
@@ -500,12 +494,12 @@ class BigTableStore(base.SerializedStore):
             start = time.time()
             row_set = RowSet()
             for partition in self._active_partitions():
-                row_set.add_row_range_from_keys(partition, partition+1)
+                row_set.add_row_range_from_keys(partition, partition + 1)
 
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=self.row_filter
             ):
-                yield row.row_key[1:]
+                yield self._remove_partition_prefix(row.row_key)
             end = time.time()
             self.log.info(f"Finished iterkeys for {self.table_name} in {end - start}s")
         except Exception as ex:
