@@ -376,6 +376,9 @@ class BigTableStore(base.SerializedStore):
         else:
             return None
 
+    def _get_partition_prefix(self, partition: int) -> bytes:
+        return b"".join([partition, self.partition_prefix])
+
     def _remove_partition_prefix(self, key: bytes) -> bytes:
         slice_from = key.find(self.partition_prefix) + len(self.partition_prefix)
         return key[slice_from:]
@@ -472,7 +475,8 @@ class BigTableStore(base.SerializedStore):
         try:
             row_set = RowSet()
             for partition in self._active_partitions():
-                row_set.add_row_range_from_keys(partition, partition + 1)
+                prefix = self._get_partition_prefix(partition)
+                row_set.add_row_range_with_prefix(prefix)
 
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=self.row_filter
@@ -494,7 +498,8 @@ class BigTableStore(base.SerializedStore):
             start = time.time()
             row_set = RowSet()
             for partition in self._active_partitions():
-                row_set.add_row_range_from_keys(partition, partition + 1)
+                prefix = self._get_partition_prefix(partition)
+                row_set.add_row_range_with_prefix(prefix)
 
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=self.row_filter
