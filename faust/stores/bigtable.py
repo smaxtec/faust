@@ -355,7 +355,6 @@ class BigTableStore(base.SerializedStore):
     BT_MUTATION_BUFFER_LIMIT_KEY = "bt_mutation_buffer_limit_key"
     BT_OFFSET_KEY_PREFIX = "bt_offset_key_prefix"
     BT_PROJECT_KEY = "bt_project_key"
-    BT_READ_ROWS_BORDERS_KEY = "bt_read_rows_borders_key"
     BT_ROW_FILTERS_KEY = "bt_row_filter_key"
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
     KEY_CACHE_ENABLE_KEY = "key_cache_enable_key"
@@ -383,9 +382,6 @@ class BigTableStore(base.SerializedStore):
     def _set_options(self, options) -> None:
         self.table_name_generator = options.get(
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
-        )
-        self.bt_start_key, self.bt_end_key = options.get(
-            BigTableStore.BT_READ_ROWS_BORDERS_KEY, [b"", b""]
         )
         self.column_name = options.get(
             BigTableStore.BT_COLUMN_NAME_KEY, "DATA"
@@ -600,10 +596,7 @@ class BigTableStore(base.SerializedStore):
         try:
             row_set = RowSet()
             for partition in self._active_partitions():
-                partition_prefix = partition.to_bytes(1, "little")
-                start_key = b"".join([partition_prefix, self.bt_start_key])
-                end_key = b"".join([partition_prefix, self.bt_end_key])
-                row_set.add_row_range_from_keys(start_key, end_key)
+                row_set.add_row_range_from_keys(partition, partition+1)
 
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=self.row_filter
@@ -636,10 +629,7 @@ class BigTableStore(base.SerializedStore):
             start = time.time()
             row_set = RowSet()
             for partition in self._active_partitions():
-                partition_prefix = partition.to_bytes(1, "little")
-                start_key = b"".join([partition_prefix, self.bt_start_key])
-                end_key = b"".join([partition_prefix, self.bt_end_key])
-                row_set.add_row_range_from_keys(start_key, end_key)
+                row_set.add_row_range_from_keys(partition, partition+1)
 
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=self.row_filter
