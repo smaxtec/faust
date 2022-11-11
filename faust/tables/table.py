@@ -52,7 +52,6 @@ class Table(TableT[KT, VT], Collection):
         )
 
     def __missing__(self, key: KT) -> VT:
-        self.log.info(f"BigTableStore: __missing__ called for {key=}")
         if self.default is not None:
             return self.default()
         raise KeyError(key)
