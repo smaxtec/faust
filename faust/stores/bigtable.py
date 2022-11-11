@@ -477,8 +477,9 @@ class BigTableStore(base.SerializedStore):
         try:
             row_set = RowSet()
             for partition in self._active_partitions():
-                prefix = self._get_partition_prefix(partition)
-                row_set.add_row_range_with_prefix(prefix)
+                prefix_start = self._get_partition_prefix(partition)
+                prefix_end = self._get_partition_prefix(partition + 1)
+                row_set.add_row_range_from_keys(prefix_start, prefix_end)
 
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=self.row_filter
@@ -500,8 +501,9 @@ class BigTableStore(base.SerializedStore):
             start = time.time()
             row_set = RowSet()
             for partition in self._active_partitions():
-                prefix = self._get_partition_prefix(partition)
-                row_set.add_row_range_with_prefix(prefix)
+                prefix_start = self._get_partition_prefix(partition)
+                prefix_end = self._get_partition_prefix(partition + 1)
+                row_set.add_row_range_from_keys(prefix_start, prefix_end)
 
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=self.row_filter
