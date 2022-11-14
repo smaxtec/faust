@@ -556,6 +556,8 @@ class BigTableStore(base.SerializedStore):
 
                 found = self._cache.contains_any(keys_to_search)
                 if found is None:
+                    if self.table.default is not None:
+                        return True
                     found = (
                         self._bigtable_get_range(keys_to_search)[1] is not None
                     )
