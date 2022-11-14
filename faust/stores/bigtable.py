@@ -656,9 +656,7 @@ class BigTableStore(base.SerializedStore):
                 offset if tp not in tp_offsets else max(offset, tp_offsets[tp])
             )
             msg = event.message
-            key: bytes = msg.key
-            partition_bytes = tp.partition.to_bytes(1, "little")
-            offset_key = b"".join([partition_bytes, key])
+            offset_key = self._get_key_with_partition(msg.key, partition=tp.partition)
             row = self.bt_table.direct_row(offset_key)
             if msg.value is None:
                 row.delete()
