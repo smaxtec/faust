@@ -535,7 +535,7 @@ class BigTableStore(base.SerializedStore):
 
     def _contains(self, key: bytes) -> bool:
         try:
-            if not self.app.conf.store_check_exists:
+            if not self.app.conf.store_check_exists or self.table.default is not None:
                 return True
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
@@ -544,8 +544,6 @@ class BigTableStore(base.SerializedStore):
                 )
                 found = self._cache.contains(key_with_partition)
                 if found is None:
-                    if self.table.default is not None:
-                        return True
                     found = self._bigtable_get(key_with_partition) is not None
                 return found
             else:
@@ -558,8 +556,6 @@ class BigTableStore(base.SerializedStore):
 
                 found = self._cache.contains_any(keys_to_search)
                 if found is None:
-                    if self.table.default is not None:
-                        return True
                     found = (
                         self._bigtable_get_range(keys_to_search)[1] is not None
                     )
