@@ -7,7 +7,6 @@ from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple
 from google.cloud.bigtable import column_family
 from google.cloud.bigtable.client import Client
 from google.cloud.bigtable.instance import Instance
-from google.cloud.bigtable.row import DirectRow
 from google.cloud.bigtable.row_data import DEFAULT_RETRY_READ_ROWS
 from google.cloud.bigtable.row_filters import CellsColumnLimitFilter
 from google.cloud.bigtable.row_set import RowSet
