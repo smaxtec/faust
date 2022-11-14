@@ -544,6 +544,8 @@ class BigTableStore(base.SerializedStore):
                 )
                 found = self._cache.contains(key_with_partition)
                 if found is None:
+                    if self.table.default is not None:
+                        return True
                     found = self._bigtable_get(key_with_partition) is not None
                 return found
             else:
