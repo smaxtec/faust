@@ -105,7 +105,7 @@ class BigTableKeyCache:
 def _register_partition(func):
     def inner(self, bt_key: bytes, *args):
         partition = bt_key[0]
-        self._fill_caches({partition})
+        self._fill_value_cache({partition})
         return func(self, bt_key, *args)
 
     return inner
