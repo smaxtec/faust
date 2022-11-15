@@ -40,14 +40,15 @@ class BigTableValueCache:
     This is a dictionary which is only filled once, after that, every
     successful access to a key, will remove it.
     """
+
     data: Union[Dict, LRUCache]
 
-    def __init__(self, ttl: Optional[int], size: Optional[int]) -> None:
+    def __init__(self, ttl=-1, size: Optional[int] = None) -> None:
         self.log = logging.getLogger(self.__class__.__name__)
         if size is not None:
             self.data = LRUCache(limit=size)
         else:
-            self.data = dict()
+            self.data = {}
         self.ttl = ttl
         self.ttl_over = False
         self.init_ts = int(time.time())
@@ -56,7 +57,7 @@ class BigTableValueCache:
         return len(self.data)
 
     def __getitem__(self, key):
-        if self.ttl is not None or self.ttl == -1:
+        if not self.ttl_over:
             res = self.data[key]
             self._maybe_ttl_clear()
             return res
@@ -64,18 +65,17 @@ class BigTableValueCache:
     def __setitem__(self, key, value) -> None:
         if value is not None:
             self._maybe_ttl_clear()
-            if self.ttl is not None:
+            if not self.ttl_over:
                 self.data[key] = value
 
     def __delitem__(self, key):
         self.data.pop(key, None)
 
     def _maybe_ttl_clear(self):
-        if self.ttl is not None and self.ttl != -1:
+        if self.ttl != -1:
             now = int(time.time())
             if now > self.init_ts + self.ttl:
                 self.data = {}
-                self.ttl = None
                 self.log.info(
                     "BigTableStore: Cleard startupcache because TTL is over"
                 )
@@ -164,16 +164,6 @@ class BigTableCacheManager:
         # No assumption possible
         return None
 
-    def add_key(self, bt_key: bytes):
-        if self._key_cache is not None:
-            self._key_cache.add(bt_key)
-
-    def discard_key(self, bt_key: bytes):
-        if self._key_cache is not None:
-            self._key_cache.discard(bt_key)
-        if self._value_cache is not None:
-            del self._value_cache[bt_key]
-
     def _init_value_cache(
         self, options
     ) -> Optional[Union[LRUCache, BigTableValueCache]]:
@@ -185,13 +175,15 @@ class BigTableCacheManager:
             startup_cache_ttl = options.get(
                 BigTableStore.STARTUPCACHE_TTL_KEY, None
             )
-            self._value_cache = BigTableValueCache(startup_cache_ttl)
+            self._value_cache = BigTableValueCache(ttl=startup_cache_ttl)
         elif value_cache_type == "forever":
             value_cache_size = options.get(
                 BigTableStore.VALUE_CACHE_SIZE_KEY, 1_000
             )
 
-            self._value_cache = LRUCache(limit=value_cache_size)
+            self._value_cache = BigTableValueCache(
+                ttl=-1, size=value_cache_size
+            )
         else:
             self._value_cache = None
 
@@ -308,7 +300,7 @@ class BigTableStore(base.SerializedStore):
         if row is not None:
             self._cache.set(key, self.bigtable_exrtact_row_data(row))
             return True
-        self._cache.discard_key(key)
+        self._cache.delete(key)
         return False
 
     def _bigtable_contains_any(self, keys: Set[bytes]) -> bool:
