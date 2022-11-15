@@ -85,33 +85,12 @@ class BigTableValueCache:
         return self.data.keys()
 
 
-class BigTableKeyCache:
-    existing_keys: Set[bytes] = set()
-    missing_keys: Set[bytes] = set()
-
-    def add(self, key: bytes):
-        self.existing_keys.add(key)
-        self.missing_keys.discard(key)
-
-    def discard(self, key: bytes):
-        self.existing_keys.discard(key)
-        self.missing_keys.add(key)
-
-    def exists(self, key: bytes) -> Optional[bool]:
-        if key in self.existing_keys:
-            return True
-        elif key in self.missing_keys:
-            return False
-        else:
-            return None
-
-
 class BigTableCacheManager:
     _partition_cache: LRUCache[bytes, int]
     _value_cache: Optional[
         Union[LRUCache[bytes, Union[bytes, None]], BigTableValueCache]
     ]
-    _key_cache: Optional[BigTableKeyCache]
+    _key_cache: Optional[Set]
 
     def __init__(self, app, options: Dict, bt_table: Table) -> None:
         self.log = logging.getLogger(__name__)
@@ -152,38 +131,30 @@ class BigTableCacheManager:
         about the current key can be made.
         """
         if self._key_cache is not None:
-            return self._key_cache.exists(bt_key)
+            return bt_key in self._key_cache
         return None
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
         if self._key_cache is not None:
-            if not self._key_cache.existing_keys.isdisjoint(key_set):
+            if not self._key_cache.isdisjoint(key_set):
                 return True
-            if not self._key_cache.missing_keys.isdisjoint(key_set):
-                return False
         # No assumption possible
         return None
 
     def _init_value_cache(
         self, options
     ) -> Optional[Union[LRUCache, BigTableValueCache]]:
-        value_cache_type = options.get(
-            BigTableStore.VALUE_CACHE_TYPE_KEY, None
+        enable = options.get(
+            BigTableStore.VALUE_CACHE_ENABLE_KEY, False
         )
-
-        if value_cache_type == "startup":
-            startup_cache_ttl = options.get(
-                BigTableStore.STARTUPCACHE_TTL_KEY, None
+        if enable:
+            ttl = options.get(
+                BigTableStore.VALUE_CACHE_INVALIDATION_TIME_KEY, -1
             )
-            self._value_cache = BigTableValueCache(ttl=startup_cache_ttl)
-        elif value_cache_type == "forever":
-            value_cache_size = options.get(
-                BigTableStore.VALUE_CACHE_SIZE_KEY, 1_000
+            size = options.get(
+                BigTableStore.VALUE_CACHE_SIZE_KEY, None
             )
-
-            self._value_cache = BigTableValueCache(
-                ttl=-1, size=value_cache_size
-            )
+            self._value_cache = BigTableValueCache(ttl=ttl, size=size)
         else:
             self._value_cache = None
 
@@ -192,7 +163,7 @@ class BigTableCacheManager:
             BigTableStore.KEY_CACHE_ENABLE_KEY, False
         )
         if key_cache_enabled:
-            self._key_cache = BigTableKeyCache()
+            self._key_cache = set()
         else:
             self._key_cache = None
 
@@ -213,9 +184,9 @@ class BigTableStore(base.SerializedStore):
     BT_ROW_FILTERS_KEY = "bt_row_filter_key"
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
     KEY_CACHE_ENABLE_KEY = "key_cache_enable_key"
-    STARTUPCACHE_TTL_KEY = "startupcache_ttl_key"
+    VALUE_CACHE_INVALIDATION_TIME_KEY = "value_cache_invalidation_time_key"
     VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
-    VALUE_CACHE_TYPE_KEY = "value_cache_type_key"
+    VALUE_CACHE_ENABLE_KEY = "value_cache_enable_key"
 
     def __init__(
         self,
@@ -300,6 +271,7 @@ class BigTableStore(base.SerializedStore):
         if row is not None:
             self._cache.set(key, self.bigtable_exrtact_row_data(row))
             return True
+        # Just to be sure
         self._cache.delete(key)
         return False
 
