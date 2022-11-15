@@ -144,16 +144,12 @@ class BigTableCacheManager:
     def _init_value_cache(
         self, options
     ) -> Optional[Union[LRUCache, BigTableValueCache]]:
-        enable = options.get(
-            BigTableStore.VALUE_CACHE_ENABLE_KEY, False
-        )
+        enable = options.get(BigTableStore.VALUE_CACHE_ENABLE_KEY, False)
         if enable:
             ttl = options.get(
                 BigTableStore.VALUE_CACHE_INVALIDATION_TIME_KEY, -1
             )
-            size = options.get(
-                BigTableStore.VALUE_CACHE_SIZE_KEY, None
-            )
+            size = options.get(BigTableStore.VALUE_CACHE_SIZE_KEY, None)
             self._value_cache = BigTableValueCache(ttl=ttl, size=size)
         else:
             self._value_cache = None
@@ -181,7 +177,6 @@ class BigTableStore(base.SerializedStore):
     BT_INSTANCE_KEY = "bt_instance_key"
     BT_OFFSET_KEY_PREFIX = "bt_offset_key_prefix"
     BT_PROJECT_KEY = "bt_project_key"
-    BT_ROW_FILTERS_KEY = "bt_row_filter_key"
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
     KEY_CACHE_ENABLE_KEY = "key_cache_enable_key"
     VALUE_CACHE_INVALIDATION_TIME_KEY = "value_cache_invalidation_time_key"
@@ -212,9 +207,7 @@ class BigTableStore(base.SerializedStore):
         self.column_name = options.get(
             BigTableStore.BT_COLUMN_NAME_KEY, "DATA"
         )
-        self.row_filter = options.get(
-            BigTableStore.BT_ROW_FILTERS_KEY, CellsColumnLimitFilter(1)
-        )
+        self.row_filter = CellsColumnLimitFilter(1)
         self.offset_key_prefix = options.get(
             BigTableStore.BT_OFFSET_KEY_PREFIX, "offset_partitiion:"
         )
@@ -261,6 +254,7 @@ class BigTableStore(base.SerializedStore):
                 value = None
             else:
                 value = self.bigtable_exrtact_row_data(res)
+                self._cache.set(key, value)
         return value
 
     def _bigtable_contains(self, key: bytes) -> bool:
@@ -305,7 +299,10 @@ class BigTableStore(base.SerializedStore):
             row_set=rows, filter_=CellsColumnLimitFilter(1)
         ):
             # First hit will return
-            return row.row_key, BigTableStore.bigtable_exrtact_row_data(row)
+            val = self.bigtable_exrtact_row_data(row)
+            self._cache.set(row.row_key, val)
+            return row.row_key, val
+
         # Not found
         return None, None
 
