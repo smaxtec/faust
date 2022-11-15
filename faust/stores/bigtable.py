@@ -258,9 +258,6 @@ class BigTableStore(base.SerializedStore):
         return value
 
     def _bigtable_contains(self, key: bytes) -> bool:
-        cache_res = self._cache.contains(key)
-        if cache_res is not None:
-            return cache_res
         row = self.bt_table.read_row(key, filter_=self.row_filter)
         if row is not None:
             self._cache.set(key, self.bigtable_exrtact_row_data(row))
@@ -470,6 +467,8 @@ class BigTableStore(base.SerializedStore):
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=self.row_filter
             ):
+                if self._cache._value_cache is not None:
+                    self._cache.set(row.row_key, self.bigtable_exrtact_row_data(row))
                 yield self._remove_partition_prefix(row.row_key)
             end = time.time()
             self.log.info(
