@@ -2,7 +2,17 @@
 import logging
 import time
 import traceback
-from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 from google.cloud.bigtable import column_family
 from google.cloud.bigtable.client import Client
@@ -72,16 +82,24 @@ class BigtableStartupCache:
 
 
 class BigTableKeyCache:
-    _keys: Set[bytes] = set()
+    existing_keys: Set[bytes] = set()
+    missing_keys: Set[bytes] = set()
 
     def add(self, key: bytes):
-        self._keys.add(key)
+        self.existing_keys.add(key)
+        self.missing_keys.discard(key)
 
     def discard(self, key: bytes):
-        self._keys.discard(key)
+        self.existing_keys.discard(key)
+        self.missing_keys.add(key)
 
-    def exists(self, key: bytes) -> bool:
-        return key in self._keys
+    def exists(self, key: bytes) -> Optional[bool]:
+        if key in self.existing_keys:
+            return True
+        elif key in self.missing_keys:
+            return False
+        else:
+            return None
 
 
 def _register_partition(func):
@@ -109,7 +127,9 @@ class BigTableCacheManager:
         self._init_key_cache(options)
         self.partition_prefixes: Dict[int, bytes]
 
-    def _fill_caches(self, partitions: Set[int]):
+    def _fill_value_cache(self, partitions: Set[int]):
+        if self._value_cache is None:
+            return
 
         partitions = partitions.difference(self._registered_partitions)
         if len(partitions) == 0:
@@ -129,8 +149,6 @@ class BigTableCacheManager:
             if isinstance(self._value_cache, BigtableStartupCache):
                 row_val = BigTableStore.bigtable_exrtact_row_data(row)
                 self._value_cache.data[row.row_key] = row_val
-            if self._key_cache is not None:
-                self._key_cache.add(row.row_key)
         self._registered_partitions.update(partitions)
         td = time.time() - start
         self.log.info(
@@ -139,9 +157,7 @@ class BigTableCacheManager:
         )
 
     @_register_partition
-    def get(
-        self, bt_key: bytes
-    ) -> Optional[bytes]:
+    def get(self, bt_key: bytes) -> Optional[bytes]:
         value = None
         if self._value_cache is not None:
             if bt_key in self._value_cache.keys():
@@ -154,7 +170,6 @@ class BigTableCacheManager:
     def set_partition(self, user_key: bytes, partition: int):
         self._partition_cache[user_key] = partition
 
-    @_register_partition
     def contains(self, bt_key: bytes) -> Optional[bool]:
         """
         If we return None here, this means, that no assumption
@@ -162,31 +177,28 @@ class BigTableCacheManager:
         """
         if self._key_cache is not None:
             return self._key_cache.exists(bt_key)
-        if (
-            isinstance(self._value_cache, BigtableStartupCache)
-            and not self._value_cache.ttl_over
-        ):
-            return bt_key in self._value_cache.keys()
         return None
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
-        partitions = {k[0] for k in key_set}
-        self._fill_caches(partitions)
         if self._key_cache is not None:
-            return not self._key_cache._keys.isdisjoint(key_set)
-        if (
-            isinstance(self._value_cache, BigtableStartupCache)
-            and not self._value_cache.ttl_over
-        ):
-            return not self._value_cache.keys().isdisjoint(key_set)
+            if not self._key_cache.existing_keys.isdisjoint(key_set):
+                return True
+            if not self._key_cache.missing_keys.isdisjoint(key_set):
+                return False
 
         # No assumption possible
         return None
 
+    def add_key(self, bt_key: bytes):
+        if self._key_cache is not None:
+            self._key_cache.add(bt_key)
+
+    def discard_key(self, bt_key: bytes):
+        if self._key_cache is not None:
+            self._key_cache.discard(bt_key)
+
     @_register_partition
-    def set(
-        self, bt_key: bytes, value: Optional[bytes]
-    ) -> None:
+    def set(self, bt_key: bytes, value: Optional[bytes]) -> None:
         if self._value_cache is not None:
             self._value_cache[bt_key] = value
         if self._key_cache is not None:
@@ -380,7 +392,9 @@ class BigTableStore(base.SerializedStore):
         return b"".join([partition_bytes, self.partition_prefix])
 
     def _remove_partition_prefix(self, key: bytes) -> bytes:
-        slice_from = key.find(self.partition_prefix) + len(self.partition_prefix)
+        slice_from = key.find(self.partition_prefix) + len(
+            self.partition_prefix
+        )
         return key[slice_from:]
 
     def _get_key_with_partition(self, key: bytes, partition: int) -> bytes:
@@ -509,7 +523,9 @@ class BigTableStore(base.SerializedStore):
             ):
                 yield self._remove_partition_prefix(row.row_key)
             end = time.time()
-            self.log.info(f"Finished iterkeys for {self.table_name} in {end - start}s")
+            self.log.info(
+                f"Finished iterkeys for {self.table_name} in {end - start}s"
+            )
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _iterkeys "
@@ -543,10 +559,12 @@ class BigTableStore(base.SerializedStore):
                     key, partition=partition
                 )
                 found = self._cache.contains(key_with_partition)
-                self.log.info(f" [{self.table_name}] Key {key} in keycache: {found}")
-                if found is not True:
+                if found is None:
                     found = self._bigtable_get(key_with_partition) is not None
-                self.log.info(f" [{self.table_name}] Key {key} in table: {found}")
+                    if found is True:
+                        self._cache.add_key(key_with_partition)
+                    else:
+                        self._cache.discard_key(key_with_partition)
                 return found
             else:
                 keys_to_search = set()
@@ -557,12 +575,15 @@ class BigTableStore(base.SerializedStore):
                     keys_to_search.add(key_with_partition)
 
                 found = self._cache.contains_any(keys_to_search)
-                self.log.info(f" [{self.table_name}] Key {key} in keycache: {found} (ALL PARTITIONS)")
                 if found is not True:
-                    found = (
-                        self._bigtable_get_range(keys_to_search)[1] is not None
-                    )
-                    self.log.info(f" [{self.table_name}] Key {key} in table: {found} (ALL PARTITIONS)")
+                    bt_key, value = self._bigtable_get_range(keys_to_search)
+                    if value is not None:
+                        self._cache.add_key(bt_key)
+                        found = True
+                    else:
+                        for k in keys_to_search:
+                            self._cache.discard_key(k)
+                        found = False
                 return found
         except Exception as ex:
             self.log.error(
@@ -658,7 +679,9 @@ class BigTableStore(base.SerializedStore):
                 offset if tp not in tp_offsets else max(offset, tp_offsets[tp])
             )
             msg = event.message
-            offset_key = self._get_key_with_partition(msg.key, partition=tp.partition)
+            offset_key = self._get_key_with_partition(
+                msg.key, partition=tp.partition
+            )
             row = self.bt_table.direct_row(offset_key)
             if msg.value is None:
                 row.delete()
