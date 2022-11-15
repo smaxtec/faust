@@ -53,6 +53,7 @@ class Table(TableT[KT, VT], Collection):
 
     def __missing__(self, key: KT) -> VT:
         if self.default is not None:
+            self.log.info(f" Key {key} will return default in __missing__")
             return self.default()
         raise KeyError(key)
 

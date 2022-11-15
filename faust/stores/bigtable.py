@@ -543,8 +543,10 @@ class BigTableStore(base.SerializedStore):
                     key, partition=partition
                 )
                 found = self._cache.contains(key_with_partition)
+                self.log.info(f" [{self.table_name}] Key {key} in keycache: {found}")
                 if found is not True:
                     found = self._bigtable_get(key_with_partition) is not None
+                self.log.info(f" [{self.table_name}] Key {key} in table: {found}")
                 return found
             else:
                 keys_to_search = set()
@@ -555,10 +557,12 @@ class BigTableStore(base.SerializedStore):
                     keys_to_search.add(key_with_partition)
 
                 found = self._cache.contains_any(keys_to_search)
+                self.log.info(f" [{self.table_name}] Key {key} in keycache: {found} (ALL PARTITIONS)")
                 if found is not True:
                     found = (
                         self._bigtable_get_range(keys_to_search)[1] is not None
                     )
+                    self.log.info(f" [{self.table_name}] Key {key} in table: {found} (ALL PARTITIONS)")
                 return found
         except Exception as ex:
             self.log.error(
