@@ -131,12 +131,19 @@ class BigTableCacheManager:
         about the current key can be made.
         """
         if self._key_cache is not None:
-            return bt_key in self._key_cache
+            if bt_key in self._key_cache:
+                return True
+        if self._value_cache is not None:
+            if bt_key in self._value_cache:
+                return True
         return None
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
         if self._key_cache is not None:
             if not self._key_cache.isdisjoint(key_set):
+                return True
+        if self._value_cache is not None:
+            if not self._value_cache.keys().isdisjoint(key_set):
                 return True
         # No assumption possible
         return None
@@ -158,8 +165,10 @@ class BigTableCacheManager:
         key_cache_enabled = options.get(
             BigTableStore.KEY_CACHE_ENABLE_KEY, False
         )
-        if key_cache_enabled:
-            self._key_cache = set()
+        # We don't need a key cache if we use a value cache already
+        if self._value_cache is None and key_cache_enabled:
+            if key_cache_enabled:
+                self._key_cache = set()
         else:
             self._key_cache = None
 
@@ -258,6 +267,9 @@ class BigTableStore(base.SerializedStore):
         return value
 
     def _bigtable_contains(self, key: bytes) -> bool:
+        if self._cache.contains(key) is True:
+            # Never risk, false negatives
+            return True
         row = self.bt_table.read_row(key, filter_=self.row_filter)
         if row is not None:
             self._cache.set(key, self.bigtable_exrtact_row_data(row))
@@ -268,6 +280,9 @@ class BigTableStore(base.SerializedStore):
 
     def _bigtable_contains_any(self, keys: Set[bytes]) -> bool:
         rows = RowSet()
+        if self._cache.contains_any(keys) is True:
+            # Never risk, false negatives
+            return True
         for key in keys:
             rows.add_row_key(key)
 
