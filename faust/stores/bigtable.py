@@ -35,15 +35,19 @@ def get_current_partition():
     return event.message.partition
 
 
-class BigtableStartupCache:
+class BigTableValueCache:
     """
     This is a dictionary which is only filled once, after that, every
     successful access to a key, will remove it.
     """
+    data: Union[Dict, LRUCache]
 
-    def __init__(self, ttl: Optional[int]) -> None:
+    def __init__(self, ttl: Optional[int], size: Optional[int]) -> None:
         self.log = logging.getLogger(self.__class__.__name__)
-        self.data: Dict = {}
+        if size is not None:
+            self.data = LRUCache(limit=size)
+        else:
+            self.data = dict()
         self.ttl = ttl
         self.ttl_over = False
         self.init_ts = int(time.time())
@@ -52,7 +56,7 @@ class BigtableStartupCache:
         return len(self.data)
 
     def __getitem__(self, key):
-        if self.ttl is not None:
+        if self.ttl is not None or self.ttl == -1:
             res = self.data[key]
             self._maybe_ttl_clear()
             return res
@@ -67,7 +71,7 @@ class BigtableStartupCache:
         self.data.pop(key, None)
 
     def _maybe_ttl_clear(self):
-        if self.ttl is not None:
+        if self.ttl is not None and self.ttl != -1:
             now = int(time.time())
             if now > self.init_ts + self.ttl:
                 self.data = {}
@@ -102,67 +106,39 @@ class BigTableKeyCache:
             return None
 
 
-def _register_partition(func):
-    def inner(self, bt_key: bytes, *args):
-        partition = bt_key[0]
-        self._fill_value_cache({partition})
-        return func(self, bt_key, *args)
-
-    return inner
-
-
 class BigTableCacheManager:
     _partition_cache: LRUCache[bytes, int]
     _value_cache: Optional[
-        Union[LRUCache[bytes, Union[bytes, None]], BigtableStartupCache]
+        Union[LRUCache[bytes, Union[bytes, None]], BigTableValueCache]
     ]
     _key_cache: Optional[BigTableKeyCache]
 
     def __init__(self, app, options: Dict, bt_table: Table) -> None:
         self.log = logging.getLogger(__name__)
-        self._registered_partitions = set()
         self.bt_table = bt_table
         self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
         self._init_value_cache(options)
         self._init_key_cache(options)
         self.partition_prefixes: Dict[int, bytes]
 
-    def _fill_value_cache(self, partitions: Set[int]):
-        if self._value_cache is None:
-            return
-
-        partitions = partitions.difference(self._registered_partitions)
-        if len(partitions) == 0:
-            return  # Nothing todo
-        start = time.time()
-        row_set = RowSet()
-        for p in partitions:
-            row_set.add_row_range_with_prefix(chr(p))
-
-        for row in self.bt_table.read_rows(
-            row_set=row_set,
-            filter_=CellsColumnLimitFilter(1),
-            retry=DEFAULT_RETRY_READ_ROWS.with_deadline(
-                10 * 60
-            ),  # High deadline cause slow
-        ):
-            if isinstance(self._value_cache, BigtableStartupCache):
-                row_val = BigTableStore.bigtable_exrtact_row_data(row)
-                self._value_cache.data[row.row_key] = row_val
-        self._registered_partitions.update(partitions)
-        td = time.time() - start
-        self.log.info(
-            f"BigTableStore: filled cache for {self.bt_table.table_id}:"
-            f"{partitions=} in {td}s"
-        )
-
-    @_register_partition
     def get(self, bt_key: bytes) -> Optional[bytes]:
         value = None
         if self._value_cache is not None:
             if bt_key in self._value_cache.keys():
                 value = self._value_cache[bt_key]
         return value
+
+    def set(self, bt_key: bytes, value: Optional[bytes]) -> None:
+        if self._value_cache is not None:
+            self._value_cache[bt_key] = value
+        if self._key_cache is not None:
+            self._key_cache.add(bt_key)
+
+    def delete(self, bt_key: bytes) -> None:
+        if self._value_cache is not None:
+            del self._value_cache[bt_key]
+        if self._key_cache is not None:
+            self._key_cache.discard(bt_key)
 
     def get_partition(self, user_key: bytes) -> int:
         return self._partition_cache[user_key]
@@ -185,7 +161,6 @@ class BigTableCacheManager:
                 return True
             if not self._key_cache.missing_keys.isdisjoint(key_set):
                 return False
-
         # No assumption possible
         return None
 
@@ -196,23 +171,12 @@ class BigTableCacheManager:
     def discard_key(self, bt_key: bytes):
         if self._key_cache is not None:
             self._key_cache.discard(bt_key)
-
-    @_register_partition
-    def set(self, bt_key: bytes, value: Optional[bytes]) -> None:
-        if self._value_cache is not None:
-            self._value_cache[bt_key] = value
-        if self._key_cache is not None:
-            self._key_cache.add(bt_key)
-
-    def delete(self, bt_key: bytes) -> None:
         if self._value_cache is not None:
             del self._value_cache[bt_key]
-        if self._key_cache is not None:
-            self._key_cache.discard(bt_key)
 
     def _init_value_cache(
         self, options
-    ) -> Optional[Union[LRUCache, BigtableStartupCache]]:
+    ) -> Optional[Union[LRUCache, BigTableValueCache]]:
         value_cache_type = options.get(
             BigTableStore.VALUE_CACHE_TYPE_KEY, None
         )
@@ -221,7 +185,7 @@ class BigTableCacheManager:
             startup_cache_ttl = options.get(
                 BigTableStore.STARTUPCACHE_TTL_KEY, None
             )
-            self._value_cache = BigtableStartupCache(startup_cache_ttl)
+            self._value_cache = BigTableValueCache(startup_cache_ttl)
         elif value_cache_type == "forever":
             value_cache_size = options.get(
                 BigTableStore.VALUE_CACHE_SIZE_KEY, 1_000
@@ -335,6 +299,30 @@ class BigTableStore(base.SerializedStore):
             else:
                 value = self.bigtable_exrtact_row_data(res)
         return value
+
+    def _bigtable_contains(self, key: bytes) -> bool:
+        cache_res = self._cache.contains(key)
+        if cache_res is not None:
+            return cache_res
+        row = self.bt_table.read_row(key, filter_=self.row_filter)
+        if row is not None:
+            self._cache.set(key, self.bigtable_exrtact_row_data(row))
+            return True
+        self._cache.discard_key(key)
+        return False
+
+    def _bigtable_contains_any(self, keys: Set[bytes]) -> bool:
+        rows = RowSet()
+        for key in keys:
+            rows.add_row_key(key)
+
+        for row in self.bt_table.read_rows(
+            row_set=rows, filter_=CellsColumnLimitFilter(1)
+        ):
+            # First hit will return
+            self._cache.set(row.row_key, self.bigtable_exrtact_row_data(row))
+            return True
+        return False
 
     def _bigtable_get_range(
         self, keys: Set[bytes]
@@ -558,14 +546,7 @@ class BigTableStore(base.SerializedStore):
                 key_with_partition = self._get_key_with_partition(
                     key, partition=partition
                 )
-                found = self._cache.contains(key_with_partition)
-                if found is None:
-                    found = self._bigtable_get(key_with_partition) is not None
-                    if found is True:
-                        self._cache.add_key(key_with_partition)
-                    else:
-                        self._cache.discard_key(key_with_partition)
-                return found
+                return self._bigtable_contains(key_with_partition)
             else:
                 keys_to_search = set()
                 for partition in self._partitions_for_key(key):
@@ -574,17 +555,7 @@ class BigTableStore(base.SerializedStore):
                     )
                     keys_to_search.add(key_with_partition)
 
-                found = self._cache.contains_any(keys_to_search)
-                if found is not True:
-                    bt_key, value = self._bigtable_get_range(keys_to_search)
-                    if value is not None:
-                        self._cache.add_key(bt_key)
-                        found = True
-                    else:
-                        for k in keys_to_search:
-                            self._cache.discard_key(k)
-                        found = False
-                return found
+                return self._bigtable_contains_any(keys_to_search)
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _contains for table "
