@@ -134,7 +134,7 @@ class BigTableCacheManager:
             if bt_key in self._key_cache:
                 return True
         if self._value_cache is not None:
-            if bt_key in self._value_cache:
+            if bt_key in self._value_cache.keys():
                 return True
         return None
 
