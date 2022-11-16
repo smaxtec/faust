@@ -72,7 +72,7 @@ class BigTableValueCache:
         self.data.pop(key, None)
 
     def _maybe_ttl_clear(self):
-        if self.ttl != -1:
+        if self.ttl != -1 and self.ttl_over is False:
             now = int(time.time())
             if now > self.init_ts + self.ttl:
                 self.data = {}
