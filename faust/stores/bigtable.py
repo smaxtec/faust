@@ -96,9 +96,37 @@ class BigTableCacheManager:
         self._init_value_cache(options)
         self._init_key_cache(options)
         self.partition_prefixes: Dict[int, bytes]
+        self._filled_partitions: Set[int] = set()
+
+    def _fill_if_empty(self, bt_keys: Set[bytes]):
+        partitions = set()
+        for k in bt_keys:
+            partitions.add(k[0])
+        partitions_to_fill = partitions.difference(self._filled_partitions)
+
+        # THIS ONLY WORKS IF THE FIRST BYTE OF THE KEY IS THE PARTITION
+        row_set = RowSet()
+        for partition in partitions_to_fill:
+            row_set.add_row_range_from_keys(
+                start_key=chr(partition), end_key=chr(partition + 1)
+            )
+
+        if self._value_cache is not None:
+            for row in self.bt_table.read_rows(
+                row_set=row_set, filter_=CellsColumnLimitFilter(1)
+            ):
+                value = BigTableStore.bigtable_exrtact_row_data(row)
+                self._value_cache[row.row_key] = value
+        elif self._key_cache is not None:
+            for row in self.bt_table.read_rows(
+                row_set=row_set, filter_=CellsColumnLimitFilter(1)
+            ):
+                self._key_cache.add(row.row_key)
+        self._filled_partitions.add(partitions_to_fill)
 
     def get(self, bt_key: bytes) -> Optional[bytes]:
         value = None
+        self._fill_if_empty({bt_key})
         if self._value_cache is not None:
             if bt_key in self._value_cache.keys():
                 value = self._value_cache[bt_key]
@@ -123,6 +151,7 @@ class BigTableCacheManager:
         self._partition_cache[user_key] = partition
 
     def contains(self, bt_key: bytes) -> Optional[bool]:
+        self._fill_if_empty({bt_key})
         """
         If we return None here, this means, that no assumption
         about the current key can be made.
@@ -136,6 +165,7 @@ class BigTableCacheManager:
         return None
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
+        self._fill_if_empty(key_set)
         if self._key_cache is not None:
             if not self._key_cache.isdisjoint(key_set):
                 return True
@@ -155,10 +185,6 @@ class BigTableCacheManager:
             )
             size = options.get(BigTableStore.VALUE_CACHE_SIZE_KEY, None)
             self._value_cache = BigTableValueCache(ttl=ttl, size=size)
-            # We should optimize here to load only values of active partitions
-            for row in self.bt_table.read_rows(b"\x00__", b"\x14__"):
-                value = BigTableStore.bigtable_exrtact_row_data(row)
-                self._value_cache[row.row_key] = value
         else:
             self._value_cache = None
 
@@ -484,7 +510,9 @@ class BigTableStore(base.SerializedStore):
                 row_set=row_set, filter_=self.row_filter
             ):
                 if self._cache._value_cache is not None:
-                    self._cache.set(row.row_key, self.bigtable_exrtact_row_data(row))
+                    self._cache.set(
+                        row.row_key, self.bigtable_exrtact_row_data(row)
+                    )
                 yield self._remove_partition_prefix(row.row_key)
             end = time.time()
             self.log.info(
