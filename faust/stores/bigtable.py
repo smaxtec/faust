@@ -2,17 +2,7 @@
 import logging
 import time
 import traceback
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Iterable,
-    Iterator,
-    Optional,
-    Set,
-    Tuple,
-    Union,
-)
+from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple, Union
 
 from google.cloud.bigtable import column_family
 from google.cloud.bigtable.client import Client
@@ -91,7 +81,7 @@ class BigTableCacheManager:
 
     def __init__(self, app, options: Dict, bt_table: Table) -> None:
         self.log = logging.getLogger(__name__)
-        self.bt_table = bt_table
+        self.bt_table: Table = bt_table
         self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
         self._init_value_cache(options)
         self._init_key_cache(options)
@@ -103,14 +93,18 @@ class BigTableCacheManager:
         for k in bt_keys:
             partitions.add(k[0])
         partitions_to_fill = partitions.difference(self._filled_partitions)
+        if len(partitions_to_fill) == 0:
+            return
 
         # THIS ONLY WORKS IF THE FIRST BYTE OF THE KEY IS THE PARTITION
+
         row_set = RowSet()
         for partition in partitions_to_fill:
             row_set.add_row_range_from_keys(
                 start_key=chr(partition), end_key=chr(partition + 1)
             )
 
+        self.log.info(f"BigTableStore: Start filling cache for {self.bt_table.name} and partitions {partitions_to_fill}")
         if self._value_cache is not None:
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=CellsColumnLimitFilter(1)
@@ -123,6 +117,7 @@ class BigTableCacheManager:
             ):
                 self._key_cache.add(row.row_key)
         self._filled_partitions.update(partitions_to_fill)
+        self.log.info(f"BigTableStore: Finished filling cache for {self.bt_table.name} and partitions {partitions_to_fill}")
 
     def get(self, bt_key: bytes) -> Optional[bytes]:
         value = None
