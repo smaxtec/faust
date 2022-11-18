@@ -17,7 +17,6 @@ from typing import (
 from google.cloud.bigtable import column_family
 from google.cloud.bigtable.client import Client
 from google.cloud.bigtable.instance import Instance
-from google.cloud.bigtable.row_data import DEFAULT_RETRY_READ_ROWS
 from google.cloud.bigtable.row_filters import CellsColumnLimitFilter
 from google.cloud.bigtable.row_set import RowSet
 from google.cloud.bigtable.table import Table
@@ -87,9 +86,7 @@ class BigTableValueCache:
 
 class BigTableCacheManager:
     _partition_cache: LRUCache[bytes, int]
-    _value_cache: Optional[
-        Union[LRUCache[bytes, Union[bytes, None]], BigTableValueCache]
-    ]
+    _value_cache: Optional[BigTableValueCache]
     _key_cache: Optional[Set]
 
     def __init__(self, app, options: Dict, bt_table: Table) -> None:
@@ -158,6 +155,10 @@ class BigTableCacheManager:
             )
             size = options.get(BigTableStore.VALUE_CACHE_SIZE_KEY, None)
             self._value_cache = BigTableValueCache(ttl=ttl, size=size)
+            # We should optimize here to load only values of active partitions
+            for row in self.bt_table.read_rows(b"\x00__", b"\x14__"):
+                value = BigTableStore.bigtable_exrtact_row_data(row)
+                self._value_cache[row.row_key] = value
         else:
             self._value_cache = None
 
