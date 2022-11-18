@@ -175,10 +175,10 @@ class BigTableCacheManager:
         self._fill_if_empty(key_set)
 
         if self._value_cache is not None:
-            return not self._value_cache.isdisjoint(key_set)
+            return not self._value_cache.keys().isdisjoint(key_set)
         elif self._key_cache is not None:
             # Keycache is not filled so no assumptions about missing keys
-            if not self._key_cache.keys().isdisjoint(key_set):
+            if not self._key_cache.isdisjoint(key_set):
                 return True
         # No assumption possible
         return None
