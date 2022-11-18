@@ -122,7 +122,7 @@ class BigTableCacheManager:
                 row_set=row_set, filter_=CellsColumnLimitFilter(1)
             ):
                 self._key_cache.add(row.row_key)
-        self._filled_partitions.add(partitions_to_fill)
+        self._filled_partitions.update(partitions_to_fill)
 
     def get(self, bt_key: bytes) -> Optional[bytes]:
         value = None
