@@ -167,20 +167,21 @@ class BigTableCacheManager:
         If we return None here, this means, that no assumption
         about the current key can be made.
         """
-        if self._key_cache is not None:
-            if bt_key in self._key_cache:
-                return True
         if self._value_cache is not None:
-            if bt_key in self._value_cache.keys():
+            return bt_key in self._value_cache.keys()
+        elif self._key_cache is not None:
+            # Keycache is not filled so no assumptions about missing keys
+            if bt_key in self._key_cache:
                 return True
         return None
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
         self._fill_if_empty(key_set)
-        if self._key_cache is not None:
-            if not self._key_cache.isdisjoint(key_set):
-                return True
+
         if self._value_cache is not None:
+           return not self._key_cache.isdisjoint(key_set)
+        elif self._key_cache is not None:
+            # Keycache is not filled so no assumptions about missing keys
             if not self._value_cache.keys().isdisjoint(key_set):
                 return True
         # No assumption possible
@@ -305,9 +306,10 @@ class BigTableStore(base.SerializedStore):
         return value
 
     def _bigtable_contains(self, key: bytes) -> bool:
-        if self._cache.contains(key) is True:
-            # Never risk, false negatives
-            return True
+        cache_contains = self._cache.contains(key)
+        if cache_contains is not None:
+            return cache_contains
+
         row = self.bt_table.read_row(key, filter_=self.row_filter)
         if row is not None:
             self._cache.set(key, self.bigtable_exrtact_row_data(row))
@@ -317,10 +319,11 @@ class BigTableStore(base.SerializedStore):
         return False
 
     def _bigtable_contains_any(self, keys: Set[bytes]) -> bool:
+        cache_contains = self._cache.contains_any(keys)
+        if cache_contains is not None:
+            return cache_contains
+
         rows = RowSet()
-        if self._cache.contains_any(keys) is True:
-            # Never risk, false negatives
-            return True
         for key in keys:
             rows.add_row_key(key)
 
@@ -511,20 +514,30 @@ class BigTableStore(base.SerializedStore):
     def _iterkeys(self) -> Iterator[bytes]:
         try:
             start = time.time()
-            row_set = RowSet()
-            for partition in self._active_partitions():
-                prefix_start = self._get_partition_prefix(partition)
-                prefix_end = self._get_partition_prefix(partition + 1)
-                row_set.add_row_range_from_keys(prefix_start, prefix_end)
+            partitions = self._active_partitions()
 
-            for row in self.bt_table.read_rows(
-                row_set=row_set, filter_=self.row_filter
-            ):
-                if self._cache._value_cache is not None:
-                    self._cache.set(
-                        row.row_key, self.bigtable_exrtact_row_data(row)
-                    )
-                yield self._remove_partition_prefix(row.row_key)
+            if self._cache._value_cache is not None:
+                keys = set()
+                for p in partitions:
+                    keys.add(self._get_partition_prefix(p))
+                self._cache._fill_if_empty(keys)
+                for k in self._cache._value_cache.keys():
+                    yield self._remove_partition_prefix(k)
+            else:
+                row_set = RowSet()
+                for partition in partitions:
+                    prefix_start = self._get_partition_prefix(partition)
+                    prefix_end = self._get_partition_prefix(partition + 1)
+                    row_set.add_row_range_from_keys(prefix_start, prefix_end)
+
+                for row in self.bt_table.read_rows(
+                    row_set=row_set, filter_=self.row_filter
+                ):
+                    if self._cache._value_cache is not None:
+                        self._cache.set(
+                            row.row_key, self.bigtable_exrtact_row_data(row)
+                        )
+                    yield self._remove_partition_prefix(row.row_key)
             end = time.time()
             self.log.info(
                 f"Finished iterkeys for {self.table_name} in {end - start}s"
