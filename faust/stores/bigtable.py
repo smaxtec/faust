@@ -97,6 +97,7 @@ class BigTableCacheManager:
         self._init_key_cache(options)
         self.partition_prefixes: Dict[int, bytes]
         self._filled_partitions: Set[int] = set()
+        self.is_complete = False
 
     def _fill_if_empty(self, bt_keys: Set[bytes]):
         partitions = set()
@@ -164,7 +165,13 @@ class BigTableCacheManager:
         about the current key can be made.
         """
         if self._value_cache is not None:
-            return bt_key in self._value_cache.keys()
+
+            res = bt_key in self._value_cache.keys()
+            if self.is_complete:
+                return res
+            elif res is True:
+                return True
+
         elif self._key_cache is not None:
             # Keycache is not filled so no assumptions about missing keys
             if bt_key in self._key_cache:
@@ -175,7 +182,11 @@ class BigTableCacheManager:
         self._fill_if_empty(key_set)
 
         if self._value_cache is not None:
-            return not self._value_cache.keys().isdisjoint(key_set)
+            res = not self._value_cache.keys().isdisjoint(key_set)
+            if self.is_complete:
+                return res
+            elif res is True:
+                return True
         elif self._key_cache is not None:
             # Keycache is not filled so no assumptions about missing keys
             if not self._key_cache.isdisjoint(key_set):
@@ -193,6 +204,8 @@ class BigTableCacheManager:
             )
             size = options.get(BigTableStore.VALUE_CACHE_SIZE_KEY, None)
             self._value_cache = BigTableValueCache(ttl=ttl, size=size)
+            if ttl == -1 and size is None:
+                self.is_complete = True
         else:
             self._value_cache = None
 
@@ -289,7 +302,7 @@ class BigTableStore(base.SerializedStore):
 
     def _bigtable_get(self, key: bytes) -> Optional[bytes]:
         value = self._cache.get(key)
-        if value is not None or self._cache._value_cache is not None:
+        if value is not None or self._cache.is_complete:
             return value
         else:
             res = self.bt_table.read_row(key, filter_=self.row_filter)
@@ -512,7 +525,7 @@ class BigTableStore(base.SerializedStore):
             start = time.time()
             partitions = self._active_partitions()
 
-            if self._cache._value_cache is not None:
+            if self._cache.is_complete:
                 keys = set()
                 for p in partitions:
                     keys.add(self._get_partition_prefix(p))
@@ -529,10 +542,6 @@ class BigTableStore(base.SerializedStore):
                 for row in self.bt_table.read_rows(
                     row_set=row_set, filter_=self.row_filter
                 ):
-                    if self._cache._value_cache is not None:
-                        self._cache.set(
-                            row.row_key, self.bigtable_exrtact_row_data(row)
-                        )
                     yield self._remove_partition_prefix(row.row_key)
             end = time.time()
             self.log.info(
