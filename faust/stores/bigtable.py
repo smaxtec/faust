@@ -371,7 +371,7 @@ class BigTableStore(base.SerializedStore):
         for key in keys:
             rows.add_row_key(key)
 
-        for row in self.bt_table.read_rows(
+        for _row in self.bt_table.read_rows(
             row_set=rows, filter_=CellsColumnLimitFilter(1)
         ):
             # First hit will return
