@@ -4,7 +4,6 @@ import random
 import time
 import traceback
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple, Union
-from copy import deepcopy
 
 from google.cloud.bigtable import column_family
 from google.cloud.bigtable.client import Client
@@ -193,7 +192,7 @@ class BigTableCacheManager:
     def flush_if_timer_over(self, tp: TP) -> bool:
         now = time.time()
         if now >= self._last_flush + self._mut_freq:
-            mutatations_copy = deepcopy(self._mutations)
+            mutatations_copy = self._mutations.copy()
             mutatations = [
                 m[0] for m in mutatations_copy.values() if tp == m[0].row_key[0]
             ]
