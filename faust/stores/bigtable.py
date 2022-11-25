@@ -357,7 +357,6 @@ class BigTableStore(base.SerializedStore):
 
         row = self.bt_table.read_row(key, filter_=self.row_filter)
         if row is not None:
-            self._cache.set(key, self.bigtable_exrtact_row_data(row))
             return True
         # Just to be sure
         self._cache.delete(key)
@@ -376,7 +375,6 @@ class BigTableStore(base.SerializedStore):
             row_set=rows, filter_=CellsColumnLimitFilter(1)
         ):
             # First hit will return
-            self._cache.set(row.row_key, self.bigtable_exrtact_row_data(row))
             return True
         return False
 
