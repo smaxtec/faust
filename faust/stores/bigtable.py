@@ -211,11 +211,15 @@ class BigTableCacheManager:
             row = self._mutations[bt_key][0]
         else:
             row = self.bt_table.direct_row(bt_key)
-        row.set_cell(
-            "FaustColumnFamily",  # TODO: Define this globally
-            "DATA",
-            value,
-        )
+
+        if value is None:
+            row.delete()
+        else:
+            row.set_cell(
+                "FaustColumnFamily",  # TODO: Define this globally
+                "DATA",
+                value,
+            )
         self._mutations[bt_key] = row, value
 
     def _init_value_cache(
