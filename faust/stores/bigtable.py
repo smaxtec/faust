@@ -193,7 +193,7 @@ class BigTableCacheManager:
     def flush_if_timer_over(self, tp: TP) -> bool:
         now = time.time()
         if now >= self._last_flush + self._mut_freq:
-            mutatations_copy = deepcopy(self._mutattions)
+            mutatations_copy = deepcopy(self._mutations)
             mutatations = [
                 m[0] for m in mutatations_copy.values() if tp == m[0].row_key[0]
             ]
