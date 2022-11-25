@@ -1,24 +1,16 @@
 """BigTable storage."""
 import logging
+import random
 import time
 import traceback
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Iterable,
-    Iterator,
-    Optional,
-    Set,
-    Tuple,
-    Union,
-)
+from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple, Union
 
 from google.cloud.bigtable import column_family
 from google.cloud.bigtable.client import Client
 from google.cloud.bigtable.instance import Instance
 from google.cloud.bigtable.row_filters import CellsColumnLimitFilter
 from google.cloud.bigtable.row_set import RowSet
+from google.cloud.bigtable.row import DirectRow
 from google.cloud.bigtable.table import Table
 from mode.utils.collections import LRUCache
 from yarl import URL
@@ -71,7 +63,7 @@ class BigTableValueCache:
         self.data.pop(key, None)
 
     def _maybe_ttl_clear(self):
-        if self.ttl != -1 and self.ttl_over is False:
+        if self.ttl != -1 and not self.ttl_over:
             now = int(time.time())
             if now > self.init_ts + self.ttl:
                 self.data = {}
@@ -88,6 +80,7 @@ class BigTableCacheManager:
     _partition_cache: LRUCache[bytes, int]
     _value_cache: Optional[BigTableValueCache]
     _key_cache: Optional[Set]
+    _mutations: Dict[bytes, Tuple[DirectRow, Optional[bytes]]]
 
     def __init__(self, app, options: Dict, bt_table: Table) -> None:
         self.log = logging.getLogger(__name__)
@@ -95,19 +88,19 @@ class BigTableCacheManager:
         self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
         self._init_value_cache(options)
         self._init_key_cache(options)
+        self._init_mutation_buffer(options)
         self.partition_prefixes: Dict[int, bytes]
         self._filled_partitions: Set[int] = set()
         self.is_complete = False
 
     def _fill_if_empty(self, bt_keys: Set[bytes]):
+        # THIS ONLY WORKS IF THE FIRST BYTE OF THE KEY IS THE PARTITION
         partitions = set()
         for k in bt_keys:
             partitions.add(k[0])
         partitions_to_fill = partitions.difference(self._filled_partitions)
         if len(partitions_to_fill) == 0:
             return
-
-        # THIS ONLY WORKS IF THE FIRST BYTE OF THE KEY IS THE PARTITION
 
         row_set = RowSet()
         for partition in partitions_to_fill:
@@ -145,12 +138,14 @@ class BigTableCacheManager:
             self._value_cache[bt_key] = value
         if self._key_cache is not None:
             self._key_cache.add(bt_key)
+        self._set_mutation(bt_key, value)
 
     def delete(self, bt_key: bytes) -> None:
         if self._value_cache is not None:
             del self._value_cache[bt_key]
         if self._key_cache is not None:
             self._key_cache.discard(bt_key)
+        self._set_mutation(bt_key, None)
 
     def get_partition(self, user_key: bytes) -> int:
         return self._partition_cache[user_key]
@@ -194,6 +189,35 @@ class BigTableCacheManager:
         # No assumption possible
         return None
 
+    def flush_if_timer_over(self, tp: TP) -> bool:
+        now = time.time()
+        if now >= self._last_flush + self._mut_freq:
+            mutatations = [
+                m[0] for m in self._mutations.values() if tp == m[0].row_key[0]
+            ]
+            response = self.bt_table.mutate_rows(mutatations)
+            for i, status in enumerate(response):
+                if status.code != 0:
+                    self.log.error("Row number {} failed to write".format(i))
+                    return False  # We don't want to clear the buffer on a failed write
+                else:
+                    self._mutations.pop(mutatations[i].row_key)
+            return True
+        else:
+            return False
+
+    def _set_mutation(self, bt_key: bytes, value: Optional[bytes]):
+        if bt_key in self._mutations.keys():
+            row = self._mutations[bt_key][0]
+        else:
+            row = self.bt_table.direct_row(bt_key)
+        row.set_cell(
+            "FaustColumnFamily",  # TODO: Define this globally
+            "DATA",
+            value,
+        )
+        self._mutations[bt_key] = row, value
+
     def _init_value_cache(
         self, options
     ) -> Optional[Union[LRUCache, BigTableValueCache]]:
@@ -220,6 +244,13 @@ class BigTableCacheManager:
         else:
             self._key_cache = None
 
+    def _init_mutation_buffer(self, options):
+        self._mut_freq = options.get(BigTableStore.BT_MUTATION_FREQ_KEY, 0)
+        # To prevent that all tables write at the same time
+        random_start_offset = random.randint(0, self._mut_freq)
+        self._last_flush = time.time() + self._mut_freq - random_start_offset
+        self._mutations = {}
+
 
 class BigTableStore(base.SerializedStore):
     """Bigtable table storage."""
@@ -235,6 +266,7 @@ class BigTableStore(base.SerializedStore):
     BT_OFFSET_KEY_PREFIX = "bt_offset_key_prefix"
     BT_PROJECT_KEY = "bt_project_key"
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
+    BT_MUTATION_FREQ_KEY = "bt_mutation_freq_key"
     KEY_CACHE_ENABLE_KEY = "key_cache_enable_key"
     VALUE_CACHE_INVALIDATION_TIME_KEY = "value_cache_invalidation_time_key"
     VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
@@ -371,15 +403,17 @@ class BigTableStore(base.SerializedStore):
     def _bigtable_set(
         self, key: bytes, value: Optional[bytes], persist_offset=False
     ):
-        row = self.bt_table.direct_row(key)
-        row.set_cell(
-            self.column_family_id,
-            self.column_name,
-            value,
-        )
-        row.commit()
         if not persist_offset:
+            # All mutatations set here will be flushed to BT later
             self._cache.set(key, value)
+        else:
+            row = self.bt_table.direct_row(key)
+            row.set_cell(
+                self.column_family_id,
+                self.column_name,
+                value,
+            )
+            row.commit()
 
     def _bigtable_del(self, key: bytes):
         row = self.bt_table.direct_row(key)
@@ -639,10 +673,12 @@ class BigTableStore(base.SerializedStore):
         we were not an active replica.
         """
         try:
-            offset_key = self.get_offset_key(tp).encode()
-            self._bigtable_set(
-                offset_key, str(offset).encode(), persist_offset=True
-            )
+            if recovery or self._cache.flush_if_timer_over(tp):
+                offset_key = self.get_offset_key(tp).encode()
+                self._bigtable_set(
+                    offset_key, str(offset).encode(), persist_offset=True
+                )
+
         except Exception as e:
             self.log.error(
                 f"Failed to commit offset for {self.table.name}"
