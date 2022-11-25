@@ -347,7 +347,6 @@ class BigTableStore(base.SerializedStore):
                 value = None
             else:
                 value = self.bigtable_exrtact_row_data(res)
-                self._cache.set(key, value)
         return value
 
     def _bigtable_contains(self, key: bytes) -> bool:
@@ -396,7 +395,6 @@ class BigTableStore(base.SerializedStore):
         ):
             # First hit will return
             val = self.bigtable_exrtact_row_data(row)
-            self._cache.set(row.row_key, val)
             return row.row_key, val
 
         # Not found
