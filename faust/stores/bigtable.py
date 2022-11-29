@@ -199,10 +199,10 @@ class BigTableCacheManager:
             response = self.bt_table.mutate_rows(mutatations)
             for i, status in enumerate(response):
                 if status.code != 0:
-                    self.log.error("Row number {} failed to write".format(i))
-                    return False  # We don't want to clear the buffer on a failed write
+                    self.log.error(f"Row number {i} failed to write")
                 else:
                     self._mutations.pop(mutatations[i].row_key)
+            self.log.info(f"BigTableStore: flushed {len(mutatations)} rows")
             return True
         else:
             return False
