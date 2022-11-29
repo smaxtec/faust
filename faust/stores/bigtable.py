@@ -195,7 +195,7 @@ class BigTableCacheManager:
         if now >= self._last_flush + self._mut_freq:
             mutatations_copy = self._mutations.copy()
             mutatations = [
-                m[0] for m in mutatations_copy.values() if tp == m[0].row_key[0]
+                m[0] for m in mutatations_copy.values() if tp.partition == m[0].row_key[0]
             ]
             if len(mutatations) > 0:
                 response = self.bt_table.mutate_rows(mutatations)
