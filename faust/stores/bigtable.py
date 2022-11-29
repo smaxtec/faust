@@ -191,21 +191,23 @@ class BigTableCacheManager:
 
     def flush_if_timer_over(self, tp: TP) -> bool:
         now = time.time()
+        flushed = False
         if now >= self._last_flush + self._mut_freq:
             mutatations_copy = self._mutations.copy()
             mutatations = [
                 m[0] for m in mutatations_copy.values() if tp == m[0].row_key[0]
             ]
-            response = self.bt_table.mutate_rows(mutatations)
-            for i, status in enumerate(response):
-                if status.code != 0:
-                    self.log.error(f"Row number {i} failed to write")
-                else:
-                    self._mutations.pop(mutatations[i].row_key)
-            self.log.info(f"BigTableStore: flushed {len(mutatations)} rows")
-            return True
-        else:
-            return False
+            if len(mutatations) > 0:
+                response = self.bt_table.mutate_rows(mutatations)
+                for i, status in enumerate(response):
+                    if status.code != 0:
+                        self.log.error(f"Row number {i} failed to write")
+                    else:
+                        self._mutations.pop(mutatations[i].row_key)
+                self.log.info(f"BigTableStore: flushed {len(mutatations)} rows")
+                flushed = True
+            self._last_flush = now
+        return flushed
 
     def _set_mutation(self, bt_key: bytes, value: Optional[bytes]):
         if bt_key in self._mutations.keys():
