@@ -8,9 +8,9 @@ from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple
 from google.cloud.bigtable import column_family
 from google.cloud.bigtable.client import Client
 from google.cloud.bigtable.instance import Instance
+from google.cloud.bigtable.row import DirectRow
 from google.cloud.bigtable.row_filters import CellsColumnLimitFilter
 from google.cloud.bigtable.row_set import RowSet
-from google.cloud.bigtable.row import DirectRow
 from google.cloud.bigtable.table import Table
 from mode.utils.collections import LRUCache
 from yarl import URL
@@ -204,7 +204,6 @@ class BigTableCacheManager:
                         self.log.error(f"Row number {i} failed to write")
                     else:
                         self._mutations.pop(mutatations[i].row_key)
-                self.log.info(f"BigTableStore: flushed {len(mutatations)} rows")
                 flushed = True
             self._last_flush = now
         return flushed
