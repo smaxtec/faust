@@ -5,13 +5,28 @@ import time
 import traceback
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple, Union
 
-from google.cloud.bigtable import column_family
-from google.cloud.bigtable.client import Client
-from google.cloud.bigtable.instance import Instance
-from google.cloud.bigtable.row import DirectRow
-from google.cloud.bigtable.row_filters import CellsColumnLimitFilter
-from google.cloud.bigtable.row_set import RowSet
-from google.cloud.bigtable.table import Table
+try:  # pragma: no cover
+    from google.cloud.bigtable import column_family
+    from google.cloud.bigtable.client import Client
+    from google.cloud.bigtable.instance import Instance
+    from google.cloud.bigtable.row import DirectRow
+    from google.cloud.bigtable.row_filters import CellsColumnLimitFilter
+    from google.cloud.bigtable.row_set import RowSet
+    from google.cloud.bigtable.table import Table
+
+    # Make one container for all imported functions
+    # This is needed for testing and controlling the imports
+    class BT:
+        column_family = column_family
+        Client = Client
+        Instance = Instance
+        DirectRow = DirectRow
+        CellsColumnLimitFilter = CellsColumnLimitFilter
+        RowSet = RowSet
+        Table = Table
+except ImportError:  # pragma: no cover
+    BT = None  # noqa
+
 from mode.utils.collections import LRUCache
 from yarl import URL
 
@@ -80,11 +95,11 @@ class BigTableCacheManager:
     _partition_cache: LRUCache[bytes, int]
     _value_cache: Optional[BigTableValueCache]
     _key_cache: Optional[Set]
-    _mutations: Dict[bytes, Tuple[DirectRow, Optional[bytes]]]
+    _mutations: Dict[bytes, Tuple[BT.DirectRow, Optional[bytes]]]
 
-    def __init__(self, app, options: Dict, bt_table: Table) -> None:
+    def __init__(self, app, options: Dict, bt_table: BT.Table) -> None:
         self.log = logging.getLogger(__name__)
-        self.bt_table: Table = bt_table
+        self.bt_table: BT.Table = bt_table
         self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
         self._init_value_cache(options)
         self._init_key_cache(options)
@@ -102,7 +117,7 @@ class BigTableCacheManager:
         if len(partitions_to_fill) == 0:
             return
 
-        row_set = RowSet()
+        row_set = BT.RowSet()
         for partition in partitions_to_fill:
             row_set.add_row_range_from_keys(
                 start_key=chr(partition), end_key=chr(partition + 1)
@@ -114,13 +129,13 @@ class BigTableCacheManager:
         )
         if self._value_cache is not None:
             for row in self.bt_table.read_rows(
-                row_set=row_set, filter_=CellsColumnLimitFilter(1)
+                row_set=row_set, filter_=BT.CellsColumnLimitFilter(1)
             ):
                 value = BigTableStore.bigtable_exrtact_row_data(row)
                 self._value_cache[row.row_key] = value
         elif self._key_cache is not None:
             for row in self.bt_table.read_rows(
-                row_set=row_set, filter_=CellsColumnLimitFilter(1)
+                row_set=row_set, filter_=BT.CellsColumnLimitFilter(1)
             ):
                 self._key_cache.add(row.row_key)
         self._filled_partitions.update(partitions_to_fill)
@@ -261,9 +276,9 @@ class BigTableCacheManager:
 class BigTableStore(base.SerializedStore):
     """Bigtable table storage."""
 
-    client: Client
-    instance: Instance
-    bt_table: Table
+    client: BT.Client
+    instance: BT.Instance
+    bt_table: BT.Table
     _cache: BigTableCacheManager
     partition_prefix = b"__"
 
@@ -302,21 +317,21 @@ class BigTableStore(base.SerializedStore):
         self.column_name = options.get(
             BigTableStore.BT_COLUMN_NAME_KEY, "DATA"
         )
-        self.row_filter = CellsColumnLimitFilter(1)
+        self.row_filter = BT.CellsColumnLimitFilter(1)
         self.offset_key_prefix = options.get(
             BigTableStore.BT_OFFSET_KEY_PREFIX, "offset_partitiion:"
         )
 
     def _bigtable_setup(self, table, options: Dict[str, Any]):
         self.bt_table_name = self.table_name_generator(table)
-        self.client: Client = Client(
+        self.client: BT.Client = BT.Client(
             options.get(BigTableStore.BT_PROJECT_KEY),
             admin=True,
         )
-        self.instance: Instance = self.client.instance(
+        self.instance: BT.Instance = self.client.instance(
             options.get(BigTableStore.BT_INSTANCE_KEY)
         )
-        self.bt_table: Table = self.instance.table(self.bt_table_name)
+        self.bt_table: BT.Table = self.instance.table(self.bt_table_name)
         self.column_family_id = "FaustColumnFamily"
         if not self.bt_table.exists():
             logging.getLogger(__name__).info(
@@ -325,7 +340,7 @@ class BigTableStore(base.SerializedStore):
             )
             self.bt_table.create(
                 column_families={
-                    self.column_family_id: column_family.MaxVersionsGCRule(1)
+                    self.column_family_id: BT.column_family.MaxVersionsGCRule(1)
                 }
             )
         else:
@@ -368,12 +383,12 @@ class BigTableStore(base.SerializedStore):
         if cache_contains is not None:
             return cache_contains
 
-        rows = RowSet()
+        rows = BT.RowSet()
         for key in keys:
             rows.add_row_key(key)
 
         for _row in self.bt_table.read_rows(
-            row_set=rows, filter_=CellsColumnLimitFilter(1)
+            row_set=rows, filter_=BT.CellsColumnLimitFilter(1)
         ):
             # First hit will return
             return True
@@ -388,12 +403,12 @@ class BigTableStore(base.SerializedStore):
             if value is not None:
                 return key, value
 
-        rows = RowSet()
+        rows = BT.RowSet()
         for key in keys:
             rows.add_row_key(key)
 
         for row in self.bt_table.read_rows(
-            row_set=rows, filter_=CellsColumnLimitFilter(1)
+            row_set=rows, filter_=BT.CellsColumnLimitFilter(1)
         ):
             # First hit will return
             val = self.bigtable_exrtact_row_data(row)
@@ -535,7 +550,7 @@ class BigTableStore(base.SerializedStore):
 
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
-            row_set = RowSet()
+            row_set = BT.RowSet()
             for partition in self._active_partitions():
                 prefix_start = self._get_partition_prefix(partition)
                 prefix_end = self._get_partition_prefix(partition + 1)
@@ -569,7 +584,7 @@ class BigTableStore(base.SerializedStore):
                 for k in self._cache._value_cache.keys():
                     yield self._remove_partition_prefix(k)
             else:
-                row_set = RowSet()
+                row_set = BT.RowSet()
                 for partition in partitions:
                     prefix_start = self._get_partition_prefix(partition)
                     prefix_end = self._get_partition_prefix(partition + 1)
