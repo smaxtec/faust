@@ -1,4 +1,5 @@
 """BigTable storage."""
+from collections import deque
 import logging
 import random
 import time
@@ -116,7 +117,16 @@ class BigTableCacheManager:
         self._init_mutation_buffer(options)
         self._filled_partitions: Set[int] = set()
 
-    def _fill_if_empty(self, bt_keys: Set[bytes]):
+    def _fill_if_empty(self, bt_keys):
+        deque(self._fill_if_empty_and_yield(bt_keys), maxlen=0)
+
+    def iterkeys(self, bt_keys: Optional[Set[bytes]] = None) -> Iterator:
+        if self._value_cache is not None:
+            yield from self._value_cache.keys()
+        if bt_keys is not None:
+            yield from self._fill_if_empty_and_yield(bt_keys)
+
+    def _fill_if_empty_and_yield(self, bt_keys: Set[bytes]):
         # THIS ONLY WORKS IF THE FIRST BYTE OF THE KEY IS THE PARTITION
         partitions = set()
         for k in bt_keys:
@@ -146,6 +156,7 @@ class BigTableCacheManager:
                 else:
                     value = BigTableStore.bigtable_exrtact_row_data(row)
                     self._value_cache[row.row_key] = value
+                yield row.row_key
         self._filled_partitions.update(partitions_to_fill)
 
     def get(self, bt_key: bytes) -> Optional[bytes]:
@@ -575,8 +586,7 @@ class BigTableStore(base.SerializedStore):
                 keys = set()
                 for p in partitions:
                     keys.add(self._get_partition_prefix(p))
-                self._cache._fill_if_empty(keys)
-                for k in self._cache._value_cache.keys():
+                for k in self._cache.iterkeys(keys):
                     yield self._remove_partition_prefix(k)
             else:
                 row_set = BT.RowSet()
