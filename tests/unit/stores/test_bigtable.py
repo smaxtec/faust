@@ -362,7 +362,6 @@ class TestBigTableCacheManager:
             assert manager._last_flush == {tp.partition: 0}
             assert manager.flush_if_timer_over(tp) is False
 
-
         with patch(
             "faust.stores.bigtable.time.time",
             MagicMock(return_value=manager._mut_freq),
@@ -432,6 +431,23 @@ class TestBigTableCacheManager:
         row_mock.delete.assert_called_once()
         assert manager._mutations[row_mock.row_key][1] is None
         assert len(manager._mutations) == 1
+
+    def test_iterkeys(self, manager):
+        key_in = b"\x13AAA"
+        manager.bt_table.add_test_data({key_in})
+        manager._fill_if_empty_and_yield = MagicMock(wraps=manager._fill_if_empty_and_yield)
+
+        res = list(manager.iterkeys())
+        manager._fill_if_empty_and_yield.assert_not_called()
+        assert res == []  # cache should not be filled yet
+
+        res = list(manager.iterkeys({key_in}))
+        manager._fill_if_empty_and_yield.assert_called_once_with({key_in})
+        assert key_in in res
+
+        res = list(manager.iterkeys())
+        assert manager._fill_if_empty_and_yield.call_count == 1
+        assert key_in in res
 
 
 class TestBigTableStore:
