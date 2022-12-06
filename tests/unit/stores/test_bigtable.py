@@ -911,17 +911,14 @@ class TestBigTableStore:
     def test_iterkeys_with_complete_cache(self, store):
         store._cache.is_complete = True
         store._active_partitions = MagicMock(return_value=[1, 3])
-        store._cache._fill_if_empty = MagicMock()
-
         keys_in_cache = []
         keys_in_cache.append(store._get_key_with_partition(self.TEST_KEY1, 1))
         keys_in_cache.append(store._get_key_with_partition(self.TEST_KEY2, 2))
         keys_in_cache.append(store._get_key_with_partition(self.TEST_KEY3, 3))
+        store._cache.iterkeys = MagicMock(return_value=keys_in_cache)
 
-        store._cache._value_cache = MagicMock()
-        store._cache._value_cache.keys = MagicMock(return_value=keys_in_cache)
         all_res = sorted(store._iterkeys())
-        store._cache._fill_if_empty.assert_called_once_with(
+        store._cache.iterkeys.assert_called_once_with(
             {
                 store._get_partition_prefix(1),
                 store._get_partition_prefix(3),
@@ -936,7 +933,7 @@ class TestBigTableStore:
     def test_iterkeys_with_no_complete_cache(self, store):
         store._cache.is_complete = False
         store._active_partitions = MagicMock(return_value=[1, 3])
-        store._cache._fill_if_empty = MagicMock()
+        store._cache.iterkeys = MagicMock()
         keys_in_store = []
         keys_in_store.append(store._get_key_with_partition(self.TEST_KEY1, 1))
         keys_in_store.append(store._get_key_with_partition(self.TEST_KEY2, 2))
@@ -944,7 +941,7 @@ class TestBigTableStore:
         store.bt_table.add_test_data(keys_in_store)
 
         all_res = sorted(store._iterkeys())
-        store._cache._fill_if_empty.assert_not_called()
+        store._cache.iterkeys.assert_not_called()
         assert all_res == [
             self.TEST_KEY1,
             self.TEST_KEY3,
