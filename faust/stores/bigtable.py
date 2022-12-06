@@ -94,19 +94,16 @@ class BigTableValueCache:
 class BigTableCacheManager:
     _partition_cache: LRUCache[bytes, int]
     _value_cache: Optional[BigTableValueCache]
-    _key_cache: Optional[Set]
     _mutations: Dict[bytes, Tuple[BT.DirectRow, Optional[bytes]]]
 
     def __init__(self, app, options: Dict, bt_table: BT.Table) -> None:
+        self.is_complete = False
         self.log = logging.getLogger(__name__)
         self.bt_table: BT.Table = bt_table
         self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
         self._init_value_cache(options)
-        self._init_key_cache(options)
         self._init_mutation_buffer(options)
-        self.partition_prefixes: Dict[int, bytes]
         self._filled_partitions: Set[int] = set()
-        self.is_complete = False
 
     def _fill_if_empty(self, bt_keys: Set[bytes]):
         # THIS ONLY WORKS IF THE FIRST BYTE OF THE KEY IS THE PARTITION
@@ -131,13 +128,13 @@ class BigTableCacheManager:
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=BT.CellsColumnLimitFilter(1)
             ):
-                value = BigTableStore.bigtable_exrtact_row_data(row)
-                self._value_cache[row.row_key] = value
-        elif self._key_cache is not None:
-            for row in self.bt_table.read_rows(
-                row_set=row_set, filter_=BT.CellsColumnLimitFilter(1)
-            ):
-                self._key_cache.add(row.row_key)
+                if row.row_key in self._mutations.keys():
+                    mutation_val = self._mutations[row.row_key][1]
+                    if mutation_val is not None:
+                        self._value_cache[row.row_key] = mutation_val
+                else:
+                    value = BigTableStore.bigtable_exrtact_row_data(row)
+                    self._value_cache[row.row_key] = value
         self._filled_partitions.update(partitions_to_fill)
 
     def get(self, bt_key: bytes) -> Optional[bytes]:
@@ -151,15 +148,11 @@ class BigTableCacheManager:
     def set(self, bt_key: bytes, value: Optional[bytes]) -> None:
         if self._value_cache is not None:
             self._value_cache[bt_key] = value
-        if self._key_cache is not None:
-            self._key_cache.add(bt_key)
         self._set_mutation(bt_key, value)
 
     def delete(self, bt_key: bytes) -> None:
         if self._value_cache is not None:
             del self._value_cache[bt_key]
-        if self._key_cache is not None:
-            self._key_cache.discard(bt_key)
         self._set_mutation(bt_key, None)
 
     def get_partition(self, user_key: bytes) -> int:
@@ -181,11 +174,6 @@ class BigTableCacheManager:
                 return res
             elif res is True:
                 return True
-
-        elif self._key_cache is not None:
-            # Keycache is not filled so no assumptions about missing keys
-            if bt_key in self._key_cache:
-                return True
         return None
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
@@ -196,10 +184,6 @@ class BigTableCacheManager:
             if self.is_complete:
                 return res
             elif res is True:
-                return True
-        elif self._key_cache is not None:
-            # Keycache is not filled so no assumptions about missing keys
-            if not self._key_cache.isdisjoint(key_set):
                 return True
         # No assumption possible
         return None
@@ -253,17 +237,6 @@ class BigTableCacheManager:
                 self.is_complete = True
         else:
             self._value_cache = None
-
-    def _init_key_cache(self, options: Dict):
-        key_cache_enabled = options.get(
-            BigTableStore.KEY_CACHE_ENABLE_KEY, False
-        )
-        # We don't need a key cache if we use a value cache already
-        if self._value_cache is None and key_cache_enabled:
-            if key_cache_enabled:
-                self._key_cache = set()
-        else:
-            self._key_cache = None
 
     def _init_mutation_buffer(self, options):
         self._mut_freq = options.get(BigTableStore.BT_MUTATION_FREQ_KEY, 0)
@@ -355,7 +328,7 @@ class BigTableStore(base.SerializedStore):
 
     def _bigtable_get(self, key: bytes) -> Optional[bytes]:
         value = self._cache.get(key)
-        if value is not None or self._cache.is_complete:
+        if value is not None:
             return value
         else:
             res = self.bt_table.read_row(key, filter_=self.row_filter)
