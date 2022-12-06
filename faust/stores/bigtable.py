@@ -3,7 +3,17 @@ import logging
 import random
 import time
 import traceback
-from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 try:  # pragma: no cover
     from google.cloud.bigtable import column_family
@@ -24,6 +34,7 @@ try:  # pragma: no cover
         CellsColumnLimitFilter = CellsColumnLimitFilter
         RowSet = RowSet
         Table = Table
+
 except ImportError:  # pragma: no cover
     BT = None  # noqa
 
@@ -191,10 +202,14 @@ class BigTableCacheManager:
     def flush_if_timer_over(self, tp: TP) -> bool:
         now = time.time()
         flushed = False
-        if now >= self._last_flush + self._mut_freq:
+        last_flush = self._last_flush.get(tp.partition, now - self._mut_freq)
+        max_reached = len(self._mutations) >= self._max_mutations
+        if now >= last_flush + self._mut_freq or max_reached:
             mutatations_copy = self._mutations.copy()
             mutatations = [
-                m[0] for m in mutatations_copy.values() if tp.partition == m[0].row_key[0]
+                m[0]
+                for m in mutatations_copy.values()
+                if tp.partition == m[0].row_key[0]
             ]
             if len(mutatations) > 0:
                 response = self.bt_table.mutate_rows(mutatations)
@@ -203,8 +218,8 @@ class BigTableCacheManager:
                         self.log.error(f"Row number {i} failed to write")
                     else:
                         self._mutations.pop(mutatations[i].row_key)
-                flushed = True
-            self._last_flush = now
+            flushed = True
+            self._last_flush[tp.partition] = now
         return flushed
 
     def _set_mutation(self, bt_key: bytes, value: Optional[bytes]):
@@ -242,7 +257,12 @@ class BigTableCacheManager:
         self._mut_freq = options.get(BigTableStore.BT_MUTATION_FREQ_KEY, 0)
         # To prevent that all tables write at the same time
         random_start_offset = random.randint(0, self._mut_freq)
-        self._last_flush = time.time() + self._mut_freq - random_start_offset
+        self._last_flush = (
+            {}
+        )  # time.time() + self._mut_freq - random_start_offset
+        self._max_mutations = options.get(
+            BigTableStore.BT_MAX_MUTATIONS, 10000
+        )
         self._mutations = {}
 
 
@@ -261,7 +281,7 @@ class BigTableStore(base.SerializedStore):
     BT_PROJECT_KEY = "bt_project_key"
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
     BT_MUTATION_FREQ_KEY = "bt_mutation_freq_key"
-    KEY_CACHE_ENABLE_KEY = "key_cache_enable_key"
+    BT_MAX_MUTATIONS = "bt_max_mutations"
     VALUE_CACHE_INVALIDATION_TIME_KEY = "value_cache_invalidation_time_key"
     VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
     VALUE_CACHE_ENABLE_KEY = "value_cache_enable_key"
@@ -313,7 +333,9 @@ class BigTableStore(base.SerializedStore):
             )
             self.bt_table.create(
                 column_families={
-                    self.column_family_id: BT.column_family.MaxVersionsGCRule(1)
+                    self.column_family_id: BT.column_family.MaxVersionsGCRule(
+                        1
+                    )
                 }
             )
         else:
