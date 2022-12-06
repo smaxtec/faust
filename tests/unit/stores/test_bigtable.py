@@ -552,15 +552,23 @@ class TestBigTableStore:
 
     def test_bigtable_bigtable_get_on_empty(self, store):
         store._cache.get = MagicMock(return_value=None)
+        store._cache.is_complete = True
         return_value = store._bigtable_get(self.TEST_KEY1)
+        store._cache.get.assert_called_with(self.TEST_KEY1)
+        assert return_value is None
+        store.bt_table.read_row.assert_not_called
+
+        store._cache.is_complete = False
+        return_value = store._bigtable_get(self.TEST_KEY1)
+        store._cache.get.assert_called_with(self.TEST_KEY1)
         store.bt_table.read_row.assert_called_once_with(
             self.TEST_KEY1, filter_="a_filter"
         )
-        store._cache.get.assert_called_once_with(self.TEST_KEY1)
         assert return_value is None
 
     def test_bigtable_bigtable_get_cache_miss(self, store):
         store._cache.get = MagicMock(return_value=None)
+        store._cache.is_complete = False
         store.bt_table.add_test_data([self.TEST_KEY1])
         return_value = store._bigtable_get(self.TEST_KEY1)
         store._cache.get.assert_called_once_with(self.TEST_KEY1)
