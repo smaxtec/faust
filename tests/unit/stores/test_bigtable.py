@@ -13,6 +13,73 @@ from faust.stores.bigtable import (
 from faust.types.tuples import TP
 
 
+class TestResponse:
+    def __init__(self, code) -> None:
+        self.code = code
+
+
+class RowSetMock:
+    # We will mock rowsets in a way that it is just a
+    # list with all requested keys, so that we then just call
+    # read_row of the mocked bigtable multiple times
+    def __init__(self) -> None:
+        self.keys = set()
+        self.add_row_key = MagicMock(wraps=self._add_row_key)
+        self.add_row_range_from_keys = MagicMock(
+            wraps=self._add_row_range_from_keys
+        )
+
+    def _add_row_key(self, key):
+        self.keys.add(key)
+
+    def _add_row_range_from_keys(self, start_key: bytes, end_key: bytes):
+        if isinstance(start_key, str):
+            start_key = start_key.encode()
+        if isinstance(end_key, str):
+            end_key = end_key.encode()
+        self.keys.add(b"".join([start_key, b"_*_", end_key]))
+
+
+class BigTableMock:
+    def __init__(self) -> None:
+        self.data = {}
+        self.read_row = MagicMock(wraps=self._read_row)
+        self.read_rows = MagicMock(wraps=self._read_rows)
+        self.name = "test_bigtable"
+
+    def _read_row(self, key: bytes, **kwargs):
+        res = self.data.get(key, None)
+        cell_wrapper = MagicMock()
+        cell_wrapper.value = res
+        row_wrapper = [cell_wrapper]
+        if res is None:
+            return res
+        row = MagicMock()
+        row.row_key = key
+        row.to_dict = MagicMock(return_value={"x": row_wrapper})
+        return row
+
+    def _read_rows(self, row_set, **kwargs):
+        for k in row_set.keys:
+            res = None
+            if b"_*_" in k:
+                for key in self.data.keys():
+                    start, end = k.split(b"_*_")
+                    if start <= key < end:
+                        yield self._read_row(key)
+                continue
+            else:
+                res = self._read_row(k)
+                if res is None:
+                    continue
+                else:
+                    yield res
+
+    def add_test_data(self, keys):
+        for k in keys:
+            self.data[k] = k
+
+
 class TestBigTableValueCache:
     def test_init(self):
         # Test defaults
@@ -72,6 +139,301 @@ class TestBigTableValueCache:
         assert cache.ttl_over is True  # Nothing cleared, edge case
 
 
+class TestBigTableCacheManager:
+    def test_default__init__(self):
+        bigtable_mock = BigTableMock()
+        app_mock = MagicMock()
+        app_mock.conf = MagicMock()
+        app_mock.conf.table_key_index_size = 123
+        time.time = MagicMock(return_value=0)
+
+        test_manager = BigTableCacheManager(MagicMock(), {}, bigtable_mock)
+        assert test_manager.bt_table == bigtable_mock
+        assert test_manager.is_complete is False
+        assert test_manager._value_cache is None
+        assert test_manager._mut_freq == 0
+        assert test_manager._last_flush == {}
+        assert test_manager._mutations == {}
+        assert test_manager._filled_partitions == set()
+
+    def test_iscomplete__init__(self):
+        bigtable_mock = BigTableMock()
+        app_mock = MagicMock()
+        app_mock.conf = MagicMock()
+        app_mock.conf.table_key_index_size = 2
+        time.time = MagicMock(return_value=0)
+        options = {
+            BigTableStore.VALUE_CACHE_ENABLE_KEY: True,
+        }
+
+        test_manager = BigTableCacheManager(
+            MagicMock(), options, bigtable_mock
+        )
+        assert test_manager.bt_table == bigtable_mock
+        assert test_manager.is_complete is True
+        assert isinstance(test_manager._value_cache, BigTableValueCache)
+        assert test_manager._mut_freq == 0
+        assert test_manager._last_flush == {}
+        assert test_manager._mutations == {}
+        assert test_manager._filled_partitions == set()
+
+    @pytest.fixture()
+    def bt_imports(self):
+        with patch("faust.stores.bigtable.BT") as bt:
+            bt.CellsColumnLimitFilter = MagicMock(return_value="a_filter")
+            bt.column_family.MaxVersionsGCRule = MagicMock(
+                return_value="a_rule"
+            )
+            bt.RowSet = MagicMock(return_value=RowSetMock())
+            yield bt
+
+    @pytest.fixture()
+    def manager(self, bt_imports):
+        with patch("faust.stores.bigtable.BT", bt_imports):
+            with patch(
+                "faust.stores.bigtable.time.time", MagicMock(return_value=0)
+            ):
+                bigtable_mock = BigTableMock()
+                app_mock = MagicMock()
+                app_mock.conf = MagicMock()
+                app_mock.conf.table_key_index_size = 123
+
+                options = {
+                    BigTableStore.VALUE_CACHE_ENABLE_KEY: True,
+                    BigTableStore.BT_MUTATION_FREQ_KEY: 600,
+                }
+                manager = BigTableCacheManager(
+                    MagicMock(), options, bigtable_mock
+                )
+                manager._partition_cache = {}
+                return manager
+
+    def test_fill_if_empty(self, manager):
+        key = b"\x13AAA"
+        manager.bt_table.add_test_data({key})
+        # Scenario 1: Everything empty
+        manager._fill_if_empty({key})
+        assert manager.bt_table.read_rows.call_count == 1
+        assert manager._filled_partitions == {19}
+
+        manager._fill_if_empty({key})
+        assert manager.bt_table.read_rows.call_count == 1
+        assert manager._filled_partitions == {19}
+
+        manager._fill_if_empty({b"\x10XXX"})
+        assert manager.bt_table.read_rows.call_count == 2
+        assert manager._filled_partitions == {19, 16}
+        assert manager.contains(key)
+
+    def test_fill_if_empty_with_mutation(self, manager):
+        key = b"\x13AAA"
+        manager.bt_table.add_test_data({key})
+        manager._mutations = {key: (MagicMock(), "some_row_mutation")}
+        manager._fill_if_empty({key})
+        assert manager.contains(key)
+        assert manager.get(key) == "some_row_mutation"
+
+    def test_get(self, manager):
+        # Adding the key here is sufficient, because the cache gets filled
+        key_in = b"\x13AAA"
+        key_not_in = b"\x13BBB"
+        manager.bt_table.add_test_data({key_in})
+
+        manager._fill_if_empty = MagicMock(wraps=manager._fill_if_empty)
+
+        res = manager.get(key_in)
+        manager._fill_if_empty.assert_called_once_with({key_in})
+        assert res == key_in
+
+        res = manager.get(key_not_in)
+        manager._fill_if_empty.assert_called_with({key_not_in})
+        assert res is None
+
+        manager._value_cache = None
+        res = manager.get(key_in)
+        manager._fill_if_empty.assert_called_with({key_in})
+        assert res is None
+
+    def test_set(self, manager):
+        manager._set_mutation = MagicMock()
+        key_1 = b"\x13AAA"
+        key_2 = b"\x13ABB"
+        manager.set(key_1, key_1)
+        manager._set_mutation.assert_called_once_with(key_1, key_1)
+        assert manager.contains(key_1)
+        assert manager.contains(key_2) is False
+
+        manager.set(key_2, key_2)
+        manager._set_mutation.assert_called_with(key_2, key_2)
+        assert manager.contains(key_1)
+        assert manager.contains(key_2)
+        assert manager.get(key_1) == key_1
+        assert manager.get(key_2) == key_2
+
+    def test_delete(self, manager):
+        manager._set_mutation = MagicMock()
+        key_1 = b"\x13AAA"
+        key_2 = b"\x13ABB"
+        manager.set(key_1, key_1)
+        assert manager.contains(key_1)
+        manager.delete(key_1)
+        manager._set_mutation.assert_called_with(key_1, None)
+        assert not manager.contains(key_1)
+        manager.delete(key_2)
+        manager._set_mutation.assert_called_with(key_2, None)
+
+    def test_partition_cache(self, manager):
+        key = b"aaa"
+        with pytest.raises(KeyError):
+            manager.get_partition(key)
+        manager.set_partition(key, 13)
+        assert manager.get_partition(key) == 13
+        manager.set_partition(key, 15)
+        assert manager.get_partition(key) == 15
+
+    def test_contains(self, manager):
+        # Adding the key here is sufficient, because the cache gets filled
+        key_in = b"\x13AAA"
+        key_not_in = b"\x13BBB"
+        manager.bt_table.add_test_data({key_in})
+        manager._fill_if_empty = MagicMock(wraps=manager._fill_if_empty)
+
+        manager.is_complete = True
+        assert manager.contains(key_in) is True
+        manager._fill_if_empty.assert_called_with({key_in})
+        assert manager.contains(key_not_in) is False
+        manager._fill_if_empty.assert_called_with({key_not_in})
+
+        manager.is_complete = False
+        assert manager.contains(key_in) is True
+        manager._fill_if_empty.assert_called_with({key_in})
+        assert manager.contains(key_not_in) is None
+        manager._fill_if_empty.assert_called_with({key_not_in})
+
+        manager._value_cache = None
+        assert manager.contains(key_in) is None
+        manager._fill_if_empty.assert_called_with({key_in})
+        assert manager.contains(key_not_in) is None
+        manager._fill_if_empty.assert_called_with({key_not_in})
+
+    def test_contains_any(self, manager):
+        # Adding the key here is sufficient, because the cache gets filled
+        key_in = b"\x13AAA"
+        key_not_in = b"\x13BBB"
+        manager.bt_table.add_test_data({key_in})
+        manager._fill_if_empty = MagicMock(wraps=manager._fill_if_empty)
+
+        manager.is_complete = True
+        assert manager.contains_any({key_in, key_not_in}) is True
+        manager._fill_if_empty.assert_called_with({key_in, key_not_in})
+        assert manager.contains_any({key_not_in}) is False
+        manager._fill_if_empty.assert_called_with({key_not_in})
+
+        manager.is_complete = False
+        assert manager.contains_any({key_in, key_not_in}) is True
+        manager._fill_if_empty.assert_called_with({key_in, key_not_in})
+        assert manager.contains_any({key_not_in}) is None
+        manager._fill_if_empty.assert_called_with({key_not_in})
+
+        manager._value_cache = None
+        assert manager.contains_any({key_in, key_not_in}) is None
+        manager._fill_if_empty.assert_called_with({key_in, key_not_in})
+        assert manager.contains_any({key_not_in}) is None
+        manager._fill_if_empty.assert_called_with({key_not_in})
+
+    def test_flush_if_timer_over(self, manager):
+        tp = TP("a_topic", partition=19)
+        tp2 = TP("a_topic", partition=0)
+        time.time = MagicMock(return_value=0)
+        manager.bt_table.mutate_rows = MagicMock(
+            return_value=[TestResponse(404)]
+        )
+
+        row_mock = MagicMock()
+        row_mock.row_key = b"\x13AAA"
+        manager._mutations = {
+            row_mock.row_key: (row_mock, "some_row_mutation")
+        }
+
+        with patch(
+            "faust.stores.bigtable.time.time", MagicMock(return_value=0)
+        ):
+            assert manager.flush_if_timer_over(tp) is True
+            assert manager._last_flush == {tp.partition: 0}
+            assert manager.flush_if_timer_over(tp) is False
+
+
+        with patch(
+            "faust.stores.bigtable.time.time",
+            MagicMock(return_value=manager._mut_freq),
+        ):
+            assert manager.flush_if_timer_over(tp2) is True
+            assert manager._last_flush == {
+                tp2.partition: manager._mut_freq,
+                tp.partition: 0,
+            }
+
+            assert manager.flush_if_timer_over(tp) is True
+            assert len(manager._mutations) == 1  # Not dropped, due to ERR. 404
+            assert manager._last_flush == {
+                tp2.partition: manager._mut_freq,
+                tp.partition: manager._mut_freq,
+            }
+            assert manager.flush_if_timer_over(tp) is False
+
+        manager._last_flush = {}
+        manager.bt_table.mutate_rows = MagicMock(
+            return_value=[TestResponse(0)]
+        )
+
+        with patch(
+            "faust.stores.bigtable.time.time",
+            MagicMock(return_value=manager._mut_freq),
+        ):
+            assert manager.flush_if_timer_over(tp) is True
+            assert manager._last_flush == {tp.partition: manager._mut_freq}
+            assert len(manager._mutations) == 0
+
+    def test_flush_if_timer_over_on_max_count(self, manager):
+        tp = TP("a_topic", partition=19)
+        row_mock = MagicMock()
+        row_mock.row_key = b"\x13AAA"
+        manager._mutations = {
+            row_mock.row_key: (row_mock, "some_row_mutation")
+        }
+        manager._max_mutations = 1
+        manager._last_flush = {tp.partition: 999999999999}
+        manager.bt_table.mutate_rows = MagicMock(
+            return_value=[TestResponse(0)]
+        )
+        with patch(
+            "faust.stores.bigtable.time.time", MagicMock(return_value=0)
+        ):
+            assert manager.flush_if_timer_over(tp) is True
+
+    def test_set_mutation(self, manager):
+        row_mock = MagicMock()
+        row_mock.delete = MagicMock()
+        row_mock.set_cell = MagicMock()
+        row_mock.row_key = b"\x13AAA"
+
+        manager.bt_table.direct_row = MagicMock(return_value=row_mock)
+
+        assert len(manager._mutations) == 0
+        manager._set_mutation(row_mock.row_key, "new_value")
+        manager.bt_table.direct_row.assert_called_once_with(row_mock.row_key)
+        row_mock.set_cell.assert_called_once_with(
+            "FaustColumnFamily", "DATA", "new_value"
+        )
+        assert manager._mutations[row_mock.row_key][1] == "new_value"
+        assert len(manager._mutations) == 1
+
+        manager._set_mutation(row_mock.row_key, None)
+        row_mock.delete.assert_called_once()
+        assert manager._mutations[row_mock.row_key][1] is None
+        assert len(manager._mutations) == 1
+
+
 class TestBigTableStore:
     TEST_KEY1 = b"TEST_KEY1"
     TEST_KEY2 = b"TEST_KEY2"
@@ -79,23 +441,6 @@ class TestBigTableStore:
 
     @pytest.fixture()
     def bt_imports(self):
-        # We will mock rowsets in a way that it is just a
-        # list with all requested keys, so that we then just call
-        # read_row of the mocked bigtable multiple times
-        class RowSetMock:
-            def __init__(self) -> None:
-                self.keys = set()
-                self.add_row_key = MagicMock(wraps=self._add_row_key)
-                self.add_row_range_from_keys = MagicMock(
-                    wraps=self._add_row_range_from_keys
-                )
-
-            def _add_row_key(self, key):
-                self.keys.add(key)
-
-            def _add_row_range_from_keys(self, start: bytes, end: bytes):
-                self.keys.add(b"".join([start, b"_*_", end]))
-
         with patch("faust.stores.bigtable.BT") as bt:
             bt.CellsColumnLimitFilter = MagicMock(return_value="a_filter")
             bt.column_family.MaxVersionsGCRule = MagicMock(
@@ -194,44 +539,6 @@ class TestBigTableStore:
 
     @pytest.fixture()
     def store(self, bt_imports):
-        class BigTableMock:
-            def __init__(self) -> None:
-                self.data = {}
-                self.read_row = MagicMock(wraps=self._read_row)
-                self.read_rows = MagicMock(wraps=self._read_rows)
-
-            def _read_row(self, key: bytes, **kwargs):
-                res = self.data.get(key, None)
-                cell_wrapper = MagicMock()
-                cell_wrapper.value = res
-                row_wrapper = [cell_wrapper]
-                if res is None:
-                    return res
-                row = MagicMock()
-                row.row_key = key
-                row.to_dict = MagicMock(return_value={"x": row_wrapper})
-                return row
-
-            def _read_rows(self, row_set, **kwargs):
-                for k in row_set.keys:
-                    res = None
-                    if b"_*_" in k:
-                        for key in self.data.keys():
-                            start, end = k.split(b"_*_")
-                            if start <= key < end:
-                                yield self._read_row(key)
-                        continue
-                    else:
-                        res = self._read_row(k)
-                        if res is None:
-                            continue
-                        else:
-                            yield res
-
-            def add_test_data(self, keys):
-                for k in keys:
-                    self.data[k] = k
-
         with patch("faust.stores.bigtable.BT", bt_imports):
             options = {}
             options[BigTableStore.BT_INSTANCE_KEY] = "bt_instance"
@@ -714,10 +1021,6 @@ class TestBigTableStore:
         )
 
     def test_persist_changelog_batch(self, store):
-        class TestResponse:
-            def __init__(self, code) -> None:
-                self.code = code
-
         # Scenario 1: no failure
         store.bt_table.mutate_rows = MagicMock(
             return_value=[TestResponse(0)] * 10
