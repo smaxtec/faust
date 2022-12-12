@@ -449,6 +449,18 @@ class TestBigTableCacheManager:
         assert manager._fill_if_empty_and_yield.call_count == 1
         assert key_in in res
 
+    def test_fill_if_empty_and_yield(self, manager):
+        manager.bt_table.add_test_data({b"\x13AAA"})
+        res = list(manager._fill_if_empty_and_yield({b"\x13AAA"}))
+        manager.bt_table.read_rows.assert_called()
+        assert res == [b"\x13AAA"]
+
+        manager._value_cache = None
+        manager.bt_table.read_rows.reset_mock()
+        res = list(manager._fill_if_empty_and_yield({b"\x13AAA"}))
+        assert res == []
+        manager.bt_table.read_rows.assert_not_called()
+
 
 class TestBigTableStore:
     TEST_KEY1 = b"TEST_KEY1"

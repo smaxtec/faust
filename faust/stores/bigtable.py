@@ -141,11 +141,11 @@ class BigTableCacheManager:
                 start_key=chr(partition), end_key=chr(partition + 1)
             )
 
-        self.log.info(
-            f"BigTableStore: Filling cache for {self.bt_table.name} "
-            f"and partitions {partitions_to_fill}"
-        )
         if self._value_cache is not None:
+            self.log.info(
+                f"BigTableStore: Filling cache for {self.bt_table.name} "
+                f"and partitions {partitions_to_fill}"
+            )
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=BT.CellsColumnLimitFilter(1)
             ):
