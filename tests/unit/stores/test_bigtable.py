@@ -13,7 +13,7 @@ from faust.stores.bigtable import (
 from faust.types.tuples import TP
 
 
-class TestResponse:
+class MyTestResponse:
     def __init__(self, code) -> None:
         self.code = code
 
@@ -346,7 +346,7 @@ class TestBigTableCacheManager:
         tp2 = TP("a_topic", partition=0)
         time.time = MagicMock(return_value=0)
         manager.bt_table.mutate_rows = MagicMock(
-            return_value=[TestResponse(404)]
+            return_value=[MyTestResponse(404)]
         )
 
         row_mock = MagicMock()
@@ -382,7 +382,7 @@ class TestBigTableCacheManager:
 
         manager._last_flush = {}
         manager.bt_table.mutate_rows = MagicMock(
-            return_value=[TestResponse(0)]
+            return_value=[MyTestResponse(0)]
         )
 
         with patch(
@@ -403,7 +403,7 @@ class TestBigTableCacheManager:
         manager._max_mutations = 1
         manager._last_flush = {tp.partition: 999999999999}
         manager.bt_table.mutate_rows = MagicMock(
-            return_value=[TestResponse(0)]
+            return_value=[MyTestResponse(0)]
         )
         with patch(
             "faust.stores.bigtable.time.time", MagicMock(return_value=0)
@@ -451,6 +451,7 @@ class TestBigTableCacheManager:
 
     def test_fill_if_empty_and_yield(self, manager):
         manager.bt_table.add_test_data({b"\x13AAA"})
+
         res = list(manager._fill_if_empty_and_yield({b"\x13AAA"}))
         manager.bt_table.read_rows.assert_called()
         assert res == [b"\x13AAA"]
@@ -959,7 +960,7 @@ class TestBigTableStore:
             self.TEST_KEY3,
         ]
 
-    def test_iteritems(self, store):
+    def test_itervalues(self, store):
         keys_in_store = []
         keys_in_store.append(store._get_key_with_partition(self.TEST_KEY1, 1))
         keys_in_store.append(store._get_key_with_partition(self.TEST_KEY2, 2))
@@ -1056,7 +1057,7 @@ class TestBigTableStore:
     def test_persist_changelog_batch(self, store):
         # Scenario 1: no failure
         store.bt_table.mutate_rows = MagicMock(
-            return_value=[TestResponse(0)] * 10
+            return_value=[MyTestResponse(0)] * 10
         )
         store.log = MagicMock()
         store.log.error = MagicMock()
@@ -1084,7 +1085,7 @@ class TestBigTableStore:
         store.set_persisted_offset.reset_mock()
         store.bt_table.mutate_rows.reset_mock()
         store.bt_table.mutate_rows = MagicMock(
-            return_value=[TestResponse(404)]
+            return_value=[MyTestResponse(404)]
         )
         store._persist_changelog_batch(
             ["row1", "row2", "etc..."], offset_batch
