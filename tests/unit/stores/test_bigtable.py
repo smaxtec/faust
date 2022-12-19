@@ -236,6 +236,29 @@ class TestBigTableCacheManager:
         assert manager._filled_partitions == {b"\x13", b"\x10"}
         assert manager.contains(key)
 
+    def test_fill_if_empty_with_custom_partitioner(self, manager):
+        def custom_cache_partitioner(key: bytes):
+            prefix_len = 1 # bytes
+            id_len = 2 # bytes
+            key_partition_len = prefix_len + id_len
+            return key[:key_partition_len]
+        manager.custom_partitioning = custom_cache_partitioner
+        key = b"\x13PPAAAAAAAA"
+        manager.bt_table.add_test_data({key})
+        # Scenario 1: Everything empty
+        manager._fill_if_empty({key})
+        assert manager.bt_table.read_rows.call_count == 1
+        assert manager._filled_partitions == {b"\x13PP"}
+
+        manager._fill_if_empty({key})
+        assert manager.bt_table.read_rows.call_count == 1
+        assert manager._filled_partitions == {b"\x13PP"}
+
+        manager._fill_if_empty({b"\x10XXX"})
+        assert manager.bt_table.read_rows.call_count == 2
+        assert manager._filled_partitions == {b"\x13PP", b"\x10XX"}
+        assert manager.contains(key)
+
     def test_fill_if_empty_with_mutation(self, manager):
         key = b"\x13AAA"
         manager.bt_table.add_test_data({key})
