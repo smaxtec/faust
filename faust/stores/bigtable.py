@@ -136,6 +136,7 @@ class BigTableCacheManager:
         if len(partitions_to_fill) == 0:
             return
 
+        start = time.time()
         row_set = BT.RowSet()
         for partition in partitions_to_fill:
             row_set.add_row_range_from_keys(
@@ -154,6 +155,8 @@ class BigTableCacheManager:
                     value = BigTableStore.bigtable_exrtact_row_data(row)
                     self._value_cache[row.row_key] = value
                 yield row.row_key
+        end = time.time()
+        self.log.info(f"Finished fill for table {self.bt_table.name}:{partitions_to_fill} in {end-start}s")
         self._filled_partitions.update(partitions_to_fill)
 
     def get(self, bt_key: bytes) -> Optional[bytes]:
@@ -590,7 +593,12 @@ class BigTableStore(base.SerializedStore):
             ):
                 if row.row_key in found_mutations:
                     continue
+                if self._cache._value_cache is not None:
+                    data = self.bigtable_exrtact_row_data(row)
+                    # We don't want to set mutations here
+                    self._cache._value_cache[row.row_key] = data
                 yield self._remove_partition_prefix(row.row_key)
+
             end = time.time()
             self.log.info(
                 f"Finished iterkeys for {self.table_name} in {end - start}s"
