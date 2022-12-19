@@ -143,10 +143,6 @@ class BigTableCacheManager:
             )
 
         if self._value_cache is not None:
-            self.log.info(
-                f"BigTableStore: Filling cache for {self.bt_table.name} "
-                f"and partitions {partitions_to_fill}"
-            )
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=BT.CellsColumnLimitFilter(1)
             ):
@@ -369,7 +365,7 @@ class BigTableStore(base.SerializedStore):
 
     def _bigtable_contains(self, key: bytes) -> bool:
         cache_contains = self._cache.contains(key)
-        if cache_contains is not None:
+        if cache_contains is True:
             return cache_contains
 
         row = self.bt_table.read_row(key, filter_=self.row_filter)
@@ -381,7 +377,7 @@ class BigTableStore(base.SerializedStore):
 
     def _bigtable_contains_any(self, keys: Set[bytes]) -> bool:
         cache_contains = self._cache.contains_any(keys)
-        if cache_contains is not None:
+        if cache_contains is True:
             return cache_contains
 
         rows = BT.RowSet()
