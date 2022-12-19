@@ -112,25 +112,26 @@ class BigTableCacheManager:
         self.is_complete = False
         self.log = logging.getLogger(__name__)
         self.bt_table: BT.Table = bt_table
+        self.custom_partitioning = options.get(BigTableStore.CUSTOM_CACHE_PARTITIONING_KEY, None)
         self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
         self._init_value_cache(options)
         self._init_mutation_buffer(options)
-        self._filled_partitions: Set[int] = set()
+        self._filled_partitions: Set[bytes] = set()
 
     def _fill_if_empty(self, bt_keys):
+        # This is a hack, that enables iterating over all results
+        # without saving them in memory
         deque(self._fill_if_empty_and_yield(bt_keys), maxlen=0)
 
-    def iterkeys(self, bt_keys: Optional[Set[bytes]] = None) -> Iterator:
-        if self._value_cache is not None:
-            yield from self._value_cache.keys()
-        if bt_keys is not None:
-            yield from self._fill_if_empty_and_yield(bt_keys)
+    def _partition_from_key(self, bt_key):
+        if self.custom_partitioning is not None:
+            return self.custom_partitioning(bt_key)
+        return bt_key[0].to_bytes(1, "little")
 
     def _fill_if_empty_and_yield(self, bt_keys: Set[bytes]):
-        # THIS ONLY WORKS IF THE FIRST BYTE OF THE KEY IS THE PARTITION
         partitions = set()
         for k in bt_keys:
-            partitions.add(k[0])
+            partitions.add(self._partition_from_key(bt_key=k))
         partitions_to_fill = partitions.difference(self._filled_partitions)
         if len(partitions_to_fill) == 0:
             return
@@ -138,7 +139,7 @@ class BigTableCacheManager:
         row_set = BT.RowSet()
         for partition in partitions_to_fill:
             row_set.add_row_range_from_keys(
-                start_key=chr(partition), end_key=chr(partition + 1)
+                start_key=partition, end_key=partition, end_inclusive=True
             )
 
         if self._value_cache is not None:
@@ -160,12 +161,13 @@ class BigTableCacheManager:
         self._filled_partitions.update(partitions_to_fill)
 
     def get(self, bt_key: bytes) -> Optional[bytes]:
-        value = None
         self._fill_if_empty({bt_key})
         if self._value_cache is not None:
             if bt_key in self._value_cache.keys():
-                value = self._value_cache[bt_key]
-        return value
+                return self._value_cache[bt_key]
+        else:
+            return self._mutations.get(bt_key, (None, None))[1]
+        return None
 
     def set(self, bt_key: bytes, value: Optional[bytes]) -> None:
         if self._value_cache is not None:
@@ -189,26 +191,19 @@ class BigTableCacheManager:
         If we return None here, this means, that no assumption
         about the current key can be made.
         """
-        if self._value_cache is not None:
-
-            res = bt_key in self._value_cache.keys()
-            if self.is_complete:
-                return res
-            elif res is True:
-                return True
-        return None
+        if self._value_cache is None:
+            if bt_key not in self._mutations.keys():
+                return False
+            return self._mutations[bt_key][1] is not None
+        return bt_key in self._value_cache.keys()
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
         self._fill_if_empty(key_set)
-
         if self._value_cache is not None:
-            res = not self._value_cache.keys().isdisjoint(key_set)
-            if self.is_complete:
-                return res
-            elif res is True:
-                return True
-        # No assumption possible
-        return None
+            return not self._value_cache.keys().isdisjoint(key_set)
+        else:
+            mutations = key_set.intersection(self._mutations.keys())
+            return any(mut[1] is not None for mut in mutations)
 
     def flush_if_timer_over(self, tp: TP) -> bool:
         now = time.time()
@@ -296,6 +291,7 @@ class BigTableStore(base.SerializedStore):
     VALUE_CACHE_INVALIDATION_TIME_KEY = "value_cache_invalidation_time_key"
     VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
     VALUE_CACHE_ENABLE_KEY = "value_cache_enable_key"
+    CUSTOM_CACHE_PARTITIONING_KEY = "custom_cache_partitioning_key"
 
     def __init__(
         self,
@@ -360,9 +356,8 @@ class BigTableStore(base.SerializedStore):
         return list(row_data.to_dict().values())[0][0].value
 
     def _bigtable_get(self, key: bytes) -> Optional[bytes]:
-        value = self._cache.get(key)
-        if value is not None or self._cache.is_complete:
-            return value
+        if self._cache.contains(key):
+            return self._cache.get(key)
         else:
             res = self.bt_table.read_row(key, filter_=self.row_filter)
             if res is None:
@@ -582,23 +577,24 @@ class BigTableStore(base.SerializedStore):
             start = time.time()
             partitions = self._active_partitions()
 
-            if self._cache.is_complete:
-                keys = set()
-                for p in partitions:
-                    keys.add(self._get_partition_prefix(p))
-                for k in self._cache.iterkeys(keys):
-                    yield self._remove_partition_prefix(k)
-            else:
-                row_set = BT.RowSet()
-                for partition in partitions:
-                    prefix_start = self._get_partition_prefix(partition)
-                    prefix_end = self._get_partition_prefix(partition + 1)
-                    row_set.add_row_range_from_keys(prefix_start, prefix_end)
+            row_set = BT.RowSet()
+            for partition in partitions:
+                prefix_start = self._get_partition_prefix(partition)
+                prefix_end = self._get_partition_prefix(partition + 1)
+                row_set.add_row_range_from_keys(prefix_start, prefix_end)
 
-                for row in self.bt_table.read_rows(
-                    row_set=row_set, filter_=self.row_filter
-                ):
-                    yield self._remove_partition_prefix(row.row_key)
+            found_mutations = set()
+            for k, mut in self._cache._mutations.items():
+                if mut[1] is not None:
+                    yield self._remove_partition_prefix(k)
+                found_mutations.add(k)
+
+            for row in self.bt_table.read_rows(
+                row_set=row_set, filter_=self.row_filter
+            ):
+                if row.row_key in found_mutations:
+                    continue
+                yield self._remove_partition_prefix(row.row_key)
             end = time.time()
             self.log.info(
                 f"Finished iterkeys for {self.table_name} in {end - start}s"
