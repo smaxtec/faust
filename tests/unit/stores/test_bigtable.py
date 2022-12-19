@@ -716,9 +716,9 @@ class TestBigTableStore:
 
         store._cache.contains = MagicMock(return_value=False)
         return_value = store._bigtable_contains(self.TEST_KEY1)
-        store.bt_table.read_row.assert_not_called()
+        store.bt_table.read_row.assert_called_with(self.TEST_KEY1, filter_="a_filter")
         store._cache.delete.assert_not_called()
-        assert return_value is False
+        assert return_value is True
 
     def test_bigtable_contains_any(self, store):
         store.bt_table.add_test_data([self.TEST_KEY1])
