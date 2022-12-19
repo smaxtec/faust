@@ -597,6 +597,8 @@ class BigTableStore(base.SerializedStore):
                     data = self.bigtable_exrtact_row_data(row)
                     # We don't want to set mutations here
                     self._cache._value_cache[row.row_key] = data
+                    cache_partition = self._cache._partition_from_key(row.row_key)
+                    self._cache._filled_partitions.add(cache_partition)
                 yield self._remove_partition_prefix(row.row_key)
 
             end = time.time()
