@@ -15,7 +15,7 @@ from typing import (
     Tuple,
     Union,
 )
-from google.cloud.bigtable.row_filters import RowFilterUnion, RowKeyRegexFilter
+from google.cloud.bigtable.row_filters import RowFilterChain, RowFilterUnion, RowKeyRegexFilter
 
 try:  # pragma: no cover
     from google.cloud.bigtable import column_family
@@ -141,14 +141,18 @@ class BigTableCacheManager:
         row_set = BT.RowSet()
 
         filters = []
+        suffix_in = set()
         for preload_id in preload_ids:
             prefix, suffix = preload_id.split(b"_***_")
             row_set.add_row_range_from_keys(
                 start_key=prefix, end_key=prefix, end_inclusive=True
             )
-            filters.append(RowKeyRegexFilter(b"".join([b".*", suffix])))
-        if self.preload_suffix > 0:
+            if suffix not in suffix_in:
+                filters.append(RowKeyRegexFilter(b"".join([b".*", suffix])))
+        if len(filters) > 1:
             row_filter = RowFilterUnion(filters=filters)
+        elif len(filters) == 1:
+            row_filter = RowFilterChain([CellsColumnLimitFilter(1), filters[0]])
         else:
             row_filter = CellsColumnLimitFilter(1)
         return row_set, row_filter
