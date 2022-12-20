@@ -160,12 +160,11 @@ class TestBigTableCacheManager:
 
         test_manager = BigTableCacheManager(MagicMock(), {}, bigtable_mock)
         assert test_manager.bt_table == bigtable_mock
-        assert test_manager.is_complete is False
         assert test_manager._value_cache is None
         assert test_manager._mut_freq == 0
         assert test_manager._last_flush == {}
         assert test_manager._mutations == {}
-        assert test_manager._filled_partitions == set()
+        assert test_manager._finished_preloads == set()
 
     def test_iscomplete__init__(self):
         bigtable_mock = BigTableMock()
@@ -181,12 +180,11 @@ class TestBigTableCacheManager:
             MagicMock(), options, bigtable_mock
         )
         assert test_manager.bt_table == bigtable_mock
-        assert test_manager.is_complete is True
         assert isinstance(test_manager._value_cache, BigTableValueCache)
         assert test_manager._mut_freq == 0
         assert test_manager._last_flush == {}
         assert test_manager._mutations == {}
-        assert test_manager._filled_partitions == set()
+        assert test_manager._finished_preloads == set()
 
     @pytest.fixture()
     def bt_imports(self):
@@ -225,38 +223,35 @@ class TestBigTableCacheManager:
         # Scenario 1: Everything empty
         manager._fill_if_empty({key})
         assert manager.bt_table.read_rows.call_count == 1
-        assert manager._filled_partitions == {b"\x13"}
+        assert manager._finished_preloads == {b"\x13_***_"}
 
         manager._fill_if_empty({key})
         assert manager.bt_table.read_rows.call_count == 1
-        assert manager._filled_partitions == {b"\x13"}
+        assert manager._finished_preloads == {b"\x13_***_"}
 
         manager._fill_if_empty({b"\x10XXX"})
         assert manager.bt_table.read_rows.call_count == 2
-        assert manager._filled_partitions == {b"\x13", b"\x10"}
+        assert manager._finished_preloads == {b"\x13_***_", b"\x10_***_"}
         assert manager.contains(key)
 
-    def test_fill_if_empty_with_custom_partitioner(self, manager):
-        def custom_cache_partitioner(key: bytes):
-            prefix_len = 1 # bytes
-            id_len = 2 # bytes
-            key_partition_len = prefix_len + id_len
-            return key[:key_partition_len]
-        manager.custom_partitioning = custom_cache_partitioner
+    def test_fill_if_empty_with_pre_and_suffix(self, manager):
+        manager.preload_prefix = 3
+        manager.preload_suffix = 1
+
         key = b"\x13PPAAAAAAAA"
         manager.bt_table.add_test_data({key})
         # Scenario 1: Everything empty
         manager._fill_if_empty({key})
         assert manager.bt_table.read_rows.call_count == 1
-        assert manager._filled_partitions == {b"\x13PP"}
+        assert manager._finished_preloads == {b"\x13PP_***_A"}
 
         manager._fill_if_empty({key})
         assert manager.bt_table.read_rows.call_count == 1
-        assert manager._filled_partitions == {b"\x13PP"}
+        assert manager._finished_preloads == {b"\x13PP_***_A"}
 
         manager._fill_if_empty({b"\x10XXX"})
         assert manager.bt_table.read_rows.call_count == 2
-        assert manager._filled_partitions == {b"\x13PP", b"\x10XX"}
+        assert manager._finished_preloads == {b"\x13PP_***_A", b"\x10XX_***_X"}
         assert manager.contains(key)
 
     def test_fill_if_empty_with_mutation(self, manager):
@@ -331,13 +326,6 @@ class TestBigTableCacheManager:
         manager.bt_table.add_test_data({key_in})
         manager._fill_if_empty = MagicMock(wraps=manager._fill_if_empty)
 
-        manager.is_complete = True
-        assert manager.contains(key_in) is True
-        manager._fill_if_empty.assert_called_with({key_in})
-        assert manager.contains(key_not_in) is False
-        manager._fill_if_empty.assert_called_with({key_not_in})
-
-        manager.is_complete = False
         assert manager.contains(key_in) is True
         manager._fill_if_empty.assert_called_with({key_in})
         assert manager.contains(key_not_in) is False
@@ -362,13 +350,6 @@ class TestBigTableCacheManager:
         manager.bt_table.add_test_data({key_in})
         manager._fill_if_empty = MagicMock(wraps=manager._fill_if_empty)
 
-        manager.is_complete = True
-        assert manager.contains_any({key_in, key_not_in}) is True
-        manager._fill_if_empty.assert_called_with({key_in, key_not_in})
-        assert manager.contains_any({key_not_in}) is False
-        manager._fill_if_empty.assert_called_with({key_not_in})
-
-        manager.is_complete = False
         assert manager.contains_any({key_in, key_not_in}) is True
         manager._fill_if_empty.assert_called_with({key_in, key_not_in})
         assert manager.contains_any({key_not_in}) is False
