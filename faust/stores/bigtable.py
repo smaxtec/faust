@@ -15,6 +15,7 @@ from typing import (
     Tuple,
     Union,
 )
+from google.cloud.bigtable.row_filters import RowFilterUnion, RowKeyRegexFilter
 
 try:  # pragma: no cover
     from google.cloud.bigtable import column_family
@@ -109,45 +110,65 @@ class BigTableCacheManager:
     _mutations: Dict[bytes, Tuple[BT.DirectRow, Optional[bytes]]]
 
     def __init__(self, app, options: Dict, bt_table: BT.Table) -> None:
-        self.is_complete = False
         self.log = logging.getLogger(__name__)
         self.bt_table: BT.Table = bt_table
-        self.custom_partitioning = options.get(
-            BigTableStore.CUSTOM_CACHE_PARTITIONING_KEY, None
+        self.preload_prefix = options.get(
+            BigTableStore.CACHE_PRELOAD_PREFIX_LEN_KEY,
+            1,  # Default partition only
+        )
+        self.preload_suffix = options.get(
+            BigTableStore.CACHE_PRELOAD_SUFFIX_LEN_KEY, 0  # Default skip
         )
         self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
         self._init_value_cache(options)
         self._init_mutation_buffer(options)
-        self._filled_partitions: Set[bytes] = set()
+        self._finished_preloads: Set[bytes] = set()
 
     def _fill_if_empty(self, bt_keys):
         # This is a hack, that enables iterating over all results
         # without saving them in memory
         deque(self._fill_if_empty_and_yield(bt_keys), maxlen=0)
 
-    def _partition_from_key(self, bt_key):
-        if self.custom_partitioning is not None:
-            return self.custom_partitioning(bt_key)
-        return bt_key[0].to_bytes(1, "little")
+    def _preload_id_from_key(self, bt_key):
+        prefix = bt_key[: self.preload_prefix]
+        if self.preload_suffix == 0:
+            suffix = b""
+        else:
+            suffix = bt_key[-self.preload_suffix :]
+        return b"_***_".join([prefix, suffix])
+
+    def _get_preload_rowset_and_filter(self, preload_ids):
+        row_set = BT.RowSet()
+
+        filters = []
+        for preload_id in preload_ids:
+            prefix, suffix = preload_id.split(b"_***_")
+            row_set.add_row_range_from_keys(
+                start_key=prefix, end_key=prefix, end_inclusive=True
+            )
+            filters.append(RowKeyRegexFilter(b"".join([b".*", suffix])))
+        if self.preload_suffix > 0:
+            row_filter = RowFilterUnion(filters=filters)
+        else:
+            row_filter = CellsColumnLimitFilter(1)
+        return row_set, row_filter
 
     def _fill_if_empty_and_yield(self, bt_keys: Set[bytes]):
-        partitions = set()
+        preload_ids = set()
         for k in bt_keys:
-            partitions.add(self._partition_from_key(bt_key=k))
-        partitions_to_fill = partitions.difference(self._filled_partitions)
-        if len(partitions_to_fill) == 0:
+            preload_ids.add(self._preload_id_from_key(bt_key=k))
+        preload_ids_todo = preload_ids.difference(self._finished_preloads)
+        if len(preload_ids_todo) == 0:
             return
 
         start = time.time()
-        row_set = BT.RowSet()
-        for partition in partitions_to_fill:
-            row_set.add_row_range_from_keys(
-                start_key=partition, end_key=partition, end_inclusive=True
-            )
 
         if self._value_cache is not None:
+            row_set, row_filter = self._get_preload_rowset_and_filter(
+                preload_ids_todo
+            )
             for row in self.bt_table.read_rows(
-                row_set=row_set, filter_=BT.CellsColumnLimitFilter(1)
+                row_set=row_set, filter_=row_filter
             ):
                 if row.row_key in self._mutations.keys():
                     mutation_val = self._mutations[row.row_key][1]
@@ -160,9 +181,9 @@ class BigTableCacheManager:
         end = time.time()
         self.log.info(
             "BigTableStore: Finished fill for table"
-            f"{self.bt_table.name}:{partitions_to_fill} in {end-start}s"
+            f"{self.bt_table.name}:{preload_ids_todo} in {end-start}s"
         )
-        self._filled_partitions.update(partitions_to_fill)
+        self._finished_preloads.update(preload_ids_todo)
 
     def get(self, bt_key: bytes) -> Optional[bytes]:
         self._fill_if_empty({bt_key})
@@ -253,13 +274,12 @@ class BigTableCacheManager:
     ) -> Optional[Union[LRUCache, BigTableValueCache]]:
         enable = options.get(BigTableStore.VALUE_CACHE_ENABLE_KEY, False)
         if enable:
+            # TODO Maybe we need to remove invalidation time and size
             ttl = options.get(
                 BigTableStore.VALUE_CACHE_INVALIDATION_TIME_KEY, -1
             )
             size = options.get(BigTableStore.VALUE_CACHE_SIZE_KEY, None)
             self._value_cache = BigTableValueCache(ttl=ttl, size=size)
-            if ttl == -1 and size is None:
-                self.is_complete = True
         else:
             self._value_cache = None
 
@@ -296,6 +316,8 @@ class BigTableStore(base.SerializedStore):
     VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
     VALUE_CACHE_ENABLE_KEY = "value_cache_enable_key"
     CUSTOM_CACHE_PARTITIONING_KEY = "custom_cache_partitioning_key"
+    CACHE_PRELOAD_SUFFIX_LEN_KEY = "cache_preload_suffix_len_key"
+    CACHE_PRELOAD_PREFIX_LEN_KEY = "cache_preload_prefix_len_key"
 
     def __init__(
         self,
@@ -602,10 +624,8 @@ class BigTableStore(base.SerializedStore):
                     data = self.bigtable_exrtact_row_data(row)
                     # We don't want to set mutations here
                     self._cache._value_cache[row.row_key] = data
-                    cache_partition = self._cache._partition_from_key(
-                        row.row_key
-                    )
-                    self._cache._filled_partitions.add(cache_partition)
+                    preload_id = self._cache._preload_id_from_key(row.row_key)
+                    self._cache._finished_preloads.add(preload_id)
                 yield self._remove_partition_prefix(row.row_key)
 
             end = time.time()
