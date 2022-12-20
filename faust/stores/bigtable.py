@@ -215,24 +215,27 @@ class BigTableCacheManager:
         self._partition_cache[user_key] = partition
 
     def contains(self, bt_key: bytes) -> Optional[bool]:
-        self._fill_if_empty({bt_key})
         """
         If we return None here, this means, that no assumption
         about the current key can be made.
         """
-        if self._value_cache is None:
-            if bt_key not in self._mutations.keys():
-                return False
+        if bt_key in self._mutations.keys():
             return self._mutations[bt_key][1] is not None
-        return bt_key in self._value_cache.keys()
+        if self._value_cache is not None:
+            self._fill_if_empty({bt_key})
+            return bt_key in self._value_cache.keys()
+        return None
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
-        self._fill_if_empty(key_set)
         if self._value_cache is not None:
+            self._fill_if_empty(key_set)
             return not self._value_cache.keys().isdisjoint(key_set)
         else:
             mutations = key_set.intersection(self._mutations.keys())
-            return any(mut[1] is not None for mut in mutations)
+            found = any(mut[1] is not None for mut in mutations)
+            if found:
+                return True
+        return None
 
     def flush_if_timer_over(self, tp: TP) -> bool:
         now = time.time()
@@ -399,7 +402,7 @@ class BigTableStore(base.SerializedStore):
 
     def _bigtable_contains(self, key: bytes) -> bool:
         cache_contains = self._cache.contains(key)
-        if cache_contains is True:
+        if cache_contains is not None:
             return cache_contains
 
         row = self.bt_table.read_row(key, filter_=self.row_filter)
@@ -411,7 +414,7 @@ class BigTableStore(base.SerializedStore):
 
     def _bigtable_contains_any(self, keys: Set[bytes]) -> bool:
         cache_contains = self._cache.contains_any(keys)
-        if cache_contains is True:
+        if cache_contains is not None:
             return cache_contains
 
         rows = BT.RowSet()
