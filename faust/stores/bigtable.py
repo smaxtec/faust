@@ -298,7 +298,6 @@ class BigTableCacheManager:
     def _init_mutation_buffer(self, options):
         self._mut_freq = options.get(BigTableStore.BT_MUTATION_FREQ_KEY, 0)
         # To prevent that all tables write at the same time
-        random_start_offset = random.randint(0, self._mut_freq)
         self._last_flush = (
             {}
         )  # time.time() + self._mut_freq - random_start_offset
@@ -407,7 +406,7 @@ class BigTableStore(base.SerializedStore):
 
     def _bigtable_contains(self, key: bytes) -> bool:
         cache_contains = self._cache.contains(key)
-        if cache_contains is not None:
+        if cache_contains is True:
             return cache_contains
 
         row = self.bt_table.read_row(key, filter_=self.row_filter)
@@ -419,7 +418,7 @@ class BigTableStore(base.SerializedStore):
 
     def _bigtable_contains_any(self, keys: Set[bytes]) -> bool:
         cache_contains = self._cache.contains_any(keys)
-        if cache_contains is not None:
+        if cache_contains is True:
             return cache_contains
 
         rows = BT.RowSet()
@@ -638,7 +637,10 @@ class BigTableStore(base.SerializedStore):
                     self._cache._value_cache[row.row_key] = data
                     preload_id = self._cache._preload_id_from_key(row.row_key)
                     self._cache._finished_preloads.add(preload_id)
-                yield self._remove_partition_prefix(row.row_key)
+                    partition = row.row_key[0]
+                    key = self._remove_partition_prefix(row.row_key)
+                    self._cache.set_partition(key, partition)
+                    yield key
 
             end = time.time()
             self.log.info(
