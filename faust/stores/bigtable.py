@@ -1,9 +1,9 @@
 """BigTable storage."""
-from collections import deque
 import logging
 import random
 import time
 import traceback
+from collections import deque
 from typing import (
     Any,
     Callable,
@@ -112,7 +112,9 @@ class BigTableCacheManager:
         self.is_complete = False
         self.log = logging.getLogger(__name__)
         self.bt_table: BT.Table = bt_table
-        self.custom_partitioning = options.get(BigTableStore.CUSTOM_CACHE_PARTITIONING_KEY, None)
+        self.custom_partitioning = options.get(
+            BigTableStore.CUSTOM_CACHE_PARTITIONING_KEY, None
+        )
         self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
         self._init_value_cache(options)
         self._init_mutation_buffer(options)
@@ -156,7 +158,10 @@ class BigTableCacheManager:
                     self._value_cache[row.row_key] = value
                 yield row.row_key
         end = time.time()
-        self.log.info(f"Finished fill for table {self.bt_table.name}:{partitions_to_fill} in {end-start}s")
+        self.log.info(
+            "BigTableStore: Finished fill for table"
+            f"{self.bt_table.name}:{partitions_to_fill} in {end-start}s"
+        )
         self._filled_partitions.update(partitions_to_fill)
 
     def get(self, bt_key: bytes) -> Optional[bytes]:
@@ -597,7 +602,9 @@ class BigTableStore(base.SerializedStore):
                     data = self.bigtable_exrtact_row_data(row)
                     # We don't want to set mutations here
                     self._cache._value_cache[row.row_key] = data
-                    cache_partition = self._cache._partition_from_key(row.row_key)
+                    cache_partition = self._cache._partition_from_key(
+                        row.row_key
+                    )
                     self._cache._filled_partitions.add(cache_partition)
                 yield self._remove_partition_prefix(row.row_key)
 
