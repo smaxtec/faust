@@ -15,7 +15,11 @@ from typing import (
     Tuple,
     Union,
 )
-from google.cloud.bigtable.row_filters import RowFilterChain, RowFilterUnion, RowKeyRegexFilter
+from google.cloud.bigtable.row_filters import (
+    RowFilterChain,
+    RowFilterUnion,
+    RowKeyRegexFilter,
+)
 
 try:  # pragma: no cover
     from google.cloud.bigtable import column_family
@@ -152,7 +156,9 @@ class BigTableCacheManager:
         if len(filters) > 1:
             row_filter = RowFilterUnion(filters=filters)
         elif len(filters) == 1:
-            row_filter = RowFilterChain([CellsColumnLimitFilter(1), filters[0]])
+            row_filter = RowFilterChain(
+                [CellsColumnLimitFilter(1), filters[0]]
+            )
         else:
             row_filter = CellsColumnLimitFilter(1)
         return row_set, row_filter
@@ -190,12 +196,12 @@ class BigTableCacheManager:
         self._finished_preloads.update(preload_ids_todo)
 
     def get(self, bt_key: bytes) -> Optional[bytes]:
-        self._fill_if_empty({bt_key})
+        if bt_key in self._mutations.keys():
+            return self._mutations[bt_key][1]
         if self._value_cache is not None:
+            self._fill_if_empty({bt_key})
             if bt_key in self._value_cache.keys():
                 return self._value_cache[bt_key]
-        else:
-            return self._mutations.get(bt_key, (None, None))[1]
         return None
 
     def set(self, bt_key: bytes, value: Optional[bytes]) -> None:
@@ -227,14 +233,13 @@ class BigTableCacheManager:
         return None
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
+        mutations = key_set.intersection(self._mutations.keys())
+        found = any(mut[1] is not None for mut in mutations)
+        if found:
+            return True
         if self._value_cache is not None:
             self._fill_if_empty(key_set)
             return not self._value_cache.keys().isdisjoint(key_set)
-        else:
-            mutations = key_set.intersection(self._mutations.keys())
-            found = any(mut[1] is not None for mut in mutations)
-            if found:
-                return True
         return None
 
     def flush_if_timer_over(self, tp: TP) -> bool:
