@@ -1,6 +1,5 @@
 """BigTable storage."""
 import logging
-import random
 import time
 import traceback
 from collections import deque
@@ -393,7 +392,7 @@ class BigTableStore(base.SerializedStore):
         return list(row_data.to_dict().values())[0][0].value
 
     def _bigtable_get(self, key: bytes) -> Optional[bytes]:
-        if self._cache.contains(key):
+        if self._cache.contains(key) is True:
             return self._cache.get(key)
         else:
             res = self.bt_table.read_row(key, filter_=self.row_filter)
@@ -412,8 +411,6 @@ class BigTableStore(base.SerializedStore):
         row = self.bt_table.read_row(key, filter_=self.row_filter)
         if row is not None:
             return True
-        # Just to be sure
-        self._cache.delete(key)
         return False
 
     def _bigtable_contains_any(self, keys: Set[bytes]) -> bool:
