@@ -280,7 +280,7 @@ class Test_Store:
         db.get.return_value = b"value"
         store.table = Mock(name="table")
         store.table.is_global = False
-        store.table.is_global_global = False
+        store.table.synchronize_all_active_partitions = False
         store.table.use_partitioner = False
 
         assert store._get(b"key") == b"value"
@@ -313,7 +313,7 @@ class Test_Store:
 
         store.table = Mock(name="table")
         store.table.is_global = False
-        store.table.is_global_global = False
+        store.table.synchronize_all_active_partitions = False
         store.table.use_partitioner = False
 
         # A _get call from a stream, to a non-global, non-partitioner, table
@@ -322,7 +322,7 @@ class Test_Store:
         assert store._get(b"key") is None
 
         store.table.is_global = True
-        store.table.is_global_global = True
+        store.table.synchronize_all_active_partitions = True
         store.table.use_partitioner = False
 
         # A global table ignores the event partition and pulls from the proper db
@@ -614,7 +614,7 @@ class Test_Store:
 
         # Global Global Table
         table.is_global = True
-        table.is_global_global = True
+        table.synchronize_all_active_partitions = True
         assert list(store._dbs_for_actives()) == [dbs[1], dbs[2], dbs[3]]
 
     def test__size(self, *, store):
