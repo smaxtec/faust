@@ -326,7 +326,7 @@ class PartitionAssignor(AbstractPartitionAssignor, PartitionAssignorT):  # type:
                     active_partitions = set(
                         assignment.actives.get(changelog_topic_name, [])
                     )
-                    
+
                     # if we use_partitioner it could happen that we write in Worker A
                     # to a partitions which is not active in Worker A but active in
                     # Worker B. To let Worker B consume the update we have to have
