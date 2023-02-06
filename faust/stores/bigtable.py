@@ -171,6 +171,10 @@ class BigTableCacheManager:
             return
 
         start = time.time()
+        self.log.info(
+            "BigTableStore: Start fill for table"
+            f"{self.bt_table.name}:{preload_ids_todo}"
+        )
 
         if self._value_cache is not None:
             row_set, row_filter = self._get_preload_rowset_and_filter(
