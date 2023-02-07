@@ -748,10 +748,9 @@ class BigTableStore(base.SerializedStore):
         except Exception as e:
             self.log.error(
                 f"Failed to commit offset for {self.table.name}"
-                " -> will crash faust app! "
+                " -> will cause additional changelogs if restart happens"
                 f"TRACEBACK: {traceback.format_exc()}"
             )
-            self.app._crash(e)
 
     def _persist_changelog_batch(self, row_mutations, tp_offsets):
         response = self.bt_table.mutate_rows(row_mutations)
