@@ -615,6 +615,9 @@ class BigTableStore(base.SerializedStore):
             start = time.time()
             partitions = self._active_partitions()
 
+            self.log.info(
+                f"Start iterkeys for {self.table_name}"
+            )
             row_set = BT.RowSet()
             for partition in partitions:
                 prefix_start = self._get_partition_prefix(partition)
