@@ -350,6 +350,7 @@ class Store(base.SerializedStore):
         """
         self.rebalance_ack = False
         async with self.db_lock:
+            self.logger.error("AAAAH, we do some rebalancing")
             self.revoke_partitions(self.table, revoked)
             await self.assign_partitions(self.table, newly_assigned, generation_id)
 
