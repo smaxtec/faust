@@ -329,7 +329,7 @@ class BigTableStore(base.SerializedStore):
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
         super().__init__(url, app, table, **kwargs)
-        self.db_lock = asyncio.Lock()
+        self._db_lock = asyncio.Lock()
         self.rebalance_ack = False
 
     def _set_options(self, options) -> None:
