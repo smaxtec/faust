@@ -1,19 +1,12 @@
 """BigTable storage."""
+import asyncio
+import gc
 import logging
 import time
 import traceback
 from collections import deque
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Iterable,
-    Iterator,
-    Optional,
-    Set,
-    Tuple,
-    Union,
-)
+from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple, Union
+
 from google.cloud.bigtable.row_filters import (
     RowFilterChain,
     RowFilterUnion,
@@ -98,9 +91,7 @@ class BigTableValueCache:
             now = int(time.time())
             if now > self.init_ts + self.ttl:
                 self.data = {}
-                self.log.info(
-                    "BigTableStore: Cleard startupcache because TTL is over"
-                )
+                self.log.info("BigTableStore: Cleard startupcache because TTL is over")
                 self.ttl_over = True
 
     def keys(self):
@@ -155,9 +146,7 @@ class BigTableCacheManager:
         if len(filters) > 1:
             row_filter = RowFilterUnion(filters=filters)
         elif len(filters) == 1:
-            row_filter = RowFilterChain(
-                [CellsColumnLimitFilter(1), filters[0]]
-            )
+            row_filter = RowFilterChain([CellsColumnLimitFilter(1), filters[0]])
         else:
             row_filter = CellsColumnLimitFilter(1)
         return row_set, row_filter
@@ -177,12 +166,8 @@ class BigTableCacheManager:
         )
 
         if self._value_cache is not None:
-            row_set, row_filter = self._get_preload_rowset_and_filter(
-                preload_ids_todo
-            )
-            for row in self.bt_table.read_rows(
-                row_set=row_set, filter_=row_filter
-            ):
+            row_set, row_filter = self._get_preload_rowset_and_filter(preload_ids_todo)
+            for row in self.bt_table.read_rows(row_set=row_set, filter_=row_filter):
                 if row.row_key in self._mutations.keys():
                     mutation_val = self._mutations[row.row_key][1]
                     if mutation_val is not None:
@@ -290,9 +275,7 @@ class BigTableCacheManager:
         enable = options.get(BigTableStore.VALUE_CACHE_ENABLE_KEY, False)
         if enable:
             # TODO Maybe we need to remove invalidation time and size
-            ttl = options.get(
-                BigTableStore.VALUE_CACHE_INVALIDATION_TIME_KEY, -1
-            )
+            ttl = options.get(BigTableStore.VALUE_CACHE_INVALIDATION_TIME_KEY, -1)
             size = options.get(BigTableStore.VALUE_CACHE_SIZE_KEY, None)
             self._value_cache = BigTableValueCache(ttl=ttl, size=size)
         else:
@@ -301,12 +284,8 @@ class BigTableCacheManager:
     def _init_mutation_buffer(self, options):
         self._mut_freq = options.get(BigTableStore.BT_MUTATION_FREQ_KEY, 0)
         # To prevent that all tables write at the same time
-        self._last_flush = (
-            {}
-        )  # time.time() + self._mut_freq - random_start_offset
-        self._max_mutations = options.get(
-            BigTableStore.BT_MAX_MUTATIONS, 10000
-        )
+        self._last_flush = {}  # time.time() + self._mut_freq - random_start_offset
+        self._max_mutations = options.get(BigTableStore.BT_MAX_MUTATIONS, 10000)
         self._mutations = {}
 
 
@@ -318,6 +297,7 @@ class BigTableStore(base.SerializedStore):
     bt_table: BT.Table
     _cache: BigTableCacheManager
     partition_prefix = b"__"
+    _db_lock: asyncio.Lock
 
     BT_COLUMN_NAME_KEY = "bt_column_name_key"
     BT_INSTANCE_KEY = "bt_instance_key"
@@ -349,14 +329,14 @@ class BigTableStore(base.SerializedStore):
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
         super().__init__(url, app, table, **kwargs)
+        self.db_lock = asyncio.Lock()
+        self.rebalance_ack = False
 
     def _set_options(self, options) -> None:
         self.table_name_generator = options.get(
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
         )
-        self.column_name = options.get(
-            BigTableStore.BT_COLUMN_NAME_KEY, "DATA"
-        )
+        self.column_name = options.get(BigTableStore.BT_COLUMN_NAME_KEY, "DATA")
         self.row_filter = BT.CellsColumnLimitFilter(1)
         self.offset_key_prefix = options.get(
             BigTableStore.BT_OFFSET_KEY_PREFIX, "offset_partitiion:"
@@ -380,9 +360,7 @@ class BigTableStore(base.SerializedStore):
             )
             self.bt_table.create(
                 column_families={
-                    self.column_family_id: BT.column_family.MaxVersionsGCRule(
-                        1
-                    )
+                    self.column_family_id: BT.column_family.MaxVersionsGCRule(1)
                 }
             )
         else:
@@ -456,9 +434,7 @@ class BigTableStore(base.SerializedStore):
         # Not found
         return None, None
 
-    def _bigtable_set(
-        self, key: bytes, value: Optional[bytes], persist_offset=False
-    ):
+    def _bigtable_set(self, key: bytes, value: Optional[bytes], persist_offset=False):
         if not persist_offset:
             # All mutatations set here will be flushed to BT later
             self._cache.set(key, value)
@@ -493,9 +469,7 @@ class BigTableStore(base.SerializedStore):
         return b"".join([partition_bytes, self.partition_prefix])
 
     def _remove_partition_prefix(self, key: bytes) -> bytes:
-        slice_from = key.find(self.partition_prefix) + len(
-            self.partition_prefix
-        )
+        slice_from = key.find(self.partition_prefix) + len(self.partition_prefix)
         return key[slice_from:]
 
     def _get_key_with_partition(self, key: bytes, partition: int) -> bytes:
@@ -536,9 +510,7 @@ class BigTableStore(base.SerializedStore):
                     return value
             return None
         except KeyError as ke:
-            self.log.error(
-                f"KeyError in get for table {self.table_name} for {key=}"
-            )
+            self.log.error(f"KeyError in get for table {self.table_name} for {key=}")
             raise ke
         except Exception as ex:
             self.log.error(
@@ -549,9 +521,7 @@ class BigTableStore(base.SerializedStore):
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
             partition = get_current_partition()
-            key_with_partition = self._get_key_with_partition(
-                key, partition=partition
-            )
+            key_with_partition = self._get_key_with_partition(key, partition=partition)
             self._bigtable_set(key_with_partition, value)
             self._cache.set_partition(key, partition)
         except Exception as ex:
@@ -615,9 +585,7 @@ class BigTableStore(base.SerializedStore):
             start = time.time()
             partitions = self._active_partitions()
 
-            self.log.info(
-                f"Start iterkeys for {self.table_name}"
-            )
+            self.log.info(f"Start iterkeys for {self.table_name}")
             row_set = BT.RowSet()
             for partition in partitions:
                 prefix_start = self._get_partition_prefix(partition)
@@ -647,9 +615,7 @@ class BigTableStore(base.SerializedStore):
                     yield key
 
             end = time.time()
-            self.log.info(
-                f"Finished iterkeys for {self.table_name} in {end - start}s"
-            )
+            self.log.info(f"Finished iterkeys for {self.table_name} in {end - start}s")
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _iterkeys "
@@ -731,9 +697,7 @@ class BigTableStore(base.SerializedStore):
             return offset
         return None
 
-    def set_persisted_offset(
-        self, tp: TP, offset: int, recovery=False
-    ) -> None:
+    def set_persisted_offset(self, tp: TP, offset: int, recovery=False) -> None:
         """Set the last persisted offset for this table.
 
         This will remember the last offset that we wrote to BigTableStore,
@@ -787,9 +751,7 @@ class BigTableStore(base.SerializedStore):
                 offset if tp not in tp_offsets else max(offset, tp_offsets[tp])
             )
             msg = event.message
-            offset_key = self._get_key_with_partition(
-                msg.key, partition=tp.partition
-            )
+            offset_key = self._get_key_with_partition(msg.key, partition=tp.partition)
             row = self.bt_table.direct_row(offset_key)
             if msg.value is None:
                 row.delete()
@@ -828,3 +790,61 @@ class BigTableStore(base.SerializedStore):
 
         """
         raise NotImplementedError("Not yet implemented for Bigtable.")
+
+    
+    def revoke_partitions(self, table: CollectionT, tps: Set[TP]) -> None:
+        """De-assign partitions used on this worker instance.
+
+        Arguments:
+            table: The table that we store data for.
+            tps: Set of topic partitions that we should no longer
+                be serving data for.
+        """
+        for tp in tps:
+            if tp.topic in table.changelog_topic.topics:
+                db = self._dbs.pop(tp.partition, None)
+                if db is not None:
+                    self.logger.info(f"closing db {tp.topic} partition {tp.partition}")
+                    # db.close()
+        gc.collect()
+
+    async def assign_partitions(
+        self, table: CollectionT, tps: Set[TP], generation_id: int = 0
+    ) -> None:
+        """Assign partitions to this worker instance.
+
+        Arguments:
+            table: The table that we store data for.
+            tps: Set of topic partitions we have been assigned.
+        """
+        self.rebalance_ack = True
+        standby_tps = self.app.assignor.assigned_standbys()
+        my_topics = table.changelog_topic.topics
+        for tp in tps:
+            if tp.topic in my_topics and tp not in standby_tps and self.rebalance_ack:
+                await self._try_open_db_for_partition(
+                    tp.partition, generation_id=generation_id
+                )
+                await asyncio.sleep(0)
+
+    async def on_rebalance(
+        self,
+        assigned: Set[TP],
+        revoked: Set[TP],
+        newly_assigned: Set[TP],
+        generation_id: int = 0,
+    ) -> None:
+        """Rebalance occurred.
+
+        Arguments:
+            assigned: Set of all assigned topic partitions.
+            revoked: Set of newly revoked topic partitions.
+            newly_assigned: Set of newly assigned topic partitions,
+                for which we were not assigned the last time.
+            generation_id: the metadata generation identifier for the re-balance
+        """
+        self.rebalance_ack = False
+        async with self._db_lock:
+            self.logger.info(f"Rebalancing {revoked=}, {newly_assigned=}")
+            self.revoke_partitions(self.table, revoked)
+            await self.assign_partitions(self.table, newly_assigned, generation_id)
