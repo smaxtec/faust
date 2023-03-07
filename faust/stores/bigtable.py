@@ -269,6 +269,15 @@ class BigTableCacheManager:
             )
         self._mutations[bt_key] = row, value
 
+    def delete_partition(self, partition: int):
+        if self._value_cache is not None:
+            keys = set(self._value_cache.keys())
+            for k in keys:
+                if k[0] == partition:
+                    del self._value_cache[k]
+                    self._mutations.pop(k, None)
+                    self._partition_cache.pop(k[1:], None)
+
     def _init_value_cache(
         self, options
     ) -> Optional[Union[LRUCache, BigTableValueCache]]:
@@ -333,6 +342,7 @@ class BigTableStore(base.SerializedStore):
         self.rebalance_ack = False
 
     def _set_options(self, options) -> None:
+        self._all_options = options
         self.table_name_generator = options.get(
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
         )
@@ -791,8 +801,7 @@ class BigTableStore(base.SerializedStore):
         """
         raise NotImplementedError("Not yet implemented for Bigtable.")
 
-    
-    def revoke_partitions(self, table: CollectionT, tps: Set[TP]) -> None:
+    def revoke_partitions(self, tps: Set[TP]) -> None:
         """De-assign partitions used on this worker instance.
 
         Arguments:
@@ -801,31 +810,9 @@ class BigTableStore(base.SerializedStore):
                 be serving data for.
         """
         for tp in tps:
-            if tp.topic in table.changelog_topic.topics:
-                db = self._dbs.pop(tp.partition, None)
-                if db is not None:
-                    self.logger.info(f"closing db {tp.topic} partition {tp.partition}")
-                    # db.close()
+            self._cache.delete_partition(tp.partition)
         gc.collect()
 
-    async def assign_partitions(
-        self, table: CollectionT, tps: Set[TP], generation_id: int = 0
-    ) -> None:
-        """Assign partitions to this worker instance.
-
-        Arguments:
-            table: The table that we store data for.
-            tps: Set of topic partitions we have been assigned.
-        """
-        self.rebalance_ack = True
-        standby_tps = self.app.assignor.assigned_standbys()
-        my_topics = table.changelog_topic.topics
-        for tp in tps:
-            if tp.topic in my_topics and tp not in standby_tps and self.rebalance_ack:
-                await self._try_open_db_for_partition(
-                    tp.partition, generation_id=generation_id
-                )
-                await asyncio.sleep(0)
 
     async def on_rebalance(
         self,
@@ -845,6 +832,19 @@ class BigTableStore(base.SerializedStore):
         """
         self.rebalance_ack = False
         async with self._db_lock:
-            self.logger.info(f"Rebalancing {revoked=}, {newly_assigned=}")
-            self.revoke_partitions(self.table, revoked)
+            self.logger.info(
+                f"BigTableStore: Rebalancing {revoked=}, {newly_assigned=}"
+            )
+            self.revoke_partitions(revoked)
             await self.assign_partitions(self.table, newly_assigned, generation_id)
+
+    async def assign_partitions(
+        self, table: CollectionT, tps: Set[TP], generation_id: int = 0
+    ) -> None:
+        """Assign partitions to this worker instance.
+
+        Arguments:
+            table: The table that we store data for.
+            tps: Set of topic partitions we have been assigned.
+        """
+        self.rebalance_ack = True
