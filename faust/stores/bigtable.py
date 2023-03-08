@@ -830,21 +830,8 @@ class BigTableStore(base.SerializedStore):
                 for which we were not assigned the last time.
             generation_id: the metadata generation identifier for the re-balance
         """
-        self.rebalance_ack = False
         async with self._db_lock:
             self.logger.info(
                 f"BigTableStore: Rebalancing {revoked=}, {newly_assigned=}"
             )
             self.revoke_partitions(revoked)
-            await self.assign_partitions(self.table, newly_assigned, generation_id)
-
-    async def assign_partitions(
-        self, table: CollectionT, tps: Set[TP], generation_id: int = 0
-    ) -> None:
-        """Assign partitions to this worker instance.
-
-        Arguments:
-            table: The table that we store data for.
-            tps: Set of topic partitions we have been assigned.
-        """
-        self.rebalance_ack = True
