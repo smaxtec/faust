@@ -1082,7 +1082,6 @@ class TestBigTableStore:
         tp_offsets = store._persist_changelog_batch.call_args_list[0].args[1]
         assert tp_offsets == {tp: 3, tp2: 4}
 
-
     def test_revoke_partitions(self, store):
         store._cache.delete_partition = MagicMock()
         TP1 = MagicMock()
