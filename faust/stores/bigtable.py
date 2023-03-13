@@ -91,7 +91,6 @@ class BigTableValueCache:
             now = int(time.time())
             if now > self.init_ts + self.ttl:
                 self.data = {}
-                self.log.info("BigTableStore: Cleard startupcache because TTL is over")
                 self.ttl_over = True
 
     def keys(self):
@@ -160,11 +159,6 @@ class BigTableCacheManager:
             return
 
         start = time.time()
-        self.log.info(
-            "BigTableStore: Start fill for table"
-            f"{self.bt_table.name}:{preload_ids_todo}"
-        )
-
         if self._value_cache is not None:
             row_set, row_filter = self._get_preload_rowset_and_filter(preload_ids_todo)
             for row in self.bt_table.read_rows(row_set=row_set, filter_=row_filter):
@@ -315,10 +309,10 @@ class BigTableStore(base.SerializedStore):
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
     BT_MUTATION_FREQ_KEY = "bt_mutation_freq_key"
     BT_MAX_MUTATIONS = "bt_max_mutations"
+    BT_CUSTOM_KEY_TRANSLATOR_KEY = "bt_custom_key_translator"
     VALUE_CACHE_INVALIDATION_TIME_KEY = "value_cache_invalidation_time_key"
     VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
     VALUE_CACHE_ENABLE_KEY = "value_cache_enable_key"
-    CUSTOM_CACHE_PARTITIONING_KEY = "custom_cache_partitioning_key"
     CACHE_PRELOAD_SUFFIX_LEN_KEY = "cache_preload_suffix_len_key"
     CACHE_PRELOAD_PREFIX_LEN_KEY = "cache_preload_prefix_len_key"
 
@@ -341,7 +335,16 @@ class BigTableStore(base.SerializedStore):
         self._db_lock = asyncio.Lock()
         self.rebalance_ack = False
 
+    def default_translator(self, user_key):
+        return user_key
+
     def _set_options(self, options) -> None:
+        self._transform_key_to_bt = options.get(
+            BigTableStore.BT_CUSTOM_KEY_TRANSLATOR_KEY[0], self.default_translator
+        )
+        self._transform_key_from_bt = options.get(
+            BigTableStore.BT_CUSTOM_KEY_TRANSLATOR_KEY[1], self.default_translator
+        )
         self._all_options = options
         self.table_name_generator = options.get(
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
@@ -480,9 +483,11 @@ class BigTableStore(base.SerializedStore):
 
     def _remove_partition_prefix(self, key: bytes) -> bytes:
         slice_from = key.find(self.partition_prefix) + len(self.partition_prefix)
-        return key[slice_from:]
+        key = key[slice_from:]
+        return self._transform_key_from_bt(key)
 
     def _get_key_with_partition(self, key: bytes, partition: int) -> bytes:
+        key = self._transform_key_to_bt(key)
         prefix = self._get_partition_prefix(partition)
         key = b"".join([prefix, key])
         return key
