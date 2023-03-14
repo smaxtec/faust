@@ -137,15 +137,19 @@ class BigTableCacheManager:
         start = time.time()
         if self._value_cache is not None:
             row_set, row_filter = self._get_preload_rowset_and_filter(preload_ids_todo)
-            for row in self.bt_table.read_rows(row_set=row_set, filter_=row_filter):
-                if row.row_key in self._mutations.keys():
-                    mutation_val = self._mutations[row.row_key][1]
-                    if mutation_val is not None:
-                        self._value_cache[row.row_key] = mutation_val
-                else:
-                    value = BigTableStore.bigtable_exrtact_row_data(row)
-                    self._value_cache[row.row_key] = value
-                yield row.row_key
+            try:
+                for row in self.bt_table.read_rows(row_set=row_set, filter_=row_filter):
+                    if row.row_key in self._mutations.keys():
+                        mutation_val = self._mutations[row.row_key][1]
+                        if mutation_val is not None:
+                            self._value_cache[row.row_key] = mutation_val
+                    else:
+                        value = BigTableStore.bigtable_exrtact_row_data(row)
+                        self._value_cache[row.row_key] = value
+                    yield row.row_key
+            except Exception as e:
+                self.log.info(f"BigTableStore fill failed for {preload_ids_todo=}")
+                raise e
         end = time.time()
         self.log.info(
             "BigTableStore: Finished fill for table"
