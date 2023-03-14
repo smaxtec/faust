@@ -7,12 +7,6 @@ import traceback
 from collections import deque
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple, Union
 
-from google.cloud.bigtable.row_filters import (
-    RowFilterChain,
-    RowFilterUnion,
-    RowKeyRegexFilter,
-)
-
 try:  # pragma: no cover
     from google.cloud.bigtable import column_family
     from google.cloud.bigtable.client import Client
@@ -105,12 +99,9 @@ class BigTableCacheManager:
     def __init__(self, app, options: Dict, bt_table: BT.Table) -> None:
         self.log = logging.getLogger(__name__)
         self.bt_table: BT.Table = bt_table
-        self.preload_prefix = options.get(
-            BigTableStore.CACHE_PRELOAD_PREFIX_LEN_KEY,
-            1,  # Default partition only
-        )
-        self.preload_suffix = options.get(
-            BigTableStore.CACHE_PRELOAD_SUFFIX_LEN_KEY, 0  # Default skip
+        self.get_preload_prefix_len = options.get(
+            BigTableStore.CACHE_PRELOAD_PREFIX_LEN_FUN_KEY,
+            lambda _: 1,  # Default partition only
         )
         self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
         self._init_value_cache(options)
@@ -123,31 +114,16 @@ class BigTableCacheManager:
         deque(self._fill_if_empty_and_yield(bt_keys), maxlen=0)
 
     def _preload_id_from_key(self, bt_key):
-        prefix = bt_key[: self.preload_prefix]
-        if self.preload_suffix == 0:
-            suffix = b""
-        else:
-            suffix = bt_key[-self.preload_suffix :]
-        return b"_***_".join([prefix, suffix])
+        prefix = bt_key[: self.get_preload_prefix_len(bt_key)]
+        return prefix
 
     def _get_preload_rowset_and_filter(self, preload_ids):
         row_set = BT.RowSet()
-
-        filters = []
-        suffix_in = set()
+        row_filter = CellsColumnLimitFilter(1)
         for preload_id in preload_ids:
-            prefix, suffix = preload_id.split(b"_***_")
             row_set.add_row_range_from_keys(
-                start_key=prefix, end_key=prefix, end_inclusive=True
+                start_key=preload_id, end_key=preload_id, end_inclusive=True
             )
-            if suffix not in suffix_in:
-                filters.append(RowKeyRegexFilter(b"".join([b".*", suffix])))
-        if len(filters) > 1:
-            row_filter = RowFilterUnion(filters=filters)
-        elif len(filters) == 1:
-            row_filter = RowFilterChain([CellsColumnLimitFilter(1), filters[0]])
-        else:
-            row_filter = CellsColumnLimitFilter(1)
         return row_set, row_filter
 
     def _fill_if_empty_and_yield(self, bt_keys: Set[bytes]):
@@ -312,8 +288,7 @@ class BigTableStore(base.SerializedStore):
     VALUE_CACHE_INVALIDATION_TIME_KEY = "value_cache_invalidation_time_key"
     VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
     VALUE_CACHE_ENABLE_KEY = "value_cache_enable_key"
-    CACHE_PRELOAD_SUFFIX_LEN_KEY = "cache_preload_suffix_len_key"
-    CACHE_PRELOAD_PREFIX_LEN_KEY = "cache_preload_prefix_len_key"
+    CACHE_PRELOAD_PREFIX_LEN_FUN_KEY = "cache_preload_prefix_len_fun_key"
 
     def __init__(
         self,
