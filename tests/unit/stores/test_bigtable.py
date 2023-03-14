@@ -213,35 +213,34 @@ class TestBigTableCacheManager:
         # Scenario 1: Everything empty
         manager._fill_if_empty({key})
         assert manager.bt_table.read_rows.call_count == 1
-        assert manager._finished_preloads == {b"\x13_***_"}
+        assert manager._finished_preloads == {b"\x13"}
 
         manager._fill_if_empty({key})
         assert manager.bt_table.read_rows.call_count == 1
-        assert manager._finished_preloads == {b"\x13_***_"}
+        assert manager._finished_preloads == {b"\x13"}
 
         manager._fill_if_empty({b"\x10XXX"})
         assert manager.bt_table.read_rows.call_count == 2
-        assert manager._finished_preloads == {b"\x13_***_", b"\x10_***_"}
+        assert manager._finished_preloads == {b"\x13", b"\x10"}
         assert manager.contains(key)
 
     def test_fill_if_empty_with_pre_and_suffix(self, manager):
-        manager.preload_prefix = 3
-        manager.preload_suffix = 1
+        manager.get_preload_prefix_len = lambda _: 3
 
         key = b"\x13PPAAAAAAAA"
         manager.bt_table.add_test_data({key})
         # Scenario 1: Everything empty
         manager._fill_if_empty({key})
         assert manager.bt_table.read_rows.call_count == 1
-        assert manager._finished_preloads == {b"\x13PP_***_A"}
+        assert manager._finished_preloads == {b"\x13PP"}
 
         manager._fill_if_empty({key})
         assert manager.bt_table.read_rows.call_count == 1
-        assert manager._finished_preloads == {b"\x13PP_***_A"}
+        assert manager._finished_preloads == {b"\x13PP"}
 
         manager._fill_if_empty({b"\x10XXX"})
         assert manager.bt_table.read_rows.call_count == 2
-        assert manager._finished_preloads == {b"\x13PP_***_A", b"\x10XX_***_X"}
+        assert manager._finished_preloads == {b"\x13PP", b"\x10XX"}
         assert manager.contains(key)
 
     def test_fill_if_empty_with_mutation(self, manager):
@@ -752,16 +751,13 @@ class TestBigTableStore:
         partition = 0
         res = store._get_partition_prefix(partition)
         assert res[0] == partition
-        assert res[1:] == store.partition_prefix
 
         partition = 19
         res = store._get_partition_prefix(partition)
         assert res[0] == partition
-        assert res[1:] == store.partition_prefix
 
     def test_remove_partition_prefix(self, store):
-        store.partition_prefix = b"abc"
-        key_with_partition = b"abcTHEACTUALKEY"
+        key_with_partition = b"\x13THEACTUALKEY"
         res = store._remove_partition_prefix(key_with_partition)
         assert res == b"THEACTUALKEY"
 
