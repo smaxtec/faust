@@ -1108,9 +1108,12 @@ class TestBigTableStore:
 
     def test_fill_with_custom_key_prefix(self, store):
         def to_bt_key(key):
-            prefix_end = 5
-            p1_end = prefix_end + 1 + key[prefix_end] // 2
-            key_prefix = key[p1_end+2:]
+            len_total = len(key)
+            len_prefix = 4
+            len_num_bytes_len = key[len_prefix] // 2
+            len_first_id = key[len_prefix + len_num_bytes_len] // 2
+            len_second_id = key[len_prefix + 1 + len_num_bytes_len + len_first_id + 1] // 2
+            key_prefix = key[len_total - len_second_id:]
             return key_prefix + key
 
         def from_bt_key(key):
@@ -1120,18 +1123,20 @@ class TestBigTableStore:
             return len(key[:key.find(b'\x00\x00\x00')])
 
         k = (
-                b'\x00\x00\x00\x00\x020624ea584630eccac35c92d57'
-                b'\x000624ea584630eccac35c92d57'
+            b'\x00\x00\x00\x00\x020624ea584630eccac35c92d57'
+            b'\x000624ea584630eccac35c92d57'
         )
         store._cache.get_preload_prefix_len = get_preload_prefix_len
         store._transform_key_from_bt = from_bt_key
         store._transform_key_to_bt = to_bt_key
 
-        partition = 19
+        partition = 0
         res = store._get_key_with_partition(k, partition)
-        import pdb; pdb.set_trace()
-        preload_id = b'\x13624ea584630eccac35c92d57'
+        preload_id = b'\x00624ea584630eccac35c92d57'
         assert store._cache._preload_id_from_key(res) == preload_id
         assert res == preload_id + k
+        assert k == store._transform_key_from_bt(
+            store._transform_key_to_bt(k)
+        )
 
 
