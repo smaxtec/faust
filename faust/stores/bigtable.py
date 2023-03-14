@@ -136,7 +136,6 @@ class BigTableCacheManager:
 
         start = time.time()
         if self._value_cache is not None:
-            import pdb; pdb.set_trace()
             try:
                 row_set, row_filter = self._get_preload_rowset_and_filter(preload_ids_todo)
                 for row in self.bt_table.read_rows(row_set=row_set, filter_=row_filter):
