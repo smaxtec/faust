@@ -149,7 +149,7 @@ class BigTableCacheManager:
                         self._value_cache[row.row_key] = value
                     yield row.row_key
             except Exception as e:
-                self.log.info(f"BigTableStore fill failed for {preload_ids_todo=}")
+                self.log.info(f"BigTableStore fill failed for {preload_ids_todo=}, {bt_keys=}")
                 raise e
         end = time.time()
         self.log.info(
