@@ -224,6 +224,23 @@ class TestBigTableCacheManager:
         assert manager._finished_preloads == {b"\x13", b"\x10"}
         assert manager.contains(key)
 
+    def test_fill_if_empty(self, manager):
+        key = b"\x13AAA"
+        manager.bt_table.add_test_data({key})
+        # Scenario 1: Everything empty
+        manager._fill_if_empty({key})
+        assert manager.bt_table.read_rows.call_count == 1
+        assert manager._finished_preloads == {b"\x13"}
+
+        manager._fill_if_empty({key})
+        assert manager.bt_table.read_rows.call_count == 1
+        assert manager._finished_preloads == {b"\x13"}
+
+        manager._fill_if_empty({b"\x10XXX"})
+        assert manager.bt_table.read_rows.call_count == 2
+        assert manager._finished_preloads == {b"\x13", b"\x10"}
+        assert manager.contains(key)
+
     def test_fill_if_empty_with_pre_and_suffix(self, manager):
         manager.get_preload_prefix_len = lambda _: 3
 
@@ -1088,3 +1105,33 @@ class TestBigTableStore:
         store.revoke_partitions({TP1, TP2})
         store._cache.delete_partition.assert_any_call(1)
         store._cache.delete_partition.assert_any_call(2)
+
+    def test_fill_with_custom_key_prefix(self, store):
+        def to_bt_key(key):
+            prefix_end = 5
+            p1_end = prefix_end + 1 + key[prefix_end] // 2
+            key_prefix = key[p1_end+2:]
+            return key_prefix + key
+
+        def from_bt_key(key):
+            return key[key.find(b'\x00\x00\x00'):]
+
+        def get_preload_prefix_len(key) -> int:
+            return len(key[:key.find(b'\x00\x00\x00')])
+
+        k = (
+                b'\x00\x00\x00\x00\x020624ea584630eccac35c92d57'
+                b'\x000624ea584630eccac35c92d57'
+        )
+        store._cache.get_preload_prefix_len = get_preload_prefix_len
+        store._transform_key_from_bt = from_bt_key
+        store._transform_key_to_bt = to_bt_key
+
+        partition = 19
+        res = store._get_key_with_partition(k, partition)
+        import pdb; pdb.set_trace()
+        preload_id = b'\x13624ea584630eccac35c92d57'
+        assert store._cache._preload_id_from_key(res) == preload_id
+        assert res == preload_id + k
+
+
