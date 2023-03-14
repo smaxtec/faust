@@ -299,7 +299,6 @@ class BigTableStore(base.SerializedStore):
     instance: BT.Instance
     bt_table: BT.Table
     _cache: BigTableCacheManager
-    partition_prefix = b"__"
     _db_lock: asyncio.Lock
 
     BT_COLUMN_NAME_KEY = "bt_column_name_key"
@@ -335,7 +334,8 @@ class BigTableStore(base.SerializedStore):
         self._db_lock = asyncio.Lock()
         self.rebalance_ack = False
 
-    def default_translator(self, user_key):
+    @staticmethod
+    def default_translator(user_key):
         return user_key
 
     def _set_options(self, options) -> None:
@@ -479,11 +479,10 @@ class BigTableStore(base.SerializedStore):
 
     def _get_partition_prefix(self, partition: int) -> bytes:
         partition_bytes = partition.to_bytes(1, "little")
-        return b"".join([partition_bytes, self.partition_prefix])
+        return b"".join([partition_bytes])
 
     def _remove_partition_prefix(self, key: bytes) -> bytes:
-        slice_from = key.find(self.partition_prefix) + len(self.partition_prefix)
-        key = key[slice_from:]
+        key = key[1:]
         return self._transform_key_from_bt(key)
 
     def _get_key_with_partition(self, key: bytes, partition: int) -> bytes:
