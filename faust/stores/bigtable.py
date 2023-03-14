@@ -311,18 +311,15 @@ class BigTableStore(base.SerializedStore):
             raise ex
         super().__init__(url, app, table, **kwargs)
         self._db_lock = asyncio.Lock()
-        self.rebalance_ack = False
 
     @staticmethod
     def default_translator(user_key):
         return user_key
 
     def _set_options(self, options) -> None:
-        self._transform_key_to_bt = options.get(
-            BigTableStore.BT_CUSTOM_KEY_TRANSLATOR_KEY[0], self.default_translator
-        )
-        self._transform_key_from_bt = options.get(
-            BigTableStore.BT_CUSTOM_KEY_TRANSLATOR_KEY[1], self.default_translator
+        self._transform_key_to_bt, self._transform_key_from_bt = options.get(
+            BigTableStore.BT_CUSTOM_KEY_TRANSLATOR_KEY,
+            (self.default_translator, self.default_translator)
         )
         self._all_options = options
         self.table_name_generator = options.get(
