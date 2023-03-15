@@ -14,24 +14,27 @@ from faust.types.tuples import TP
 
 
 def to_bt_key(key):
-    key = from_bt_key(key)  # Just a safety meassure
     len_total = len(key)
-    len_prefix = 4
-    len_num_bytes_len = key[len_prefix] // 2
-    len_first_id = key[len_prefix + len_num_bytes_len] // 2
-    len_second_id = key[
-        len_prefix + 1 + len_num_bytes_len + len_first_id + 1
-    ] // 2
+    len_prefix = 5
+    len_first_id = key[len_prefix] // 2
+    if len_prefix + 1 + len_first_id + 1 >= len_total:
+        # This happens if there is e.g. no organisation id
+        return key
+    len_second_id = key[len_prefix + 1 + + len_first_id + 1] // 2
     key_prefix = key[len_total - len_second_id:]
     return key_prefix + key
 
-
 def from_bt_key(key):
-    return key[key.find(bytes(4)):]
-
+    magic_byte_pos = key.find(bytes(4))
+    if magic_byte_pos == 0: 
+        return key
+    return key[magic_byte_pos:]
 
 def get_preload_prefix_len(key) -> int:
-    return len(key[:key.find(bytes(4))])
+    preload_len = key.find(bytes(4))
+    if preload_len == 0:
+        return len(key)
+    return preload_len
 
 
 class MyTestResponse:
@@ -516,8 +519,13 @@ class TestBigTableStore:
     TEST_KEY2 = b"TEST_KEY2"
     TEST_KEY3 = b"TEST_KEY3"
     TEST_KEY4 = (
-        b'\x00\x00\x00\x00\x020624ea584630eccac35c92d57'
-        b'\x000624ea584630eccac35c92d57'
+        b'\x00\x00\x00\x00\x01\x0eNoGroup\x00063d76e3ebd7e634de234c67d'
+    )
+    TEST_KEY5 = (
+        b'\x00\x00\x00\x00\x02062a99788df917508d1891ed2\x00062a99788df917508d1891ed2'
+    )
+    TEST_KEY6 = (
+        b'\x00\x00\x00\x00\x02062a99788df917508d1891ed2\x02'
     )
 
     @pytest.fixture()
@@ -1152,21 +1160,28 @@ class TestBigTableStore:
         store._cache.delete_partition.assert_any_call(2)
 
     def test__fill_with_custom_key_prefix(self, store):
-        k = (
-            b'\x00\x00\x00\x00\x020624ea584630eccac35c92d57'
-            b'\x000624ea584630eccac35c92d57'
-        )
         store._cache.get_preload_prefix_len = get_preload_prefix_len
         store._transform_key_from_bt = from_bt_key
         store._transform_key_to_bt = to_bt_key
 
         partition = 0
-        res = store._get_bigtable_key(k, partition)
-        preload_id = b'\x00624ea584630eccac35c92d57'
-        assert store._cache._preload_id_from_key(res) == preload_id
-        assert res == preload_id + k
-        assert k == store._transform_key_from_bt(
-            store._transform_key_to_bt(k)
+        for k in [self.TEST_KEY4, self.TEST_KEY5]:
+            res = store._get_bigtable_key(k, partition)
+            expected_preload_id = b'\x00' + k[-24:]
+            preload_id = store._cache._preload_id_from_key(res)
+            assert preload_id == expected_preload_id
+            assert res == expected_preload_id + k
+            assert k == store._transform_key_from_bt(
+                store._transform_key_to_bt(k)
+            )
+
+        res = store._get_bigtable_key(self.TEST_KEY6, partition)
+        expected_preload_id = b'\x00' + self.TEST_KEY6
+        preload_id = store._cache._preload_id_from_key(res)
+        assert preload_id == expected_preload_id
+        assert res == expected_preload_id
+        assert self.TEST_KEY6 == store._transform_key_from_bt(
+            store._transform_key_to_bt(self.TEST_KEY6)
         )
 
     def test_contains_with_unknown_partition_and_key_transform(self, store):
