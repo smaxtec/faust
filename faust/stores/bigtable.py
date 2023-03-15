@@ -461,18 +461,12 @@ class BigTableStore(base.SerializedStore):
     def _get_faust_key(self, key: bytes) -> bytes:
         key_with_no_partition = key[1:]
         new_key = self._transform_key_from_bt(key_with_no_partition)
-        if (self._log_counter % 100) == 0:
-            self.log.info(f"Transformed {key=} to {new_key} with {self._transform_key_from_bt.__name__}")
-            self._log_counter += 1
         return new_key
 
     def _get_bigtable_key(self, key: bytes, partition: int) -> bytes:
         key = self._transform_key_to_bt(key)
         prefix = self._get_partition_prefix(partition)
         new_key = prefix + key
-        if (self._log_counter % 100) == 0:
-            self.log.info(f"Transformed {key=} to {new_key} with {self._transform_key_to_bt.__name__}")
-            self._log_counter += 1
         return new_key
 
     def _partitions_for_key(self, key: bytes) -> Iterable[int]:
@@ -749,15 +743,7 @@ class BigTableStore(base.SerializedStore):
                 offset if tp not in tp_offsets else max(offset, tp_offsets[tp])
             )
             msg = event.message
-            try:
-                offset_key = self._get_bigtable_key(msg.key, partition=tp.partition)
-            except Exception as e:
-                logging.getLogger(__name__).warning(
-                    f"BigTableStore: failed to get offset_key for {msg.key=}"
-                    f" for {self.table_name}"
-                )
-                raise e
-
+            offset_key = self._get_bigtable_key(msg.key, partition=tp.partition)
             row = self.bt_table.direct_row(offset_key)
             if msg.value is None:
                 row.delete()
