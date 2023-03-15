@@ -754,6 +754,7 @@ class BigTableStore(base.SerializedStore):
             except Exception as e:
                 logging.getLogger(__name__).warning(
                     f"BigTableStore: failed to get offset_key for {msg.key=}"
+                    f" for {self.table_name}"
                 )
                 raise e
 
