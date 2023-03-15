@@ -749,7 +749,14 @@ class BigTableStore(base.SerializedStore):
                 offset if tp not in tp_offsets else max(offset, tp_offsets[tp])
             )
             msg = event.message
-            offset_key = self._get_bigtable_key(msg.key, partition=tp.partition)
+            try:
+                offset_key = self._get_bigtable_key(msg.key, partition=tp.partition)
+            except Exception as e:
+                logging.getLogger(__name__).warning(
+                    f"BigTableStore: failed to get offset_key for {msg.key=}"
+                )
+                raise e
+
             row = self.bt_table.direct_row(offset_key)
             if msg.value is None:
                 row.delete()

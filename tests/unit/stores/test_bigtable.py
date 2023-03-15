@@ -14,6 +14,7 @@ from faust.types.tuples import TP
 
 
 def to_bt_key(key):
+    key = from_bt_key(key)  # Just a safety meassure
     len_total = len(key)
     len_prefix = 4
     len_num_bytes_len = key[len_prefix] // 2
@@ -514,6 +515,10 @@ class TestBigTableStore:
     TEST_KEY1 = b"TEST_KEY1"
     TEST_KEY2 = b"TEST_KEY2"
     TEST_KEY3 = b"TEST_KEY3"
+    TEST_KEY4 = (
+        b'\x00\x00\x00\x00\x020624ea584630eccac35c92d57'
+        b'\x000624ea584630eccac35c92d57'
+    )
 
     @pytest.fixture()
     def bt_imports(self):
@@ -1165,10 +1170,6 @@ class TestBigTableStore:
         )
 
     def test_contains_with_unknown_partition_and_key_transform(self, store):
-        k = (
-            b'\x00\x00\x00\x00\x020624ea584630eccac35c92d57'
-            b'\x000624ea584630eccac35c92d57'
-        )
         store._cache.get_preload_prefix_len = get_preload_prefix_len
         store._transform_key_from_bt = from_bt_key
         store._transform_key_to_bt = to_bt_key
@@ -1179,11 +1180,50 @@ class TestBigTableStore:
         store._cache.contains_any = MagicMock(wraps=store._cache.contains_any)
         store._bigtable_contains_any = MagicMock(wraps=store._bigtable_contains_any)
         keys_to_search = set()
-        keys_to_search.add(store._get_bigtable_key(k, 1))
-        keys_to_search.add(store._get_bigtable_key(k, 3))
-        keys_to_search.add(store._get_bigtable_key(k, 19))
+        keys_to_search.add(store._get_bigtable_key(self.TEST_KEY4, 1))
+        keys_to_search.add(store._get_bigtable_key(self.TEST_KEY4, 3))
+        keys_to_search.add(store._get_bigtable_key(self.TEST_KEY4, 19))
 
-        res = store._contains(k)
+        res = store._contains(self.TEST_KEY4)
         res_contains = store._bigtable_contains_any.assert_called_once_with(keys_to_search)
         assert res_contains is None
         assert res is False
+
+    def test_apply_changelog_batch_with_key_transform(self, store):
+        store._transform_key_from_bt = from_bt_key
+        store._transform_key_to_bt = to_bt_key
+
+        row_mock = MagicMock()
+        row_mock.delete = MagicMock()
+        row_mock.set_cell = MagicMock()
+        store.bt_table.direct_row = MagicMock(return_value=row_mock)
+        store.bt_table.mutate_rows = MagicMock()
+        store._persist_changelog_batch = MagicMock()
+
+        class TestMessage:
+            def __init__(self, value, key, tp, offset):
+                self.value = value
+                self.key = key
+                self.tp = tp
+                self.offset = offset
+
+        class TestEvent:
+            def __init__(self, message):
+                self.message = message
+
+        tp = TP("a", 19)
+        tp2 = TP("b", 19)
+        messages = [
+            TestEvent(TestMessage("a", self.TEST_KEY4, tp, 0)),
+            TestEvent(TestMessage(None, self.TEST_KEY4, tp, 1)),  # Delete
+            TestEvent(TestMessage("a", self.TEST_KEY4, tp, 3)),  # Out of order
+            TestEvent(TestMessage("b", self.TEST_KEY4, tp2, 4)),
+            TestEvent(TestMessage("a", self.TEST_KEY4, tp, 2)),
+        ]
+        store.apply_changelog_batch(messages, lambda x: x, lambda x: x)
+        assert store.bt_table.direct_row.call_count == 5
+        row_mock.delete.assert_called_once()
+        assert row_mock.set_cell.call_count == 4
+        store._persist_changelog_batch.assert_called_once()
+        tp_offsets = store._persist_changelog_batch.call_args_list[0].args[1]
+        assert tp_offsets == {tp: 3, tp2: 4}
