@@ -288,7 +288,7 @@ class BigTableStore(base.SerializedStore):
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
     BT_MUTATION_FREQ_KEY = "bt_mutation_freq_key"
     BT_MAX_MUTATIONS = "bt_max_mutations"
-    BT_CUSTOM_KEY_TRANSLATOR_KEY = "bt_custom_key_translator"
+    BT_CUSTOM_KEY_TRANSLATOR_KEY = "bt_custom_key_translator_key"
     VALUE_CACHE_INVALIDATION_TIME_KEY = "value_cache_invalidation_time_key"
     VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
     VALUE_CACHE_ENABLE_KEY = "value_cache_enable_key"
