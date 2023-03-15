@@ -303,6 +303,7 @@ class BigTableStore(base.SerializedStore):
         **kwargs: Any,
     ) -> None:
         self._set_options(options)
+        self._log_counter = 0
         try:
             self._bigtable_setup(table, options)
             self._cache = BigTableCacheManager(app, options, self.bt_table)
@@ -458,13 +459,21 @@ class BigTableStore(base.SerializedStore):
         return b"".join([partition_bytes])
 
     def _get_faust_key(self, key: bytes) -> bytes:
-        key = key[1:]
-        return self._transform_key_from_bt(key)
+        key_with_no_partition = key[1:]
+        new_key = self._transform_key_from_bt(key_with_no_partition)
+        if (self._log_counter % 100) == 0:
+            self.log.info(f"Transformed {key=} to {new_key} with {self._transform_key_from_bt.__name__}")
+            self._log_counter += 1
+        return new_key
 
     def _get_bigtable_key(self, key: bytes, partition: int) -> bytes:
         key = self._transform_key_to_bt(key)
         prefix = self._get_partition_prefix(partition)
-        return prefix + key
+        new_key = prefix + key
+        if (self._log_counter % 100) == 0:
+            self.log.info(f"Transformed {key=} to {new_key} with {self._transform_key_to_bt.__name__}")
+            self._log_counter += 1
+        return new_key
 
     def _partitions_for_key(self, key: bytes) -> Iterable[int]:
         try:
