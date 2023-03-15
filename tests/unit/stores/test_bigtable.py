@@ -13,6 +13,26 @@ from faust.stores.bigtable import (
 from faust.types.tuples import TP
 
 
+def to_bt_key(key):
+    len_total = len(key)
+    len_prefix = 4
+    len_num_bytes_len = key[len_prefix] // 2
+    len_first_id = key[len_prefix + len_num_bytes_len] // 2
+    len_second_id = key[
+        len_prefix + 1 + len_num_bytes_len + len_first_id + 1
+    ] // 2
+    key_prefix = key[len_total - len_second_id:]
+    return key_prefix + key
+
+
+def from_bt_key(key):
+    return key[key.find(bytes(4)):]
+
+
+def get_preload_prefix_len(key) -> int:
+    return len(key[:key.find(bytes(4))])
+
+
 class MyTestResponse:
     def __init__(self, code) -> None:
         self.code = code
@@ -172,6 +192,7 @@ class TestBigTableCacheManager:
         time.time = MagicMock(return_value=0)
         options = {
             BigTableStore.VALUE_CACHE_ENABLE_KEY: True,
+            BigTableStore.CACHE_PRELOAD_PREFIX_LEN_FUN_KEY: get_preload_prefix_len
         }
 
         test_manager = BigTableCacheManager(MagicMock(), options, bigtable_mock)
@@ -181,6 +202,7 @@ class TestBigTableCacheManager:
         assert test_manager._last_flush == {}
         assert test_manager._mutations == {}
         assert test_manager._finished_preloads == set()
+        assert test_manager.get_preload_prefix_len == get_preload_prefix_len
 
     @pytest.fixture()
     def bt_imports(self):
@@ -517,16 +539,34 @@ class TestBigTableStore:
         bt_imports.CellsColumnLimitFilter = MagicMock(return_value="a_filter")
         bt_imports.column_family = MagicMock(return_value=MagicMock())
         name_lambda = lambda x: print(x)  # noqa
+
+        def to_bt_key(key):
+            len_total = len(key)
+            len_prefix = 4
+            len_num_bytes_len = key[len_prefix] // 2
+            len_first_id = key[len_prefix + len_num_bytes_len] // 2
+            len_second_id = key[
+                len_prefix + 1 + len_num_bytes_len + len_first_id + 1
+            ] // 2
+            key_prefix = key[len_total - len_second_id:]
+            return key_prefix + key
+
+        def from_bt_key(key):
+            return key[key.find(b'\x00\x00\x00'):]
+
         options = {
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY: name_lambda,
             BigTableStore.BT_OFFSET_KEY_PREFIX: "offset_test",
             BigTableStore.BT_COLUMN_NAME_KEY: "name_test",
+            BigTableStore.BT_CUSTOM_KEY_TRANSLATOR_KEY: (to_bt_key, from_bt_key),
         }
         BigTableStore._set_options(self_mock, options)
         assert self_mock.column_name == "name_test"
         assert self_mock.offset_key_prefix == "offset_test"
         assert self_mock.row_filter == "a_filter"
         assert self_mock.table_name_generator == name_lambda
+        assert self_mock._transform_key_to_bt == to_bt_key
+        assert self_mock._transform_key_from_bt == from_bt_key
 
     @pytest.mark.asyncio
     async def test_bigtable_setup(self, bt_imports):
@@ -773,16 +813,16 @@ class TestBigTableStore:
         res = store._get_partition_prefix(partition)
         assert res[0] == partition
 
-    def test_remove_partition_prefix(self, store):
+    def test_get_faust_key(self, store):
         key_with_partition = b"\x13THEACTUALKEY"
-        res = store._remove_partition_prefix(key_with_partition)
+        res = store._get_faust_key(key_with_partition)
         assert res == b"THEACTUALKEY"
 
     def test_get_key_with_partition(self, store):
         partition = 19
-        res = store._get_key_with_partition(self.TEST_KEY1, partition)
+        res = store._get_bigtable_key(self.TEST_KEY1, partition)
         assert res[0] == partition
-        assert store._remove_partition_prefix(res) == self.TEST_KEY1
+        assert store._get_faust_key(res) == self.TEST_KEY1
 
     def test_partitions_for_key(self, store):
         store._cache.get_partition = MagicMock(return_value=19)
@@ -803,7 +843,7 @@ class TestBigTableStore:
         # Scenario: Found
         store._bigtable_get = MagicMock(return_value=b"a_value")
         res = store._get(self.TEST_KEY1)
-        key_with_partition = store._get_key_with_partition(self.TEST_KEY1, partition)
+        key_with_partition = store._get_bigtable_key(self.TEST_KEY1, partition)
         store._bigtable_get.assert_called_once_with(key_with_partition)
         store._cache.set_partition.assert_called_once_with(self.TEST_KEY1, partition)
         assert res == b"a_value"
@@ -812,7 +852,7 @@ class TestBigTableStore:
         # Scenario: Not Found
         store._bigtable_get = MagicMock(return_value=None)
         res = store._get(self.TEST_KEY1)
-        key_with_partition = store._get_key_with_partition(self.TEST_KEY1, partition)
+        key_with_partition = store._get_bigtable_key(self.TEST_KEY1, partition)
         store._bigtable_get.assert_called_once_with(key_with_partition)
         store._cache.set_partition.assert_not_called()
         assert res is None
@@ -822,12 +862,12 @@ class TestBigTableStore:
         store._partitions_for_key = MagicMock(return_value=[1, 3, 19])
         store._cache.set_partition = MagicMock()
         keys_searched = set()
-        keys_searched.add(store._get_key_with_partition(self.TEST_KEY1, 1))
-        keys_searched.add(store._get_key_with_partition(self.TEST_KEY1, 3))
-        keys_searched.add(store._get_key_with_partition(self.TEST_KEY1, 19))
+        keys_searched.add(store._get_bigtable_key(self.TEST_KEY1, 1))
+        keys_searched.add(store._get_bigtable_key(self.TEST_KEY1, 3))
+        keys_searched.add(store._get_bigtable_key(self.TEST_KEY1, 19))
 
         # Scenario: Found
-        key_of_value = store._get_key_with_partition(self.TEST_KEY1, 19)
+        key_of_value = store._get_bigtable_key(self.TEST_KEY1, 19)
         store._bigtable_get_range = MagicMock(return_value=(key_of_value, b"a_value"))
         res = store._get(self.TEST_KEY1)
         store._partitions_for_key.assert_called_once_with(self.TEST_KEY1)
@@ -849,7 +889,7 @@ class TestBigTableStore:
         store._bigtable_set = MagicMock()
         store._cache.set_partition = MagicMock()
         store._set(self.TEST_KEY1, b"a_value")
-        key_with_partition = store._get_key_with_partition(self.TEST_KEY1, partition)
+        key_with_partition = store._get_bigtable_key(self.TEST_KEY1, partition)
         store._bigtable_set.assert_called_once_with(key_with_partition, b"a_value")
         store._cache.set_partition.assert_called_once_with(self.TEST_KEY1, partition)
 
@@ -859,9 +899,9 @@ class TestBigTableStore:
         store._bigtable_del = MagicMock()
         store._del(self.TEST_KEY1)
         calls = [
-            call(store._get_key_with_partition(self.TEST_KEY1, 1)),
-            call(store._get_key_with_partition(self.TEST_KEY1, 3)),
-            call(store._get_key_with_partition(self.TEST_KEY1, 19)),
+            call(store._get_bigtable_key(self.TEST_KEY1, 1)),
+            call(store._get_bigtable_key(self.TEST_KEY1, 3)),
+            call(store._get_bigtable_key(self.TEST_KEY1, 19)),
         ]
         store._bigtable_del.assert_has_calls(calls)
         assert store._cache._partition_cache == {}
@@ -889,9 +929,9 @@ class TestBigTableStore:
 
     def test_iteritems(self, store):
         keys_in_store = []
-        keys_in_store.append(store._get_key_with_partition(self.TEST_KEY1, 1))
-        keys_in_store.append(store._get_key_with_partition(self.TEST_KEY2, 2))
-        keys_in_store.append(store._get_key_with_partition(self.TEST_KEY3, 3))
+        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY1, 1))
+        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY2, 2))
+        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY3, 3))
 
         store.bt_table.add_test_data(keys_in_store)
         store._active_partitions = MagicMock(return_value=[1, 3])
@@ -905,9 +945,9 @@ class TestBigTableStore:
         store._active_partitions = MagicMock(return_value=[1, 3])
         store._cache._partition_cache.limit = 3
         keys_in_store = []
-        keys_in_store.append(store._get_key_with_partition(self.TEST_KEY1, 1))
-        keys_in_store.append(store._get_key_with_partition(self.TEST_KEY2, 2))
-        keys_in_store.append(store._get_key_with_partition(self.TEST_KEY3, 3))
+        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY1, 1))
+        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY2, 2))
+        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY3, 3))
         store.bt_table.add_test_data(keys_in_store)
 
         all_res = sorted(store._iterkeys())
@@ -919,9 +959,9 @@ class TestBigTableStore:
     def test_iterkeys_with_mutattions(self, store):
         store._active_partitions = MagicMock(return_value=[1, 3])
         keys_in_store = []
-        k1 = store._get_key_with_partition(self.TEST_KEY1, 1)
-        k2 = store._get_key_with_partition(self.TEST_KEY2, 2)
-        k3 = store._get_key_with_partition(self.TEST_KEY3, 3)
+        k1 = store._get_bigtable_key(self.TEST_KEY1, 1)
+        k2 = store._get_bigtable_key(self.TEST_KEY2, 2)
+        k3 = store._get_bigtable_key(self.TEST_KEY3, 3)
         keys_in_store.append(k1)
         keys_in_store.append(k2)
         keys_in_store.append(k3)
@@ -936,9 +976,9 @@ class TestBigTableStore:
 
     def test_itervalues(self, store):
         keys_in_store = []
-        keys_in_store.append(store._get_key_with_partition(self.TEST_KEY1, 1))
-        keys_in_store.append(store._get_key_with_partition(self.TEST_KEY2, 2))
-        keys_in_store.append(store._get_key_with_partition(self.TEST_KEY3, 3))
+        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY1, 1))
+        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY2, 2))
+        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY3, 3))
 
         store.bt_table.add_test_data(keys_in_store)
         store._active_partitions = MagicMock(return_value=[1, 3])
@@ -966,7 +1006,7 @@ class TestBigTableStore:
 
         # Scenario1: Found
         store._bigtable_contains = MagicMock(return_value="TRUE_OR_FALSE")
-        key_w_partition = store._get_key_with_partition(self.TEST_KEY1, 19)
+        key_w_partition = store._get_bigtable_key(self.TEST_KEY1, 19)
         res = store._contains(self.TEST_KEY1)
         store._bigtable_contains.assert_called_once_with(key_w_partition)
         assert res == "TRUE_OR_FALSE"
@@ -979,9 +1019,9 @@ class TestBigTableStore:
 
         store._bigtable_contains_any = MagicMock(return_value="TRUE_OR_FALSE")
         keys_to_search = set()
-        keys_to_search.add(store._get_key_with_partition(self.TEST_KEY1, 1))
-        keys_to_search.add(store._get_key_with_partition(self.TEST_KEY1, 3))
-        keys_to_search.add(store._get_key_with_partition(self.TEST_KEY1, 19))
+        keys_to_search.add(store._get_bigtable_key(self.TEST_KEY1, 1))
+        keys_to_search.add(store._get_bigtable_key(self.TEST_KEY1, 3))
+        keys_to_search.add(store._get_bigtable_key(self.TEST_KEY1, 19))
 
         res = store._contains(self.TEST_KEY1)
 
@@ -1106,22 +1146,7 @@ class TestBigTableStore:
         store._cache.delete_partition.assert_any_call(1)
         store._cache.delete_partition.assert_any_call(2)
 
-    def test_fill_with_custom_key_prefix(self, store):
-        def to_bt_key(key):
-            len_total = len(key)
-            len_prefix = 4
-            len_num_bytes_len = key[len_prefix] // 2
-            len_first_id = key[len_prefix + len_num_bytes_len] // 2
-            len_second_id = key[len_prefix + 1 + len_num_bytes_len + len_first_id + 1] // 2
-            key_prefix = key[len_total - len_second_id:]
-            return key_prefix + key
-
-        def from_bt_key(key):
-            return key[key.find(b'\x00\x00\x00'):]
-
-        def get_preload_prefix_len(key) -> int:
-            return len(key[:key.find(b'\x00\x00\x00')])
-
+    def test__fill_with_custom_key_prefix(self, store):
         k = (
             b'\x00\x00\x00\x00\x020624ea584630eccac35c92d57'
             b'\x000624ea584630eccac35c92d57'
@@ -1131,7 +1156,7 @@ class TestBigTableStore:
         store._transform_key_to_bt = to_bt_key
 
         partition = 0
-        res = store._get_key_with_partition(k, partition)
+        res = store._get_bigtable_key(k, partition)
         preload_id = b'\x00624ea584630eccac35c92d57'
         assert store._cache._preload_id_from_key(res) == preload_id
         assert res == preload_id + k
@@ -1139,4 +1164,26 @@ class TestBigTableStore:
             store._transform_key_to_bt(k)
         )
 
+    def test_contains_with_unknown_partition_and_key_transform(self, store):
+        k = (
+            b'\x00\x00\x00\x00\x020624ea584630eccac35c92d57'
+            b'\x000624ea584630eccac35c92d57'
+        )
+        store._cache.get_preload_prefix_len = get_preload_prefix_len
+        store._transform_key_from_bt = from_bt_key
+        store._transform_key_to_bt = to_bt_key
 
+        store.app.conf.store_check_exists = True
+        store._maybe_get_partition_from_message = MagicMock(return_value=None)
+        store._partitions_for_key = MagicMock(return_value=[1, 3, 19])
+        store._cache.contains_any = MagicMock(wraps=store._cache.contains_any)
+        store._bigtable_contains_any = MagicMock(wraps=store._bigtable_contains_any)
+        keys_to_search = set()
+        keys_to_search.add(store._get_bigtable_key(k, 1))
+        keys_to_search.add(store._get_bigtable_key(k, 3))
+        keys_to_search.add(store._get_bigtable_key(k, 19))
+
+        res = store._contains(k)
+        res_contains = store._bigtable_contains_any.assert_called_once_with(keys_to_search)
+        assert res_contains is None
+        assert res is False

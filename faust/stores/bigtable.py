@@ -457,15 +457,14 @@ class BigTableStore(base.SerializedStore):
         partition_bytes = partition.to_bytes(1, "little")
         return b"".join([partition_bytes])
 
-    def _remove_partition_prefix(self, key: bytes) -> bytes:
+    def _get_faust_key(self, key: bytes) -> bytes:
         key = key[1:]
         return self._transform_key_from_bt(key)
 
-    def _get_key_with_partition(self, key: bytes, partition: int) -> bytes:
+    def _get_bigtable_key(self, key: bytes, partition: int) -> bytes:
         key = self._transform_key_to_bt(key)
         prefix = self._get_partition_prefix(partition)
-        key = b"".join([prefix, key])
-        return key
+        return prefix + key
 
     def _partitions_for_key(self, key: bytes) -> Iterable[int]:
         try:
@@ -477,7 +476,7 @@ class BigTableStore(base.SerializedStore):
         try:
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
-                key_with_partition = self._get_key_with_partition(
+                key_with_partition = self._get_bigtable_key(
                     key, partition=partition
                 )
 
@@ -488,7 +487,7 @@ class BigTableStore(base.SerializedStore):
             else:
                 keys = set()
                 for partition in self._partitions_for_key(key):
-                    key_with_partition = self._get_key_with_partition(
+                    key_with_partition = self._get_bigtable_key(
                         key, partition=partition
                     )
                     keys.add(key_with_partition)
@@ -511,7 +510,7 @@ class BigTableStore(base.SerializedStore):
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
             partition = get_current_partition()
-            key_with_partition = self._get_key_with_partition(key, partition=partition)
+            key_with_partition = self._get_bigtable_key(key, partition=partition)
             self._bigtable_set(key_with_partition, value)
             self._cache.set_partition(key, partition)
         except Exception as ex:
@@ -525,7 +524,7 @@ class BigTableStore(base.SerializedStore):
     def _del(self, key: bytes) -> None:
         try:
             for partition in self._partitions_for_key(key):
-                key_with_partition = self._get_key_with_partition(
+                key_with_partition = self._get_bigtable_key(
                     key, partition=partition
                 )
                 self._bigtable_del(key_with_partition)
@@ -559,7 +558,7 @@ class BigTableStore(base.SerializedStore):
                 row_set=row_set, filter_=self.row_filter
             ):
                 yield (
-                    self._remove_partition_prefix(row.row_key),
+                    self._get_faust_key(row.row_key),
                     self.bigtable_exrtact_row_data(row),
                 )
         except Exception as ex:
@@ -585,7 +584,7 @@ class BigTableStore(base.SerializedStore):
             found_mutations = set()
             for k, mut in self._cache._mutations.items():
                 if mut[1] is not None:
-                    yield self._remove_partition_prefix(k)
+                    yield self._get_faust_key(k)
                 found_mutations.add(k)
 
             for row in self.bt_table.read_rows(
@@ -600,7 +599,7 @@ class BigTableStore(base.SerializedStore):
                     preload_id = self._cache._preload_id_from_key(row.row_key)
                     self._cache._finished_preloads.add(preload_id)
                     partition = row.row_key[0]
-                    key = self._remove_partition_prefix(row.row_key)
+                    key = self._get_faust_key(row.row_key)
                     self._cache.set_partition(key, partition)
                     yield key
 
@@ -635,14 +634,14 @@ class BigTableStore(base.SerializedStore):
                 return True
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
-                key_with_partition = self._get_key_with_partition(
+                key_with_partition = self._get_bigtable_key(
                     key, partition=partition
                 )
                 return self._bigtable_contains(key_with_partition)
             else:
                 keys_to_search = set()
                 for partition in self._partitions_for_key(key):
-                    key_with_partition = self._get_key_with_partition(
+                    key_with_partition = self._get_bigtable_key(
                         key, partition=partition
                     )
                     keys_to_search.add(key_with_partition)
@@ -741,7 +740,7 @@ class BigTableStore(base.SerializedStore):
                 offset if tp not in tp_offsets else max(offset, tp_offsets[tp])
             )
             msg = event.message
-            offset_key = self._get_key_with_partition(msg.key, partition=tp.partition)
+            offset_key = self._get_bigtable_key(msg.key, partition=tp.partition)
             row = self.bt_table.direct_row(offset_key)
             if msg.value is None:
                 row.delete()
