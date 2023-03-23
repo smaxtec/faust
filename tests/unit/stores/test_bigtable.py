@@ -130,6 +130,14 @@ class TestBigTableValueCache:
         cache = BigTableValueCache(size=123)
         assert isinstance(cache.data, LRUCache)
         assert cache.data.limit == 123
+        assert cache.is_complete is False
+
+        # Test with custom ttl
+        cache = BigTableValueCache(ttl=123)
+        assert cache.data == {}
+        assert cache.ttl == 123
+        assert cache.ttl_over is False
+        assert cache.is_complete is False
 
     def test__set_del_len_and_getitem(self):
         cache = BigTableValueCache()
