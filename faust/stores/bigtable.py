@@ -61,6 +61,7 @@ class BigTableValueCache:
         self.ttl = ttl
         self.ttl_over = False
         self.init_ts = int(time.time())
+        self.is_complete = (ttl == -1) and (size is None)
 
     def __len__(self):
         return len(self.data)
@@ -137,8 +138,12 @@ class BigTableCacheManager:
         start = time.time()
         if self._value_cache is not None:
             try:
-                row_set, row_filter = self._get_preload_rowset_and_filter(preload_ids_todo)
-                for row in self.bt_table.read_rows(row_set=row_set, filter_=row_filter):
+                row_set, row_filter = self._get_preload_rowset_and_filter(
+                    preload_ids_todo
+                )
+                for row in self.bt_table.read_rows(
+                    row_set=row_set, filter_=row_filter
+                ):
                     if row.row_key in self._mutations.keys():
                         mutation_val = self._mutations[row.row_key][1]
                         if mutation_val is not None:
@@ -148,7 +153,9 @@ class BigTableCacheManager:
                         self._value_cache[row.row_key] = value
                     yield row.row_key
             except Exception as e:
-                self.log.info(f"BigTableStore fill failed for {preload_ids_todo=}, {bt_keys=}")
+                self.log.info(
+                    f"BigTableStore fill failed for {preload_ids_todo=}, {bt_keys=}"
+                )
                 raise e
         end = time.time()
         self.log.info(
@@ -191,7 +198,10 @@ class BigTableCacheManager:
             return self._mutations[bt_key][1] is not None
         if self._value_cache is not None:
             self._fill_if_empty({bt_key})
-            return bt_key in self._value_cache.keys()
+            found = bt_key in self._value_cache.keys()
+            if self.is_complete:
+                return found
+            return True if found else None
         return None
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
@@ -201,7 +211,10 @@ class BigTableCacheManager:
             return True
         if self._value_cache is not None:
             self._fill_if_empty(key_set)
-            return not self._value_cache.keys().isdisjoint(key_set)
+            found = not self._value_cache.keys().isdisjoint(key_set)
+            if self.is_complete:
+                return found
+            return True if found else None
         return None
 
     def flush_if_timer_over(self, tp: TP) -> bool:
@@ -258,17 +271,25 @@ class BigTableCacheManager:
         enable = options.get(BigTableStore.VALUE_CACHE_ENABLE_KEY, False)
         if enable:
             # TODO Maybe we need to remove invalidation time and size
-            ttl = options.get(BigTableStore.VALUE_CACHE_INVALIDATION_TIME_KEY, -1)
+            ttl = options.get(
+                BigTableStore.VALUE_CACHE_INVALIDATION_TIME_KEY, -1
+            )
             size = options.get(BigTableStore.VALUE_CACHE_SIZE_KEY, None)
             self._value_cache = BigTableValueCache(ttl=ttl, size=size)
+            self.is_complete = self._value_cache.is_complete
         else:
             self._value_cache = None
+            self.is_complete = False
 
     def _init_mutation_buffer(self, options):
         self._mut_freq = options.get(BigTableStore.BT_MUTATION_FREQ_KEY, 0)
         # To prevent that all tables write at the same time
-        self._last_flush = {}  # time.time() + self._mut_freq - random_start_offset
-        self._max_mutations = options.get(BigTableStore.BT_MAX_MUTATIONS, 10000)
+        self._last_flush = (
+            {}
+        )  # time.time() + self._mut_freq - random_start_offset
+        self._max_mutations = options.get(
+            BigTableStore.BT_MAX_MUTATIONS, 10000
+        )
         self._mutations = {}
 
 
@@ -320,13 +341,15 @@ class BigTableStore(base.SerializedStore):
     def _set_options(self, options) -> None:
         self._transform_key_to_bt, self._transform_key_from_bt = options.get(
             BigTableStore.BT_CUSTOM_KEY_TRANSLATOR_KEY,
-            (self.default_translator, self.default_translator)
+            (self.default_translator, self.default_translator),
         )
         self._all_options = options
         self.table_name_generator = options.get(
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
         )
-        self.column_name = options.get(BigTableStore.BT_COLUMN_NAME_KEY, "DATA")
+        self.column_name = options.get(
+            BigTableStore.BT_COLUMN_NAME_KEY, "DATA"
+        )
         self.row_filter = BT.CellsColumnLimitFilter(1)
         self.offset_key_prefix = options.get(
             BigTableStore.BT_OFFSET_KEY_PREFIX, "offset_partitiion:"
@@ -350,7 +373,9 @@ class BigTableStore(base.SerializedStore):
             )
             self.bt_table.create(
                 column_families={
-                    self.column_family_id: BT.column_family.MaxVersionsGCRule(1)
+                    self.column_family_id: BT.column_family.MaxVersionsGCRule(
+                        1
+                    )
                 }
             )
         else:
@@ -364,8 +389,9 @@ class BigTableStore(base.SerializedStore):
         return list(row_data.to_dict().values())[0][0].value
 
     def _bigtable_get(self, key: bytes) -> Optional[bytes]:
-        if self._cache.contains(key) is True:
-            return self._cache.get(key)
+        cached_value = self._cache.get(key)
+        if cached_value is not None:
+            return cached_value
         else:
             res = self.bt_table.read_row(key, filter_=self.row_filter)
             if res is None:
@@ -377,7 +403,7 @@ class BigTableStore(base.SerializedStore):
 
     def _bigtable_contains(self, key: bytes) -> bool:
         cache_contains = self._cache.contains(key)
-        if cache_contains is True:
+        if cache_contains is not None:
             return cache_contains
 
         row = self.bt_table.read_row(key, filter_=self.row_filter)
@@ -387,7 +413,7 @@ class BigTableStore(base.SerializedStore):
 
     def _bigtable_contains_any(self, keys: Set[bytes]) -> bool:
         cache_contains = self._cache.contains_any(keys)
-        if cache_contains is True:
+        if cache_contains is not None:
             return cache_contains
 
         rows = BT.RowSet()
@@ -424,7 +450,9 @@ class BigTableStore(base.SerializedStore):
         # Not found
         return None, None
 
-    def _bigtable_set(self, key: bytes, value: Optional[bytes], persist_offset=False):
+    def _bigtable_set(
+        self, key: bytes, value: Optional[bytes], persist_offset=False
+    ):
         if not persist_offset:
             # All mutatations set here will be flushed to BT later
             self._cache.set(key, value)
@@ -502,7 +530,9 @@ class BigTableStore(base.SerializedStore):
                     return value
             return None
         except KeyError as ke:
-            self.log.error(f"KeyError in get for table {self.table_name} for {key=}")
+            self.log.error(
+                f"KeyError in get for table {self.table_name} for {key=}"
+            )
             raise ke
         except Exception as ex:
             self.log.error(
@@ -513,7 +543,9 @@ class BigTableStore(base.SerializedStore):
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
             partition = get_current_partition()
-            key_with_partition = self._get_bigtable_key(key, partition=partition)
+            key_with_partition = self._get_bigtable_key(
+                key, partition=partition
+            )
             self._bigtable_set(key_with_partition, value)
             self._cache.set_partition(key, partition)
         except Exception as ex:
@@ -607,7 +639,9 @@ class BigTableStore(base.SerializedStore):
                     yield key
 
             end = time.time()
-            self.log.info(f"Finished iterkeys for {self.table_name} in {end - start}s")
+            self.log.info(
+                f"Finished iterkeys for {self.table_name} in {end - start}s"
+            )
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _iterkeys "
@@ -689,7 +723,9 @@ class BigTableStore(base.SerializedStore):
             return offset
         return None
 
-    def set_persisted_offset(self, tp: TP, offset: int, recovery=False) -> None:
+    def set_persisted_offset(
+        self, tp: TP, offset: int, recovery=False
+    ) -> None:
         """Set the last persisted offset for this table.
 
         This will remember the last offset that we wrote to BigTableStore,
@@ -743,7 +779,9 @@ class BigTableStore(base.SerializedStore):
                 offset if tp not in tp_offsets else max(offset, tp_offsets[tp])
             )
             msg = event.message
-            offset_key = self._get_bigtable_key(msg.key, partition=tp.partition)
+            offset_key = self._get_bigtable_key(
+                msg.key, partition=tp.partition
+            )
             row = self.bt_table.direct_row(offset_key)
             if msg.value is None:
                 row.delete()
@@ -794,7 +832,6 @@ class BigTableStore(base.SerializedStore):
         for tp in tps:
             self._cache.delete_partition(tp.partition)
         gc.collect()
-
 
     async def on_rebalance(
         self,
