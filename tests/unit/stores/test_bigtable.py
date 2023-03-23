@@ -124,6 +124,7 @@ class TestBigTableValueCache:
         assert cache.data == {}
         assert cache.ttl == -1
         assert cache.ttl_over is False
+        assert cache.is_complete is True
 
         # Test with custom size
         cache = BigTableValueCache(size=123)
@@ -682,10 +683,8 @@ class TestBigTableStore:
 
     def test_bigtable_bigtable_get_on_empty(self, store):
         store._cache.get = MagicMock(return_value=None)
-        store._cache.contains = MagicMock(return_value=False)
         return_value = store._bigtable_get(self.TEST_KEY1)
-        store._cache.contains.assert_called_with(self.TEST_KEY1)
-        store._cache.get.assert_not_called()
+        store._cache.get.assert_called_with(self.TEST_KEY1)
         store.bt_table.read_row.assert_called_with(
             self.TEST_KEY1, filter_="a_filter"
         )
@@ -696,7 +695,7 @@ class TestBigTableStore:
         store._cache.contains = MagicMock(return_value=False)
         store.bt_table.add_test_data([self.TEST_KEY1])
         return_value = store._bigtable_get(self.TEST_KEY1)
-        store._cache.get.assert_not_called()
+        store._cache.get.assert_called_with(self.TEST_KEY1)
         store.bt_table.read_row.assert_called_once_with(
             self.TEST_KEY1, filter_="a_filter"
         )
@@ -743,37 +742,36 @@ class TestBigTableStore:
 
     def test_bigtable_contains(self, store):
         store._cache.contains = MagicMock(return_value=None)
-        store._cache.delete = MagicMock(return_value=None)
 
         store.bt_table.add_test_data([self.TEST_KEY1])
         return_value = store._bigtable_contains(self.TEST_KEY1)
         store.bt_table.read_row.assert_called_with(
             self.TEST_KEY1, filter_="a_filter"
         )
-        store._cache.delete.assert_not_called()
         assert return_value is True
 
         return_value = store._bigtable_contains(self.TEST_KEY2)
         store.bt_table.read_row.assert_called_with(
             self.TEST_KEY2, filter_="a_filter"
         )
-        store._cache.delete.assert_not_called()
 
-        store._cache.delete.reset_mock()
         store.bt_table.read_row.reset_mock()
 
         store._cache.contains = MagicMock(return_value=True)
         return_value = store._bigtable_contains(self.TEST_KEY1)
         store.bt_table.read_row.assert_not_called()
-        store._cache.delete.assert_not_called()
         assert return_value is True
 
         store._cache.contains = MagicMock(return_value=False)
         return_value = store._bigtable_contains(self.TEST_KEY1)
+        store.bt_table.read_row.assert_not_called()
+        assert return_value is False
+
+        store._cache.contains = MagicMock(return_value=None)
+        return_value = store._bigtable_contains(self.TEST_KEY1)
         store.bt_table.read_row.assert_called_with(
             self.TEST_KEY1, filter_="a_filter"
         )
-        store._cache.delete.assert_not_called()
         assert return_value is True
 
     def test_bigtable_contains_any(self, store):
