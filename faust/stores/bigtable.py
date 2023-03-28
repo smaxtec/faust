@@ -391,9 +391,8 @@ class BigTableStore(base.SerializedStore):
         return list(row_data.to_dict().values())[0][0].value
 
     def _bigtable_get(self, key: bytes) -> Optional[bytes]:
-        cached_value = self._cache.get(key)
-        if cached_value is not None:
-            return cached_value
+        if self._cache.contains(key):
+            return self._cache.get(key)
         else:
             res = self.bt_table.read_row(key, filter_=self.row_filter)
             if res is None:
