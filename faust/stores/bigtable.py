@@ -402,9 +402,9 @@ class BigTableStore(base.SerializedStore):
         return value
 
     def _bigtable_contains(self, key: bytes) -> bool:
-        cache_contains = self._cache.contains(key)
-        if cache_contains is not None:
-            return cache_contains
+        # cache_contains = self._cache.contains(key)
+        # if cache_contains is not None:
+        #    return cache_contains
 
         row = self.bt_table.read_row(key, filter_=self.row_filter)
         if row is not None:
@@ -412,9 +412,9 @@ class BigTableStore(base.SerializedStore):
         return False
 
     def _bigtable_contains_any(self, keys: Set[bytes]) -> bool:
-        cache_contains = self._cache.contains_any(keys)
-        if cache_contains is not None:
-            return cache_contains
+        # cache_contains = self._cache.contains_any(keys)
+        # if cache_contains is not None:
+            # return cache_contains
 
         rows = BT.RowSet()
         for key in keys:
@@ -529,11 +529,6 @@ class BigTableStore(base.SerializedStore):
                     self._cache.set_partition(key, partition)
                     return value
             return None
-        except KeyError as ke:
-            self.log.error(
-                f"KeyError in get for table {self.table_name} for {key=}"
-            )
-            raise ke
         except Exception as ex:
             self.log.error(
                 f"Error in get for table {self.table_name} exception {ex} key {key}"
