@@ -194,27 +194,29 @@ class BigTableCacheManager:
         If we return None here, this means, that no assumption
         about the current key can be made.
         """
-        if bt_key in self._mutations.keys():
-            return self._mutations[bt_key][1] is not None
         if self._value_cache is not None:
             self._fill_if_empty({bt_key})
             found = bt_key in self._value_cache.keys()
             if self.is_complete:
                 return found
             return True if found else None
+
+        if bt_key in self._mutations.keys():
+            return self._mutations[bt_key][1] is not None
         return None
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
-        mutations = key_set.intersection(self._mutations.keys())
-        found = any(mut[1] is not None for mut in mutations)
-        if found:
-            return True
         if self._value_cache is not None:
             self._fill_if_empty(key_set)
             found = not self._value_cache.keys().isdisjoint(key_set)
             if self.is_complete:
                 return found
             return True if found else None
+
+        mutations = key_set.intersection(self._mutations.keys())
+        found = any(mut[1] is not None for mut in mutations)
+        if found:
+            return True
         return None
 
     def flush_if_timer_over(self, tp: TP) -> bool:
@@ -402,9 +404,9 @@ class BigTableStore(base.SerializedStore):
         return value
 
     def _bigtable_contains(self, key: bytes) -> bool:
-        # cache_contains = self._cache.contains(key)
-        # if cache_contains is not None:
-        #    return cache_contains
+        cache_contains = self._cache.contains(key)
+        if cache_contains is not None:
+            return cache_contains
 
         row = self.bt_table.read_row(key, filter_=self.row_filter)
         if row is not None:
@@ -412,9 +414,9 @@ class BigTableStore(base.SerializedStore):
         return False
 
     def _bigtable_contains_any(self, keys: Set[bytes]) -> bool:
-        # cache_contains = self._cache.contains_any(keys)
-        # if cache_contains is not None:
-            # return cache_contains
+        cache_contains = self._cache.contains_any(keys)
+        if cache_contains is not None:
+            return cache_contains
 
         rows = BT.RowSet()
         for key in keys:
