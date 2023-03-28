@@ -412,7 +412,7 @@ class BigTableStore(base.SerializedStore):
     def _bigtable_contains(self, key: bytes) -> bool:
         cache_contains = self._cache.contains(key)
         if cache_contains is not None:
-            return True
+            return cache_contains
 
         row = self.bt_table.read_row(key, filter_=self.row_filter)
         if row is not None:
