@@ -440,8 +440,8 @@ class BigTableStore(base.SerializedStore):
     ) -> Tuple[Optional[bytes], Optional[bytes]]:
         # first search cache:
         for key in keys:
-            value = self._cache.get(key)
-            if value is not None:
+            if self._cache.contains(key) is not None:
+                value = self._cache.get(key)
                 return key, value
 
         rows = BT.RowSet()
