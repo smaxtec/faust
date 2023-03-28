@@ -397,6 +397,8 @@ class BigTableStore(base.SerializedStore):
 
     def _bigtable_get(self, key: bytes) -> Optional[bytes]:
         if self._cache.contains(key) is not None:
+            # This means that we are sure that the value
+            # in the cache is either None or exists
             return self._cache.get(key)
         else:
             res = self.bt_table.read_row(key, filter_=self.row_filter)
