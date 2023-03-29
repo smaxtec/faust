@@ -196,7 +196,7 @@ class BigTableCacheManager:
         """
         # A mutation could be present in the buffer but not in
         # in the table.
-        if bt_key in self._mutations.keys():
+        if bt_key in self._mutations:
             return self._mutations[bt_key][1] is not None
 
         if self._value_cache is not None:
@@ -211,8 +211,8 @@ class BigTableCacheManager:
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
         # A mutation could be present in the buffer but not in
         # in the table.
-        mutations = key_set.intersection(self._mutations.keys())
-        found = any(mut[1] is not None for mut in mutations)
+        mutations = key_set.intersection(self._mutations)
+        found = any(self._mutations[mut][1] is not None for mut in mutations)
         if found:
             return True
 
@@ -249,7 +249,7 @@ class BigTableCacheManager:
         return flushed
 
     def _set_mutation(self, bt_key: bytes, value: Optional[bytes]):
-        if bt_key in self._mutations.keys():
+        if bt_key in self._mutations:
             row = self._mutations[bt_key][0]
         else:
             row = self.bt_table.direct_row(bt_key)
@@ -290,10 +290,9 @@ class BigTableCacheManager:
 
     def _init_mutation_buffer(self, options):
         self._mut_freq = options.get(BigTableStore.BT_MUTATION_FREQ_KEY, 0)
-        # To prevent that all tables write at the same time
         self._last_flush = (
             {}
-        )  # time.time() + self._mut_freq - random_start_offset
+        )
         self._max_mutations = options.get(
             BigTableStore.BT_MAX_MUTATIONS, 10000
         )
@@ -403,7 +402,7 @@ class BigTableStore(base.SerializedStore):
         else:
             res = self.bt_table.read_row(key, filter_=self.row_filter)
             if res is None:
-                self.log.info(f"{key=} not found in {self.table_name}")
+                self.log.error(f"{key=} not found in {self.table_name}")
                 value = None
             else:
                 value = self.bigtable_exrtact_row_data(res)
@@ -630,6 +629,7 @@ class BigTableStore(base.SerializedStore):
             ):
                 if row.row_key in found_mutations:
                     continue
+
                 if self._cache._value_cache is not None:
                     data = self.bigtable_exrtact_row_data(row)
                     # We don't want to set mutations here
