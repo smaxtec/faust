@@ -212,9 +212,9 @@ class BigTableCacheManager:
         # A mutation could be present in the buffer but not in
         # in the table.
         mutations = key_set.intersection(self._mutations)
-        found = any(self._mutations[mut][1] is not None for mut in mutations)
-        if found:
-            return True
+        if len(mutations) > 0:
+            found = any(self._mutations[mut][1] is not None for mut in mutations)
+            return found
 
         if self._value_cache is not None:
             self._fill_if_empty(key_set)
