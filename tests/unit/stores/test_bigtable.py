@@ -754,6 +754,14 @@ class TestBigTableStore:
 
     def test_bigtable_get_range_cache_hit(self, store):
         store._cache.get = MagicMock(return_value="cache_res")
+        store._cache.contains = MagicMock(return_value=False)
+        result_value = store._bigtable_get_range(
+            [self.TEST_KEY1, self.TEST_KEY3]
+        )
+        store.bt_table.read_rows.assert_not_called
+        assert result_value == (None, None)
+        
+        store._cache.contains = MagicMock(return_value=True)
         result_value = store._bigtable_get_range(
             [self.TEST_KEY1, self.TEST_KEY3]
         )
@@ -826,11 +834,7 @@ class TestBigTableStore:
         store._cache.delete = MagicMock(return_value=None)
 
         store._bigtable_del(self.TEST_KEY1)
-
-        store.bt_table.direct_row.assert_called_once_with(self.TEST_KEY1)
         store._cache.delete.assert_called_once_with(self.TEST_KEY1)
-        row_mock.delete.assert_called_once()
-        row_mock.commit.assert_called_once()
 
     def test_bigtable_set(self, store):
         row_mock = MagicMock()

@@ -209,12 +209,10 @@ class BigTableCacheManager:
         return None
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
-        # A mutation could be present in the buffer but not in
-        # in the table.
         mutations = key_set.intersection(self._mutations)
         if len(mutations) > 0:
             found = any(self._mutations[mut][1] is not None for mut in mutations)
-            return found
+            found = False
 
         if self._value_cache is not None:
             self._fill_if_empty(key_set)
@@ -438,10 +436,17 @@ class BigTableStore(base.SerializedStore):
         self, keys: Set[bytes]
     ) -> Tuple[Optional[bytes], Optional[bytes]]:
         # first search cache:
+        found_delete = False
         for key in keys:
-            if self._cache.contains(key) is not None:
+            is_cached = self._cache.contains(key)
+            if is_cached is True:
                 value = self._cache.get(key)
                 return key, value
+            elif is_cached is False:
+                found_delete = True
+
+        if found_delete:
+            return None, None
 
         rows = BT.RowSet()
         for key in keys:
@@ -464,6 +469,7 @@ class BigTableStore(base.SerializedStore):
             # All mutatations set here will be flushed to BT later
             self._cache.set(key, value)
         else:
+            # Except if we want to persist the current offset 
             row = self.bt_table.direct_row(key)
             row.set_cell(
                 self.column_family_id,
@@ -473,10 +479,10 @@ class BigTableStore(base.SerializedStore):
             row.commit()
 
     def _bigtable_del(self, key: bytes):
-        row = self.bt_table.direct_row(key)
+        # Just operate on the cache, 
+        # the mutation will be commited if the 
+        # mutations buffer is flushed
         self._cache.delete(key)
-        row.delete()
-        row.commit()
 
     def _maybe_get_partition_from_message(self) -> Optional[int]:
         event = current_event()
