@@ -186,8 +186,6 @@ class BigTableCacheManager:
         if self._value_cache is not None:
             self._fill_if_empty({bt_key})
             found = bt_key in self._value_cache.keys()
-            if self.is_complete:
-                return found
             return True if found else None
 
         return None
@@ -196,10 +194,7 @@ class BigTableCacheManager:
         if self._value_cache is not None:
             self._fill_if_empty(key_set)
             found = not self._value_cache.keys().isdisjoint(key_set)
-            if self.is_complete:
-                return found
             return True if found else None
-
         return None
 
     def delete_partition(self, partition: int):
@@ -363,17 +358,11 @@ class BigTableStore(base.SerializedStore):
         self, keys: Set[bytes]
     ) -> Tuple[Optional[bytes], Optional[bytes]]:
         # first search cache:
-        found_delete = False
         for key in keys:
             is_cached = self._cache.contains(key)
             if is_cached is True:
                 value = self._cache.get(key)
                 return key, value
-            elif is_cached is False:
-                found_delete = True
-
-        if found_delete:
-            return None, None
 
         rows = BT.RowSet()
         for key in keys:
