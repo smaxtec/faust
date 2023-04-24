@@ -673,7 +673,7 @@ class BigTableStore(base.SerializedStore):
                 self.log.error("Row number {} failed to write".format(i))
 
         for tp, offset in tp_offsets.items():
-            self.set_persisted_offset(tp, offset, recovery=True)
+            self.set_persisted_offset(tp, offset)
 
     def apply_changelog_batch(
         self,
