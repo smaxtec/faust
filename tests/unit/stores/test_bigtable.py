@@ -760,7 +760,7 @@ class TestBigTableStore:
         )
         store.bt_table.read_rows.assert_not_called
         assert result_value == (None, None)
-        
+
         store._cache.contains = MagicMock(return_value=True)
         result_value = store._bigtable_get_range(
             [self.TEST_KEY1, self.TEST_KEY3]
@@ -1344,3 +1344,83 @@ class TestBigTableStore:
         store._persist_changelog_batch.assert_called_once()
         tp_offsets = store._persist_changelog_batch.call_args_list[0].args[1]
         assert tp_offsets == {tp: 3, tp2: 4}
+
+
+    def test_modification_with_mutation_buffer(self, store):
+
+        # Mocks
+        TEST_TP = TP("a", 0)
+        TEST_OFFSET = 0
+        OFFSET_KEY = store.get_offset_key(TEST_TP).encode()
+
+        def real_set_scenario(key, value, offset):
+            store._set(key, value)
+            store._bigtable_set.reset_mock()
+            store.set_persisted_offset(TEST_TP, offset)
+            return offset + 1
+
+        def real_del_scenario(key, offset):
+            store._del(key)
+            store._bigtable_set.reset_mock()
+            store.set_persisted_offset(TEST_TP, offset)
+            return offset + 1
+
+        def assert_offset_persisted(offset):
+            store._bigtable_set.assert_called_with(
+                OFFSET_KEY, str(offset).encode(), persist_offset=True
+            )
+
+
+        row_mock = MagicMock()
+        row_mock.row_key = b"\x00TEST_KEY1"
+
+        store._cache.bt_table.direct_row = MagicMock(return_value=row_mock)
+        store._cache.bt_table.mutate_rows = MagicMock(
+            return_value=[MyTestResponse(0)] * 1
+        )
+        store._cache._set_mutation = MagicMock(wraps=store._cache._set_mutation)
+
+        time.time = MagicMock(return_value=0)
+        store._bigtable_set = MagicMock(wraps=store._bigtable_set)
+        partition = 0
+        faust.stores.bigtable.get_current_partition = MagicMock(
+            return_value=partition
+        )
+        store._cache.set_partition = MagicMock()
+        # Flush every 10 seconds
+        store._cache._mut_freq = 10
+        store._cache._last_flush = {TEST_TP.partition: 0}
+        res = store._contains(self.TEST_KEY1)
+        store._bigtable_set.assert_not_called()
+        assert res is False
+
+        TEST_OFFSET = real_set_scenario(self.TEST_KEY1, self.TEST_KEY1, TEST_OFFSET)
+        res = store._contains(self.TEST_KEY1)
+        assert res is True
+        assert store._cache._set_mutation.call_count == TEST_OFFSET
+        assert len(store._cache._mutations) == 1
+        store._bigtable_set.assert_not_called()
+
+        TEST_OFFSET = real_set_scenario(self.TEST_KEY1, self.TEST_KEY1, TEST_OFFSET)
+        res = store._contains(self.TEST_KEY1)
+        assert res is True
+        assert store._cache._set_mutation.call_count == TEST_OFFSET
+        assert len(store._cache._mutations) == 1
+        store._bigtable_set.assert_not_called()
+
+        time.time = MagicMock(return_value=20) # Now we should flush
+
+        TEST_OFFSET = real_del_scenario(self.TEST_KEY1, TEST_OFFSET)
+        res = store._contains(self.TEST_KEY1)
+        assert res is False
+
+        assert_offset_persisted(TEST_OFFSET - 1)
+        assert len(store._cache._mutations) == 0
+        assert store._cache._set_mutation.call_count == TEST_OFFSET
+
+        TEST_OFFSET = real_set_scenario(self.TEST_KEY1, self.TEST_KEY1, TEST_OFFSET)
+        res = store._contains(self.TEST_KEY1)
+        store._bigtable_set.assert_not_called()
+        assert store._cache._set_mutation.call_count == TEST_OFFSET
+        assert len(store._cache._mutations) == 1
+        assert res is True

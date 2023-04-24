@@ -212,7 +212,7 @@ class BigTableCacheManager:
         mutations = key_set.intersection(self._mutations)
         if len(mutations) > 0:
             found = any(self._mutations[mut][1] is not None for mut in mutations)
-            found = False
+            return found
 
         if self._value_cache is not None:
             self._fill_if_empty(key_set)
@@ -469,7 +469,7 @@ class BigTableStore(base.SerializedStore):
             # All mutatations set here will be flushed to BT later
             self._cache.set(key, value)
         else:
-            # Except if we want to persist the current offset 
+            # Except if we want to persist the current offset
             row = self.bt_table.direct_row(key)
             row.set_cell(
                 self.column_family_id,
@@ -479,8 +479,8 @@ class BigTableStore(base.SerializedStore):
             row.commit()
 
     def _bigtable_del(self, key: bytes):
-        # Just operate on the cache, 
-        # the mutation will be commited if the 
+        # Just operate on the cache,
+        # the mutation will be commited if the
         # mutations buffer is flushed
         self._cache.delete(key)
 
