@@ -1026,7 +1026,7 @@ class TestBigTableStore:
         )
 
         assert store.set_persisted_offset.call_count == len(offset_batch)
-        store.set_persisted_offset.assert_called_with(tp3, 333, recovery=True)
+        store.set_persisted_offset.assert_called_with(tp3, 333)
         store.log.error.assert_not_called()
 
         # Scenario 2: all failure
