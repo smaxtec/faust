@@ -95,7 +95,6 @@ class BigTableValueCache:
 class BigTableCacheManager:
     _partition_cache: LRUCache[bytes, int]
     _value_cache: Optional[BigTableValueCache]
-    _mutations: Dict[bytes, Tuple[BT.DirectRow, Optional[bytes]]]
 
     def __init__(self, app, options: Dict, bt_table: BT.Table) -> None:
         self.log = logging.getLogger(__name__)
@@ -106,7 +105,6 @@ class BigTableCacheManager:
         )
         self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
         self._init_value_cache(options)
-        self._init_mutation_buffer(options)
         self._finished_preloads: Set[bytes] = set()
 
     def _fill_if_empty(self, bt_keys):
@@ -144,13 +142,8 @@ class BigTableCacheManager:
                 for row in self.bt_table.read_rows(
                     row_set=row_set, filter_=row_filter
                 ):
-                    if row.row_key in self._mutations.keys():
-                        mutation_val = self._mutations[row.row_key][1]
-                        if mutation_val is not None:
-                            self._value_cache[row.row_key] = mutation_val
-                    else:
-                        value = BigTableStore.bigtable_exrtact_row_data(row)
-                        self._value_cache[row.row_key] = value
+                    value = BigTableStore.bigtable_exrtact_row_data(row)
+                    self._value_cache[row.row_key] = value
                     yield row.row_key
             except Exception as e:
                 self.log.info(
@@ -165,8 +158,6 @@ class BigTableCacheManager:
         self._finished_preloads.update(preload_ids_todo)
 
     def get(self, bt_key: bytes) -> Optional[bytes]:
-        if bt_key in self._mutations.keys():
-            return self._mutations[bt_key][1]
         if self._value_cache is not None:
             self._fill_if_empty({bt_key})
             if bt_key in self._value_cache.keys():
@@ -176,12 +167,10 @@ class BigTableCacheManager:
     def set(self, bt_key: bytes, value: Optional[bytes]) -> None:
         if self._value_cache is not None:
             self._value_cache[bt_key] = value
-        self._set_mutation(bt_key, value)
 
     def delete(self, bt_key: bytes) -> None:
         if self._value_cache is not None:
             del self._value_cache[bt_key]
-        self._set_mutation(bt_key, None)
 
     def get_partition(self, user_key: bytes) -> int:
         return self._partition_cache[user_key]
@@ -194,11 +183,6 @@ class BigTableCacheManager:
         If we return None here, this means, that no assumption
         about the current key can be made.
         """
-        # A mutation could be present in the buffer but not in
-        # in the table.
-        if bt_key in self._mutations:
-            return self._mutations[bt_key][1] is not None
-
         if self._value_cache is not None:
             self._fill_if_empty({bt_key})
             found = bt_key in self._value_cache.keys()
@@ -209,11 +193,6 @@ class BigTableCacheManager:
         return None
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
-        mutations = key_set.intersection(self._mutations)
-        if len(mutations) > 0:
-            found = any(self._mutations[mut][1] is not None for mut in mutations)
-            return found
-
         if self._value_cache is not None:
             self._fill_if_empty(key_set)
             found = not self._value_cache.keys().isdisjoint(key_set)
@@ -223,52 +202,12 @@ class BigTableCacheManager:
 
         return None
 
-    def flush_if_timer_over(self, tp: TP) -> bool:
-        now = time.time()
-        flushed = False
-        last_flush = self._last_flush.get(tp.partition, now - self._mut_freq)
-        max_reached = len(self._mutations) >= self._max_mutations
-        if now >= last_flush + self._mut_freq or max_reached:
-            mutatations_copy = self._mutations.copy()
-            mutatations = [
-                m[0]
-                for m in mutatations_copy.values()
-                if tp.partition == m[0].row_key[0]
-            ]
-            if len(mutatations) > 0:
-                response = self.bt_table.mutate_rows(mutatations)
-                for i, status in enumerate(response):
-                    if status.code != 0:
-                        self.log.error(f"Row number {i} failed to write")
-                    else:
-                        self._mutations.pop(mutatations[i].row_key)
-            flushed = True
-            self._last_flush[tp.partition] = now
-        return flushed
-
-    def _set_mutation(self, bt_key: bytes, value: Optional[bytes]):
-        if bt_key in self._mutations:
-            row = self._mutations[bt_key][0]
-        else:
-            row = self.bt_table.direct_row(bt_key)
-
-        if value is None:
-            row.delete()
-        else:
-            row.set_cell(
-                "FaustColumnFamily",  # TODO: Define this globally
-                "DATA",
-                value,
-            )
-        self._mutations[bt_key] = row, value
-
     def delete_partition(self, partition: int):
         if self._value_cache is not None:
             keys = set(self._value_cache.keys())
             for k in keys:
                 if k[0] == partition:
                     del self._value_cache[k]
-                    self._mutations.pop(k, None)
                     self._partition_cache.pop(k[1:], None)
 
     def _init_value_cache(
@@ -286,16 +225,6 @@ class BigTableCacheManager:
             self._value_cache = None
             self.is_complete = False
 
-    def _init_mutation_buffer(self, options):
-        self._mut_freq = options.get(BigTableStore.BT_MUTATION_FREQ_KEY, 0)
-        self._last_flush = (
-            {}
-        )
-        self._max_mutations = options.get(
-            BigTableStore.BT_MAX_MUTATIONS, 10000
-        )
-        self._mutations = {}
-
 
 class BigTableStore(base.SerializedStore):
     """Bigtable table storage."""
@@ -311,8 +240,6 @@ class BigTableStore(base.SerializedStore):
     BT_OFFSET_KEY_PREFIX = "bt_offset_key_prefix"
     BT_PROJECT_KEY = "bt_project_key"
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
-    BT_MUTATION_FREQ_KEY = "bt_mutation_freq_key"
-    BT_MAX_MUTATIONS = "bt_max_mutations"
     BT_CUSTOM_KEY_TRANSLATOR_KEY = "bt_custom_key_translator_key"
     VALUE_CACHE_INVALIDATION_TIME_KEY = "value_cache_invalidation_time_key"
     VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
@@ -462,27 +389,22 @@ class BigTableStore(base.SerializedStore):
         # Not found
         return None, None
 
-    def _bigtable_set(
-        self, key: bytes, value: Optional[bytes], persist_offset=False
-    ):
-        if not persist_offset:
-            # All mutatations set here will be flushed to BT later
-            self._cache.set(key, value)
-        else:
-            # Except if we want to persist the current offset
-            row = self.bt_table.direct_row(key)
-            row.set_cell(
-                self.column_family_id,
-                self.column_name,
-                value,
-            )
-            row.commit()
+    def _bigtable_set(self, bt_key: bytes, value: Optional[bytes]):
+        self._cache.set(bt_key, value)
+        row = self.bt_table.direct_row(bt_key)
+        row.set_cell(
+            self.column_family_id,
+            self.column_name,
+            value,
+        )
+        row.commit()
 
-    def _bigtable_del(self, key: bytes):
-        # Just operate on the cache,
-        # the mutation will be commited if the
-        # mutations buffer is flushed
-        self._cache.delete(key)
+    def _bigtable_del(self, bt_key: bytes):
+        self._cache.delete(bt_key)
+        row = self.bt_table.direct_row(bt_key)
+        row.delete()
+        row.commit()
+
 
     def _maybe_get_partition_from_message(self) -> Optional[int]:
         event = current_event()
@@ -624,21 +546,11 @@ class BigTableStore(base.SerializedStore):
                 prefix_end = self._get_partition_prefix(partition + 1)
                 row_set.add_row_range_from_keys(prefix_start, prefix_end)
 
-            found_mutations = set()
-            for k, mut in self._cache._mutations.items():
-                if mut[1] is not None:
-                    yield self._get_faust_key(k)
-                found_mutations.add(k)
-
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=self.row_filter
             ):
-                if row.row_key in found_mutations:
-                    continue
-
                 if self._cache._value_cache is not None:
                     data = self.bigtable_exrtact_row_data(row)
-                    # We don't want to set mutations here
                     self._cache._value_cache[row.row_key] = data
                     preload_id = self._cache._preload_id_from_key(row.row_key)
                     self._cache._finished_preloads.add(preload_id)
@@ -733,7 +645,7 @@ class BigTableStore(base.SerializedStore):
         return None
 
     def set_persisted_offset(
-        self, tp: TP, offset: int, recovery=False
+        self, tp: TP, offset: int
     ) -> None:
         """Set the last persisted offset for this table.
 
@@ -743,12 +655,10 @@ class BigTableStore(base.SerializedStore):
         we were not an active replica.
         """
         try:
-            if recovery or self._cache.flush_if_timer_over(tp):
-                offset_key = self.get_offset_key(tp).encode()
-                self._bigtable_set(
-                    offset_key, str(offset).encode(), persist_offset=True
-                )
-
+            offset_key = self.get_offset_key(tp).encode()
+            self._bigtable_set(
+                offset_key, str(offset).encode()
+            )
         except Exception as e:
             self.log.error(
                 f"Failed to commit offset for {self.table.name}"
