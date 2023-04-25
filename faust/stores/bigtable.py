@@ -247,7 +247,7 @@ class BigTableStore(base.SerializedStore):
         try:
             self._bigtable_setup(table, options)
             self._cache = BigTableCacheManager(app, options, self.bt_table)
-            self.batcher = self.bt_table.mutations_batcher(flush_count=300)
+            self.batcher = self.bt_table.mutations_batcher(flush_count=1000)
             self.commit_next_offset = False
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
@@ -311,9 +311,10 @@ class BigTableStore(base.SerializedStore):
             # in the cache is either None or exists
             return self._cache.get(key)
         else:
+            self.batcher.flush()
+            self.commit_next_offset = True
             res = self.bt_table.read_row(key, filter_=self.row_filter)
             if res is None:
-                self.log.error(f"{key=} not found in {self.table_name}")
                 value = None
             else:
                 value = self.bigtable_exrtact_row_data(res)
@@ -360,6 +361,9 @@ class BigTableStore(base.SerializedStore):
             if is_cached is True:
                 value = self._cache.get(key)
                 return key, value
+
+        self.batcher.flush()
+        self.commit_next_offset = True
 
         rows = BT.RowSet()
         for key in keys:
@@ -553,21 +557,8 @@ class BigTableStore(base.SerializedStore):
         try:
             if not self.app.conf.store_check_exists:
                 return True
-            partition = self._maybe_get_partition_from_message()
-            if partition is not None:
-                key_with_partition = self._get_bigtable_key(
-                    key, partition=partition
-                )
-                return self._bigtable_contains(key_with_partition)
-            else:
-                keys_to_search = set()
-                for partition in self._partitions_for_key(key):
-                    key_with_partition = self._get_bigtable_key(
-                        key, partition=partition
-                    )
-                    keys_to_search.add(key_with_partition)
+            return self._get(key) is not None
 
-                return self._bigtable_contains_any(keys_to_search)
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _contains for table "
@@ -626,6 +617,8 @@ class BigTableStore(base.SerializedStore):
                 offset_key = self.get_offset_key(tp).encode()
                 self._bigtable_set(offset_key, str(offset).encode())
                 self.batcher.flush()
+                if not self.commit_next_offset:
+                    self.log.info(f"Committed offset {offset} for {self.table.name}")
                 self.commit_next_offset = False
 
         except Exception as e:
