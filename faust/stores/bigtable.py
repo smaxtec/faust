@@ -4,8 +4,17 @@ import gc
 import logging
 import time
 import traceback
-from collections import deque
-from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 try:  # pragma: no cover
     from google.cloud.bigtable import column_family
@@ -109,7 +118,7 @@ class BigTableCacheManager:
         for partition in partitions:
             preload_id = partition.to_bytes(1, "little")
             row_set.add_row_range_from_keys(
-                start_key=preload_id, end_key=preload_id, end_inclusive=True
+                start_key=preload_id, end_key=preload_id + b"\xff"
             )
         return row_set, row_filter
 
@@ -609,11 +618,13 @@ class BigTableStore(base.SerializedStore):
         we were not an active replica.
         """
         try:
-            if recovery or self.commit_next_offset or len(self.batcher.rows) == 0:
+            if (
+                recovery
+                or self.commit_next_offset
+                or len(self.batcher.rows) == 0
+            ):
                 offset_key = self.get_offset_key(tp).encode()
-                self._bigtable_set(
-                    offset_key, str(offset).encode()
-                )
+                self._bigtable_set(offset_key, str(offset).encode())
                 self.batcher.flush()
                 self.commit_next_offset = False
 
