@@ -99,67 +99,46 @@ class BigTableCacheManager:
     def __init__(self, app, options: Dict, bt_table: BT.Table) -> None:
         self.log = logging.getLogger(__name__)
         self.bt_table: BT.Table = bt_table
-        self.get_preload_prefix_len = options.get(
-            BigTableStore.CACHE_PRELOAD_PREFIX_LEN_FUN_KEY,
-            lambda _: 1,  # Default partition only
-        )
         self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
         self._init_value_cache(options)
-        self._finished_preloads: Set[bytes] = set()
+        self.filled_partitions = set()
 
-    def _fill_if_empty(self, bt_keys):
-        # This is a hack, that enables iterating over all results
-        # without saving them in memory
-        deque(self._fill_if_empty_and_yield(bt_keys), maxlen=0)
-
-    def _preload_id_from_key(self, bt_key):
-        prefix = bt_key[: self.get_preload_prefix_len(bt_key)]
-        return prefix
-
-    def _get_preload_rowset_and_filter(self, preload_ids):
+    def _get_preload_rowset(self, partitions: Set[int]):
         row_set = BT.RowSet()
         row_filter = CellsColumnLimitFilter(1)
-        for preload_id in preload_ids:
+        for partition in partitions:
+            preload_id = partition.to_bytes(1, "little")
             row_set.add_row_range_from_keys(
                 start_key=preload_id, end_key=preload_id, end_inclusive=True
             )
         return row_set, row_filter
 
-    def _fill_if_empty_and_yield(self, bt_keys: Set[bytes]):
-        preload_ids = set()
-        for k in bt_keys:
-            preload_ids.add(self._preload_id_from_key(bt_key=k))
-        preload_ids_todo = preload_ids.difference(self._finished_preloads)
-        if len(preload_ids_todo) == 0:
+    def fill(self, partitions: Set[int]):
+        start = time.time()
+        partitions = partitions - self.filled_partitions
+        if len(partitions) == 0:
             return
 
-        start = time.time()
         if self._value_cache is not None:
             try:
-                row_set, row_filter = self._get_preload_rowset_and_filter(
-                    preload_ids_todo
-                )
+                row_set, row_filter = self._get_preload_rowset(partitions)
                 for row in self.bt_table.read_rows(
                     row_set=row_set, filter_=row_filter
                 ):
                     value = BigTableStore.bigtable_exrtact_row_data(row)
                     self._value_cache[row.row_key] = value
-                    yield row.row_key
             except Exception as e:
-                self.log.info(
-                    f"BigTableStore fill failed for {preload_ids_todo=}, {bt_keys=}"
-                )
+                self.log.info(f"BigTableStore fill failed for {partitions=}")
                 raise e
+            self.filled_partitions.update(partitions)
         end = time.time()
         self.log.info(
             "BigTableStore: Finished fill for table"
-            f"{self.bt_table.name}:{preload_ids_todo} in {end-start}s"
+            f"{self.bt_table.name}:{partitions} in {end-start}s"
         )
-        self._finished_preloads.update(preload_ids_todo)
 
     def get(self, bt_key: bytes) -> Optional[bytes]:
         if self._value_cache is not None:
-            self._fill_if_empty({bt_key})
             if bt_key in self._value_cache.keys():
                 return self._value_cache[bt_key]
         return None
@@ -171,6 +150,11 @@ class BigTableCacheManager:
     def delete(self, bt_key: bytes) -> None:
         if self._value_cache is not None:
             del self._value_cache[bt_key]
+
+    def items(self) -> Iterable[Tuple[bytes, bytes]]:
+        if self._value_cache is not None:
+            return self._value_cache.data.items()
+        return []
 
     def get_partition(self, user_key: bytes) -> int:
         return self._partition_cache[user_key]
@@ -184,16 +168,18 @@ class BigTableCacheManager:
         about the current key can be made.
         """
         if self._value_cache is not None:
-            self._fill_if_empty({bt_key})
             found = bt_key in self._value_cache.keys()
+            if self._value_cache.is_complete:
+                return found
             return True if found else None
 
         return None
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
         if self._value_cache is not None:
-            self._fill_if_empty(key_set)
             found = not self._value_cache.keys().isdisjoint(key_set)
+            if self._value_cache.is_complete:
+                return found
             return True if found else None
         return None
 
@@ -235,11 +221,9 @@ class BigTableStore(base.SerializedStore):
     BT_OFFSET_KEY_PREFIX = "bt_offset_key_prefix"
     BT_PROJECT_KEY = "bt_project_key"
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
-    BT_CUSTOM_KEY_TRANSLATOR_KEY = "bt_custom_key_translator_key"
     VALUE_CACHE_INVALIDATION_TIME_KEY = "value_cache_invalidation_time_key"
     VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
     VALUE_CACHE_ENABLE_KEY = "value_cache_enable_key"
-    CACHE_PRELOAD_PREFIX_LEN_FUN_KEY = "cache_preload_prefix_len_fun_key"
 
     def __init__(
         self,
@@ -254,6 +238,8 @@ class BigTableStore(base.SerializedStore):
         try:
             self._bigtable_setup(table, options)
             self._cache = BigTableCacheManager(app, options, self.bt_table)
+            self.batcher = self.bt_table.mutations_batcher(flush_count=300)
+            self.commit_next_offset = False
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
@@ -265,10 +251,6 @@ class BigTableStore(base.SerializedStore):
         return user_key
 
     def _set_options(self, options) -> None:
-        self._transform_key_to_bt, self._transform_key_from_bt = options.get(
-            BigTableStore.BT_CUSTOM_KEY_TRANSLATOR_KEY,
-            (self.default_translator, self.default_translator),
-        )
         self._all_options = options
         self.table_name_generator = options.get(
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
@@ -333,6 +315,9 @@ class BigTableStore(base.SerializedStore):
         if cache_contains is not None:
             return cache_contains
 
+        self.batcher.flush()
+        self.commit_next_offset = True
+
         row = self.bt_table.read_row(key, filter_=self.row_filter)
         if row is not None:
             return True
@@ -342,6 +327,9 @@ class BigTableStore(base.SerializedStore):
         cache_contains = self._cache.contains_any(keys)
         if cache_contains is not None:
             return cache_contains
+
+        self.batcher.flush()
+        self.commit_next_offset = True
 
         rows = BT.RowSet()
         for key in keys:
@@ -386,14 +374,13 @@ class BigTableStore(base.SerializedStore):
             self.column_name,
             value,
         )
-        row.commit()
+        self.batcher.mutate(row)
 
     def _bigtable_del(self, bt_key: bytes):
         self._cache.delete(bt_key)
         row = self.bt_table.direct_row(bt_key)
         row.delete()
-        row.commit()
-
+        self.batcher.mutate(row)
 
     def _maybe_get_partition_from_message(self) -> Optional[int]:
         event = current_event()
@@ -411,15 +398,13 @@ class BigTableStore(base.SerializedStore):
         return b"".join([partition_bytes])
 
     def _get_faust_key(self, key: bytes) -> bytes:
-        key_with_no_partition = key[1:]
-        new_key = self._transform_key_from_bt(key_with_no_partition)
-        return new_key
+        faust_key = key[1:]
+        return faust_key
 
     def _get_bigtable_key(self, key: bytes, partition: int) -> bytes:
-        key = self._transform_key_to_bt(key)
         prefix = self._get_partition_prefix(partition)
-        new_key = prefix + key
-        return new_key
+        bt_key = prefix + key
+        return bt_key
 
     def _partitions_for_key(self, key: bytes) -> Iterable[int]:
         try:
@@ -502,19 +487,24 @@ class BigTableStore(base.SerializedStore):
 
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
-            row_set = BT.RowSet()
-            for partition in self._active_partitions():
-                prefix_start = self._get_partition_prefix(partition)
-                prefix_end = self._get_partition_prefix(partition + 1)
-                row_set.add_row_range_from_keys(prefix_start, prefix_end)
+            if self._cache._value_cache is not None:
+                self._cache.fill(set(self._active_partitions()))
+                for key, value in self._cache.items():
+                    yield self._get_faust_key(key), value
+            else:
+                row_set = BT.RowSet()
+                for partition in self._active_partitions():
+                    prefix_start = self._get_partition_prefix(partition)
+                    prefix_end = self._get_partition_prefix(partition + 1)
+                    row_set.add_row_range_from_keys(prefix_start, prefix_end)
 
-            for row in self.bt_table.read_rows(
-                row_set=row_set, filter_=self.row_filter
-            ):
-                yield (
-                    self._get_faust_key(row.row_key),
-                    self.bigtable_exrtact_row_data(row),
-                )
+                for row in self.bt_table.read_rows(
+                    row_set=row_set, filter_=self.row_filter
+                ):
+                    yield (
+                        self._get_faust_key(row.row_key),
+                        self.bigtable_exrtact_row_data(row),
+                    )
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error "
@@ -525,33 +515,8 @@ class BigTableStore(base.SerializedStore):
 
     def _iterkeys(self) -> Iterator[bytes]:
         try:
-            start = time.time()
-            partitions = self._active_partitions()
-
-            self.log.info(f"Start iterkeys for {self.table_name}")
-            row_set = BT.RowSet()
-            for partition in partitions:
-                prefix_start = self._get_partition_prefix(partition)
-                prefix_end = self._get_partition_prefix(partition + 1)
-                row_set.add_row_range_from_keys(prefix_start, prefix_end)
-
-            for row in self.bt_table.read_rows(
-                row_set=row_set, filter_=self.row_filter
-            ):
-                if self._cache._value_cache is not None:
-                    data = self.bigtable_exrtact_row_data(row)
-                    self._cache._value_cache[row.row_key] = data
-                    preload_id = self._cache._preload_id_from_key(row.row_key)
-                    self._cache._finished_preloads.add(preload_id)
-                    partition = row.row_key[0]
-                    key = self._get_faust_key(row.row_key)
-                    self._cache.set_partition(key, partition)
-                    yield key
-
-            end = time.time()
-            self.log.info(
-                f"Finished iterkeys for {self.table_name} in {end - start}s"
-            )
+            for row in self._iteritems():
+                yield row[0]
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _iterkeys "
@@ -634,7 +599,7 @@ class BigTableStore(base.SerializedStore):
         return None
 
     def set_persisted_offset(
-        self, tp: TP, offset: int
+        self, tp: TP, offset: int, recovery: bool = False
     ) -> None:
         """Set the last persisted offset for this table.
 
@@ -644,10 +609,14 @@ class BigTableStore(base.SerializedStore):
         we were not an active replica.
         """
         try:
-            offset_key = self.get_offset_key(tp).encode()
-            self._bigtable_set(
-                offset_key, str(offset).encode()
-            )
+            if recovery or self.commit_next_offset or len(self.batcher.rows) == 0:
+                offset_key = self.get_offset_key(tp).encode()
+                self._bigtable_set(
+                    offset_key, str(offset).encode()
+                )
+                self.batcher.flush()
+                self.commit_next_offset = False
+
         except Exception as e:
             self.log.error(
                 f"Failed to commit offset for {self.table.name}"
@@ -741,6 +710,11 @@ class BigTableStore(base.SerializedStore):
             self._cache.delete_partition(tp.partition)
         gc.collect()
 
+    def assign_partitions(self, tps: Set[TP]) -> None:
+        self.batcher.flush()
+        self.commit_next_offset = True
+        self._cache.fill({tp.partition for tp in tps})
+
     async def on_rebalance(
         self,
         assigned: Set[TP],
@@ -758,7 +732,5 @@ class BigTableStore(base.SerializedStore):
             generation_id: the metadata generation identifier for the re-balance
         """
         async with self._db_lock:
-            self.logger.info(
-                f"BigTableStore: Rebalancing {revoked=}, {newly_assigned=}"
-            )
             self.revoke_partitions(revoked)
+            self.assign_partitions(newly_assigned)
