@@ -459,7 +459,8 @@ class BigTableStore(base.SerializedStore):
             if self._cache._value_cache is not None:
                 partitions_to_fill -= self._cache.filled_partitions
                 for key, value in self._cache.items():
-                    yield self._get_faust_key(key), value
+                    if value is not None:
+                        yield self._get_faust_key(key), value
 
             if len(partitions_to_fill) == 0:
                 return
