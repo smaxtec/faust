@@ -152,7 +152,6 @@ class BigTableCacheManager:
             f"get is not implemented for {self.__class__} with no value cache"
         )
 
-
     def set(self, bt_key: bytes, value: Optional[bytes]) -> None:
         if self._value_cache is not None:
             self._value_cache[bt_key] = value
@@ -310,6 +309,16 @@ class BigTableStore(base.SerializedStore):
             self._cache.set(bt_key, value)
         return value
 
+    def __getitem__(self, key: bytes) -> bytes:
+        if b"6274106275ced82d58f3c3be" in key:
+            self.log.info("GET ", key)
+            self.log.info("ENCODED ", self._encode_key(key))
+        value = self._get(self._encode_key(key))
+        if b"6274106275ced82d58f3c3be" in key:
+            self.log.info("GOT ", key, value)
+        if value is None:
+            raise KeyError(key)
+        return self._decode_value(value)
 
     def _bigtable_get_range(
         self, bt_keys: Set[bytes]
