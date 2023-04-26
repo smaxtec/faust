@@ -300,6 +300,8 @@ class BigTableStore(base.SerializedStore):
         else:
             # We want to be sure that we don't have any pending writes
             self.batcher.flush()
+            if b"6274106275ced82d58f3c3be" in bt_key:
+                self.log.info(f"Reading {bt_key=} from BigTable")
             res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
             if res is None:
                 value = None
@@ -308,17 +310,6 @@ class BigTableStore(base.SerializedStore):
             # Has no effect if value_cace is None
             self._cache.set(bt_key, value)
         return value
-
-    def __getitem__(self, key: bytes) -> bytes:
-        if b"6274106275ced82d58f3c3be" in key:
-            self.log.info("GET ", key)
-            self.log.info("ENCODED ", self._encode_key(key))
-        value = self._get(self._encode_key(key))
-        if b"6274106275ced82d58f3c3be" in key:
-            self.log.info("GOT ", key, value)
-        if value is None:
-            raise KeyError(key)
-        return self._decode_value(value)
 
     def _bigtable_get_range(
         self, bt_keys: Set[bytes]
@@ -391,6 +382,9 @@ class BigTableStore(base.SerializedStore):
 
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
+
+            if b"6274106275ced82d58f3c3be" in key:
+                self.log.info("GET ", key)
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
                 key_with_partition = self._get_bigtable_key(
@@ -400,6 +394,8 @@ class BigTableStore(base.SerializedStore):
                 value = self._bigtable_get(key_with_partition)
                 if value is not None:
                     self._cache.set_partition(key, partition)
+                    if b"6274106275ced82d58f3c3be" in key:
+                        self.log.info("GOT ", key, value is not None)
                     return value
             else:
                 keys = set()
@@ -413,7 +409,12 @@ class BigTableStore(base.SerializedStore):
                 if value is not None:
                     partition = key_with_partition[0]
                     self._cache.set_partition(key, partition)
+                    if b"6274106275ced82d58f3c3be" in key:
+                        self.log.info("GOT ", key, value is not None)
                     return value
+
+            if b"6274106275ced82d58f3c3be" in key:
+                self.log.info("GOT ", key, False)
             return None
         except Exception as ex:
             self.log.error(
