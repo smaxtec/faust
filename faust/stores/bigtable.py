@@ -300,8 +300,7 @@ class BigTableStore(base.SerializedStore):
         else:
             # We want to be sure that we don't have any pending writes
             self.batcher.flush()
-            if b"6274106275ced82d58f3c3be" in bt_key:
-                self.log.info(f"Reading {bt_key=} from BigTable")
+            self.log.info(f"Reading {bt_key=} from BigTable")
             res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
             if res is None:
                 value = None
@@ -383,8 +382,7 @@ class BigTableStore(base.SerializedStore):
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
 
-            if b"6274106275ced82d58f3c3be" in key:
-                self.log.info("GET ", key)
+            self.log.info("GET ", key)
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
                 key_with_partition = self._get_bigtable_key(
@@ -394,8 +392,7 @@ class BigTableStore(base.SerializedStore):
                 value = self._bigtable_get(key_with_partition)
                 if value is not None:
                     self._cache.set_partition(key, partition)
-                    if b"6274106275ced82d58f3c3be" in key:
-                        self.log.info("GOT ", key, value is not None)
+                    self.log.info("GOT ", key, value is not None)
                     return value
             else:
                 keys = set()
@@ -409,12 +406,10 @@ class BigTableStore(base.SerializedStore):
                 if value is not None:
                     partition = key_with_partition[0]
                     self._cache.set_partition(key, partition)
-                    if b"6274106275ced82d58f3c3be" in key:
-                        self.log.info("GOT ", key, value is not None)
+                    self.log.info("GOT ", key, value is not None)
                     return value
 
-            if b"6274106275ced82d58f3c3be" in key:
-                self.log.info("GOT ", key, False)
+            self.log.info("GOT ", key, False)
             return None
         except Exception as ex:
             self.log.error(
@@ -614,30 +609,21 @@ class BigTableStore(base.SerializedStore):
                 of a changelog event.
         """
         tp_offsets: Dict[TP, int] = {}
-        row_mutations = []
         for event in batch:
             tp, offset = event.message.tp, event.message.offset
             tp_offsets[tp] = (
                 offset if tp not in tp_offsets else max(offset, tp_offsets[tp])
             )
             msg = event.message
-            offset_key = self._get_bigtable_key(
-                msg.key, partition=tp.partition
-            )
-            row = self.bt_table.direct_row(offset_key)
+            bt_key = self._get_bigtable_key(msg.key, partition=tp.partition)
             if msg.value is None:
-                row.delete()
+                self._bigtable_del(bt_key)
             else:
-                row.set_cell(
-                    self.column_family_id,
-                    self.column_name,
-                    msg.value,
-                )
-            row_mutations.append(row)
-        self._persist_changelog_batch(
-            row_mutations,
-            tp_offsets,
-        )
+                self._bigtable_set(bt_key, msg.value)
+
+        for tp, offset in tp_offsets.items():
+            self.set_persisted_offset(tp, offset)
+
 
     async def backup_partition(
         self,
