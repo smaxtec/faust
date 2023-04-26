@@ -82,10 +82,9 @@ class BigTableValueCache:
             return res
 
     def __setitem__(self, key, value) -> None:
-        if value is not None:
-            self._maybe_ttl_clear()
-            if not self.ttl_over:
-                self.data[key] = value
+        self._maybe_ttl_clear()
+        if not self.ttl_over:
+            self.data[key] = value
 
     def __delitem__(self, key):
         self.data.pop(key, None)
@@ -148,17 +147,15 @@ class BigTableCacheManager:
 
     def get(self, bt_key: bytes) -> Optional[bytes]:
         if self._value_cache is not None:
-            if bt_key in self._value_cache.keys():
-                return self._value_cache[bt_key]
-        return None
+            return self._value_cache[bt_key]
+        raise NotImplementedError(
+            f"get is not implemented for {self.__class__} with no value cache"
+        )
+
 
     def set(self, bt_key: bytes, value: Optional[bytes]) -> None:
         if self._value_cache is not None:
             self._value_cache[bt_key] = value
-
-    def delete(self, bt_key: bytes) -> None:
-        if self._value_cache is not None:
-            del self._value_cache[bt_key]
 
     def items(self) -> Iterable[Tuple[bytes, bytes]]:
         if self._value_cache is not None:
@@ -177,20 +174,14 @@ class BigTableCacheManager:
         about the current key can be made.
         """
         if self._value_cache is not None:
-            found = bt_key in self._value_cache.keys()
-            if self._value_cache.is_complete:
-                return found
-            return True if found else None
-
-        return None
+            return bt_key in self._value_cache.keys()
+        return False
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
         if self._value_cache is not None:
             found = not self._value_cache.keys().isdisjoint(key_set)
-            if self._value_cache.is_complete:
-                return found
-            return True if found else None
-        return None
+            return found
+        return False
 
     def delete_partition(self, partition: int):
         if self._value_cache is not None:
@@ -248,7 +239,6 @@ class BigTableStore(base.SerializedStore):
             self._bigtable_setup(table, options)
             self._cache = BigTableCacheManager(app, options, self.bt_table)
             self.batcher = self.bt_table.mutations_batcher(flush_count=1000)
-            self.commit_next_offset = False
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
@@ -305,70 +295,35 @@ class BigTableStore(base.SerializedStore):
     def bigtable_exrtact_row_data(row_data):
         return list(row_data.to_dict().values())[0][0].value
 
-    def _bigtable_get(self, key: bytes) -> Optional[bytes]:
-        if self._cache.contains(key) is not None:
-            # This means that we are sure that the value
-            # in the cache is either None or exists
-            return self._cache.get(key)
+    def _bigtable_get(self, bt_key: bytes) -> Optional[bytes]:
+        if self._cache.contains(bt_key):
+            return self._cache.get(bt_key)
         else:
+            # We want to be sure that we don't have any pending writes
             self.batcher.flush()
-            self.commit_next_offset = True
-            res = self.bt_table.read_row(key, filter_=self.row_filter)
+            res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
             if res is None:
                 value = None
             else:
                 value = self.bigtable_exrtact_row_data(res)
+            # Has no effect if value_cace is None
+            self._cache.set(bt_key, value)
         return value
 
-    def _bigtable_contains(self, key: bytes) -> bool:
-        cache_contains = self._cache.contains(key)
-        if cache_contains is not None:
-            return cache_contains
-
-        self.batcher.flush()
-        self.commit_next_offset = True
-
-        row = self.bt_table.read_row(key, filter_=self.row_filter)
-        if row is not None:
-            return True
-        return False
-
-    def _bigtable_contains_any(self, keys: Set[bytes]) -> bool:
-        cache_contains = self._cache.contains_any(keys)
-        if cache_contains is not None:
-            return cache_contains
-
-        self.batcher.flush()
-        self.commit_next_offset = True
-
-        rows = BT.RowSet()
-        for key in keys:
-            rows.add_row_key(key)
-
-        for _row in self.bt_table.read_rows(
-            row_set=rows, filter_=BT.CellsColumnLimitFilter(1)
-        ):
-            # First hit will return
-            return True
-        return False
 
     def _bigtable_get_range(
-        self, keys: Set[bytes]
+        self, bt_keys: Set[bytes]
     ) -> Tuple[Optional[bytes], Optional[bytes]]:
         # first search cache:
-        for key in keys:
-            is_cached = self._cache.contains(key)
-            if is_cached is True:
-                value = self._cache.get(key)
-                return key, value
+        rows = BT.RowSet()
+        for bt_key in bt_keys:
+            if self._cache.contains(bt_key):
+                value = self._cache.get(bt_key)
+                return bt_key, value
+            else:
+                rows.add_row_key(bt_key)
 
         self.batcher.flush()
-        self.commit_next_offset = True
-
-        rows = BT.RowSet()
-        for key in keys:
-            rows.add_row_key(key)
-
         for row in self.bt_table.read_rows(
             row_set=rows, filter_=BT.CellsColumnLimitFilter(1)
         ):
@@ -390,7 +345,7 @@ class BigTableStore(base.SerializedStore):
         self.batcher.mutate(row)
 
     def _bigtable_del(self, bt_key: bytes):
-        self._cache.delete(bt_key)
+        self._cache.set(bt_key, None)
         row = self.bt_table.direct_row(bt_key)
         row.delete()
         self.batcher.mutate(row)
@@ -500,24 +455,29 @@ class BigTableStore(base.SerializedStore):
 
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
+            partitions_to_fill = set(self._active_partitions())
             if self._cache._value_cache is not None:
-                self._cache.fill(set(self._active_partitions()))
+                partitions_to_fill -= self._cache.filled_partitions
                 for key, value in self._cache.items():
                     yield self._get_faust_key(key), value
-            else:
-                row_set = BT.RowSet()
-                for partition in self._active_partitions():
-                    prefix_start = self._get_partition_prefix(partition)
-                    prefix_end = self._get_partition_prefix(partition + 1)
-                    row_set.add_row_range_from_keys(prefix_start, prefix_end)
 
-                for row in self.bt_table.read_rows(
-                    row_set=row_set, filter_=self.row_filter
-                ):
-                    yield (
-                        self._get_faust_key(row.row_key),
-                        self.bigtable_exrtact_row_data(row),
-                    )
+            if len(partitions_to_fill) == 0:
+                return
+
+            row_set = BT.RowSet()
+            for partition in partitions_to_fill:
+                prefix_start = self._get_partition_prefix(partition)
+                prefix_end = self._get_partition_prefix(partition + 1)
+                row_set.add_row_range_from_keys(prefix_start, prefix_end)
+
+            for row in self.bt_table.read_rows(
+                row_set=row_set, filter_=self.row_filter
+            ):
+                faust_key = self._get_faust_key(row.row_key)
+                value = self.bigtable_exrtact_row_data(row)
+                if self._cache._value_cache is not None:
+                    self._cache.set(row.row_key, value)
+                yield faust_key, value
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error "
@@ -609,18 +569,8 @@ class BigTableStore(base.SerializedStore):
         we were not an active replica.
         """
         try:
-            if (
-                recovery
-                or self.commit_next_offset
-                or len(self.batcher.rows) == 0
-            ):
-                offset_key = self.get_offset_key(tp).encode()
-                self._bigtable_set(offset_key, str(offset).encode())
-                self.batcher.flush()
-                if not self.commit_next_offset:
-                    self.log.info(f"Committed offset {offset} for {self.table.name}")
-                self.commit_next_offset = False
-
+            offset_key = self.get_offset_key(tp).encode()
+            self._bigtable_set(offset_key, str(offset).encode())
         except Exception as e:
             self.log.error(
                 f"Failed to commit offset for {self.table.name}"
@@ -716,7 +666,6 @@ class BigTableStore(base.SerializedStore):
 
     def assign_partitions(self, tps: Set[TP]) -> None:
         self.batcher.flush()
-        self.commit_next_offset = True
         self._cache.fill({tp.partition for tp in tps})
 
     async def on_rebalance(

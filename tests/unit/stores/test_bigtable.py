@@ -261,24 +261,23 @@ class TestBigTableCacheManager:
         assert manager.contains(key)
 
     def test_get(self, manager):
-        # Adding the key here is sufficient, because the cache gets filled
         key_in = b"\x13AAA"
         key_not_in = b"\x13BBB"
-        manager.bt_table.add_test_data({key_in})
 
-        res = manager.get(key_in)
-        assert res is None
+        manager.bt_table.add_test_data({key_in})
+        with pytest.raises(KeyError):
+            manager.get(key_in)
 
         manager.fill({19})
         res = manager.get(key_in)
         assert res == key_in
 
-        res = manager.get(key_not_in)
-        assert res is None
+        with pytest.raises(KeyError):
+            manager.get(key_not_in)
 
         manager._value_cache = None
-        res = manager.get(key_in)
-        assert res is None
+        with pytest.raises(NotImplementedError):
+            manager.get(key_in)
 
     def test_set(self, manager):
         key_1 = b"\x13AAA"
@@ -292,15 +291,6 @@ class TestBigTableCacheManager:
         assert manager.contains(key_2)
         assert manager.get(key_1) == key_1
         assert manager.get(key_2) == key_2
-
-    def test_delete(self, manager):
-        key_1 = b"\x13AAA"
-        key_2 = b"\x13ABB"
-        manager.set(key_1, key_1)
-        assert manager.contains(key_1)
-        manager.delete(key_1)
-        assert not manager.contains(key_1)
-        manager.delete(key_2)
 
     def test_partition_cache(self, manager):
         key = b"aaa"
@@ -323,11 +313,11 @@ class TestBigTableCacheManager:
 
         manager._value_cache.is_complete = False
         assert manager.contains(key_in) is True
-        assert manager.contains(key_not_in) is None
+        assert manager.contains(key_not_in) is False
 
         manager._value_cache = None
-        assert manager.contains(key_in) is None
-        assert manager.contains(key_not_in) is None
+        assert manager.contains(key_in) is False
+        assert manager.contains(key_not_in) is False
 
     def test_contains_any(self, manager):
         # Adding the key here is sufficient, because the cache gets filled
@@ -341,11 +331,11 @@ class TestBigTableCacheManager:
 
         manager._value_cache.is_complete = False
         assert manager.contains_any({key_in, key_not_in}) is True
-        assert manager.contains_any({key_not_in}) is None
+        assert manager.contains_any({key_not_in}) is False
 
         manager._value_cache = None
-        assert manager.contains_any({key_in, key_not_in}) is None
-        assert manager.contains_any({key_not_in}) is None
+        assert manager.contains_any({key_in, key_not_in}) is False
+        assert manager.contains_any({key_not_in}) is False
 
     def test_delete_partition(self, manager):
         partition = 19
@@ -499,13 +489,20 @@ class TestBigTableStore:
                 "bigtable://", MagicMock(), MagicMock(), options=options
             )
             store.bt_table = BigTableMock()
+            store.batcher.mutate = MagicMock(wraps=store.batcher.mutate)
+            store.batcher.flush = MagicMock(wraps=store.batcher.flush)
             return store
 
     def test_bigtable_bigtable_get_on_empty(self, store):
         store._cache.contains = MagicMock(return_value=False)
+        store._cache.set = MagicMock()
         return_value = store._bigtable_get(self.TEST_KEY1)
         store._cache.contains.assert_called_with(self.TEST_KEY1)
-        store.bt_table.read_row.assert_not_called()
+        store.batcher.flush.assert_called_once()
+        store.bt_table.read_row.assert_called_once_with(
+            self.TEST_KEY1, filter_="a_filter"
+        )
+        store._cache.set.assert_called_with(self.TEST_KEY1, None)
         assert return_value is None
 
         store._cache.contains = MagicMock(return_value=None)
@@ -535,11 +532,13 @@ class TestBigTableStore:
         assert return_value == b"cache_res"
 
         store._cache.contains = MagicMock(return_value=False)
-        store._cache.get = MagicMock(return_value=b"cache_res")
+        store._cache.get = MagicMock()
         return_value = store._bigtable_get(self.TEST_KEY1)
-        store._cache.get.assert_called_once_with(self.TEST_KEY1)
-        store.bt_table.read_row.assert_not_called()
-        assert return_value == b"cache_res"
+        store._cache.get.assert_not_called()
+        store.bt_table.read_row.assert_called_once_with(
+            self.TEST_KEY1, filter_="a_filter"
+        )
+        assert return_value == self.TEST_KEY1
 
     def test_bigtable_get_range_cache_miss(self, store):
         store._cache.contains = MagicMock(return_value=None)
@@ -579,73 +578,15 @@ class TestBigTableStore:
         store.bt_table.read_rows.assert_not_called
         assert result_value == (self.TEST_KEY1, "cache_res")
 
-    def test_bigtable_contains(self, store):
-        store._cache.contains = MagicMock(return_value=None)
-
-        store.bt_table.add_test_data([self.TEST_KEY1])
-        return_value = store._bigtable_contains(self.TEST_KEY1)
-        store.bt_table.read_row.assert_called_with(
-            self.TEST_KEY1, filter_="a_filter"
-        )
-        assert return_value is True
-
-        return_value = store._bigtable_contains(self.TEST_KEY2)
-        store.bt_table.read_row.assert_called_with(
-            self.TEST_KEY2, filter_="a_filter"
-        )
-
-        store.bt_table.read_row.reset_mock()
-
-        store._cache.contains = MagicMock(return_value=True)
-        return_value = store._bigtable_contains(self.TEST_KEY1)
-        store.bt_table.read_row.assert_not_called()
-        assert return_value is True
-
-        store._cache.contains = MagicMock(return_value=False)
-        return_value = store._bigtable_contains(self.TEST_KEY1)
-        store.bt_table.read_row.assert_not_called()
-        assert return_value is False
-
-        store._cache.contains = MagicMock(return_value=None)
-        return_value = store._bigtable_contains(self.TEST_KEY1)
-        store.bt_table.read_row.assert_called_with(
-            self.TEST_KEY1, filter_="a_filter"
-        )
-        assert return_value is True
-
-    def test_bigtable_contains_any(self, store):
-        store.bt_table.add_test_data([self.TEST_KEY1])
-        store._cache.contains_any = MagicMock(return_value=None)
-
-        test_keys_in = {self.TEST_KEY1, self.TEST_KEY3}
-        test_keys_not_in = {
-            self.TEST_KEY2,
-        }
-
-        return_value = store._bigtable_contains_any(test_keys_not_in)
-        store.bt_table.read_rows.assert_called()
-        store.bt_table.read_rows.reset_mock()
-        assert return_value is False
-
-        return_value = store._bigtable_contains_any(test_keys_in)
-        store.bt_table.read_rows.assert_called()
-        store.bt_table.read_rows.reset_mock()
-        assert return_value is True
-
-        store._cache.contains_any = MagicMock(return_value=True)
-        return_value = store._bigtable_contains_any(test_keys_not_in)
-        store.bt_table.read_rows.assert_not_called()
-        assert return_value == store._cache.contains_any()
-
     def test_bigtable_delete(self, store):
         row_mock = MagicMock()
         row_mock.commit = MagicMock()
         row_mock.delete = MagicMock()
         store.bt_table.direct_row = MagicMock(return_value=row_mock)
-        store._cache.delete = MagicMock(return_value=None)
+        store._cache.set = MagicMock()
 
         store._bigtable_del(self.TEST_KEY1)
-        store._cache.delete.assert_called_once_with(self.TEST_KEY1)
+        store._cache.set.assert_called_once_with(self.TEST_KEY1, None)
 
     def test_bigtable_set(self, store):
         row_mock = MagicMock()
@@ -839,109 +780,50 @@ class TestBigTableStore:
 
     def test_iteritems(self, store):
         keys_in_store = []
-        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY1, 1))
-        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY2, 2))
-        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY3, 3))
+        k1 = store._get_bigtable_key(self.TEST_KEY1, 1)
+        k3 = store._get_bigtable_key(self.TEST_KEY3, 3)
         # Fill cache
-        store._cache._value_cache.data = {
-            keys_in_store[0]: "CACHE_VALUE1",
-            keys_in_store[2]: "CACHE_VALUE3",
+        cache_data = {
+            k1: "CACHE_VALUE1",
+            k3: "CACHE_VALUE3",
         }
 
+        store._cache._value_cache.data = cache_data
         store.bt_table.add_test_data(keys_in_store)
         store._active_partitions = MagicMock(return_value=[1, 3])
         store._cache.fill = MagicMock()
-        store.bt_table.read_rows = MagicMock(wrap=store.bt_table.read_rows)
+        store.bt_table.read_rows = MagicMock()
+
         all_res = sorted(store._iteritems())
-        store._cache.fill.assert_called_once_with({1, 3})
+        store._cache.fill.assert_not_called()
         assert all_res == [
             (self.TEST_KEY1, "CACHE_VALUE1"),
             (self.TEST_KEY3, "CACHE_VALUE3"),
         ]
         store._cache.fill.reset_mock()
-        store._cache._value_cache = None
         all_res = sorted(store._iteritems())
-        assert store.bt_table.read_rows.call_count == 1
+        assert store.bt_table.read_rows.call_count == 2
+
+        store._cache.filled_partitions = {1, 3}
+        store._active_partitions = MagicMock(return_value={1, 3})
+        all_res = sorted(store._iteritems())
+        # No new calls, we just return what's in the cache
+        assert store.bt_table.read_rows.call_count == 2
 
     def test_iterkeys(self, store):
-        store._active_partitions = MagicMock(return_value=[1, 3])
-        store._cache._partition_cache.limit = 3
-        keys_in_store = []
-        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY1, 1))
-        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY2, 2))
-        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY3, 3))
-        store.bt_table.add_test_data(keys_in_store)
-
-        # Fill cache
-        store._cache._value_cache.data = {
-            keys_in_store[0]: keys_in_store[0],
-            keys_in_store[2]: keys_in_store[2],
-        }
-
+        values = [("K1", "V1"), ("K2", "V2")]
+        store._iteritems = MagicMock(return_value=values)
         all_res = sorted(store._iterkeys())
-        assert all_res == [
-            self.TEST_KEY1,
-            self.TEST_KEY3,
-        ]
+        assert all_res == ["K1", "K2"]
 
     def test_itervalues(self, store):
-        keys_in_store = []
-        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY1, 1))
-        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY2, 2))
-        keys_in_store.append(store._get_bigtable_key(self.TEST_KEY3, 3))
-
-        store.bt_table.add_test_data(keys_in_store)
-        # Fill cache
-        store._cache._value_cache.data = {
-            keys_in_store[0]: keys_in_store[0],
-            keys_in_store[2]: keys_in_store[2],
-        }
-        store._active_partitions = MagicMock(return_value=[1, 3])
+        values = [("K1", "V1"), ("K2", "V2")]
+        store._iteritems = MagicMock(return_value=values)
         all_res = sorted(store._itervalues())
-        assert all_res == [keys_in_store[0], keys_in_store[2]]
+        assert all_res == ["V1", "V2"]
 
     def test_size(self, store):
         assert 0 == store._size()
-
-    def test_contains_without_store_check_exists(self, store):
-        store._bigtable_contains = MagicMock()
-        store._bigtable_contains_any = MagicMock()
-        store.app.conf.store_check_exists = False
-
-        res = store._contains(self.TEST_KEY1)
-
-        assert res is True
-        store._bigtable_contains_any.assert_not_called()
-        store._bigtable_contains.assert_not_called()
-
-    def test_contains_with_known_partition(self, store):
-        store.app.conf.store_check_exists = True
-        store._bigtable_contains_any = MagicMock()
-        store._maybe_get_partition_from_message = MagicMock(return_value=19)
-
-        # Scenario1: Found
-        store._bigtable_contains = MagicMock(return_value="TRUE_OR_FALSE")
-        key_w_partition = store._get_bigtable_key(self.TEST_KEY1, 19)
-        res = store._contains(self.TEST_KEY1)
-        store._bigtable_contains.assert_called_once_with(key_w_partition)
-        assert res == "TRUE_OR_FALSE"
-
-    def test_contains_with_unknown_partition(self, store):
-        store.app.conf.store_check_exists = True
-        store._bigtable_contains_any = MagicMock()
-        store._maybe_get_partition_from_message = MagicMock(return_value=None)
-        store._partitions_for_key = MagicMock(return_value=[1, 3, 19])
-
-        store._bigtable_contains_any = MagicMock(return_value="TRUE_OR_FALSE")
-        keys_to_search = set()
-        keys_to_search.add(store._get_bigtable_key(self.TEST_KEY1, 1))
-        keys_to_search.add(store._get_bigtable_key(self.TEST_KEY1, 3))
-        keys_to_search.add(store._get_bigtable_key(self.TEST_KEY1, 19))
-
-        res = store._contains(self.TEST_KEY1)
-
-        store._bigtable_contains_any.assert_called_once_with(keys_to_search)
-        assert res == "TRUE_OR_FALSE"
 
     def test_get_offset_key(self, store):
         tp = TP("AAAA", 19)
@@ -1052,7 +934,7 @@ class TestBigTableStore:
         store._cache.delete_partition.assert_any_call(1)
         store._cache.delete_partition.assert_any_call(2)
 
-    def test_mmutation_flush(self, store):
+    def test_mutation_flush(self, store):
         # Mocks
         TEST_TP = TP("a", 0)
         TEST_OFFSET = 0
@@ -1086,7 +968,6 @@ class TestBigTableStore:
             return_value=partition
         )
         store._cache.set_partition = MagicMock()
-        # Flush every 10 seconds
         res = store._contains(self.TEST_KEY1)
         store._bigtable_set.assert_not_called()
         assert res is False
