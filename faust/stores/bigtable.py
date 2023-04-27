@@ -381,7 +381,6 @@ class BigTableStore(base.SerializedStore):
 
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
-
             self.log.info("GET ", key)
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
@@ -558,10 +557,9 @@ class BigTableStore(base.SerializedStore):
         See :meth:`set_persisted_offset`.
         """
         offset_key = self.get_offset_key(tp)
-        row_res = self.bt_table.read_row(offset_key, filter_=self.row_filter)
-        if row_res is not None:
-            offset = int(self.bigtable_exrtact_row_data(row_res))
-            return offset
+        offset = self._bigtable_get(offset_key)
+        if offset is not None:
+            return int(offset)
         return None
 
     def set_persisted_offset(
