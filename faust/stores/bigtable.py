@@ -582,15 +582,6 @@ class BigTableStore(base.SerializedStore):
                 f"TRACEBACK: {traceback.format_exc()}"
             )
 
-    def _persist_changelog_batch(self, row_mutations, tp_offsets):
-        response = self.bt_table.mutate_rows(row_mutations)
-        for i, status in enumerate(response):
-            if status.code != 0:
-                self.log.error("Row number {} failed to write".format(i))
-
-        for tp, offset in tp_offsets.items():
-            self.set_persisted_offset(tp, offset)
-
     def apply_changelog_batch(
         self,
         batch: Iterable[EventT],
