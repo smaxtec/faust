@@ -103,6 +103,7 @@ class BigTableValueCache:
 class BigTableCacheManager:
     _partition_cache: LRUCache[bytes, int]
     _value_cache: Optional[BigTableValueCache]
+    _mutation_cache: Dict[bytes, Optional[bytes]]
 
     def __init__(self, app, options: Dict, bt_table: BT.Table) -> None:
         self.log = logging.getLogger(__name__)
@@ -120,6 +121,19 @@ class BigTableCacheManager:
                 start_key=preload_id, end_key=preload_id + b"\xff"
             )
         return row_set, row_filter
+
+    def submit_mutation(self, bt_key: bytes, value: Optional[bytes]) -> None:
+        self._mutation_cache[bt_key] = value
+
+    def has_mutation(self, bt_key) -> bool:
+        return bt_key in self._mutation_cache
+
+    def get_mutation(self, bt_key: bytes) -> Optional[bytes]:
+        return self._mutation_cache.get(bt_key)
+
+    def clear_mutations(self) -> None:
+        self._mutation_cache.clear()
+
 
     def fill(self, partitions: Set[int]):
         start = time.time()
@@ -146,6 +160,8 @@ class BigTableCacheManager:
         )
 
     def get(self, bt_key: bytes) -> Optional[bytes]:
+        if self.has_mutation(bt_key):
+            return self.get_mutation(bt_key)
         if self._value_cache is not None:
             return self._value_cache[bt_key]
         raise NotImplementedError(
@@ -172,11 +188,15 @@ class BigTableCacheManager:
         If we return None here, this means, that no assumption
         about the current key can be made.
         """
+        if self.has_mutation(bt_key):
+            return True
         if self._value_cache is not None:
             return bt_key in self._value_cache.keys()
         return False
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
+        if not self._mutation_cache.keys().isdisjoint(key_set):
+            return True
         if self._value_cache is not None:
             found = not self._value_cache.keys().isdisjoint(key_set)
             return found
@@ -237,7 +257,7 @@ class BigTableStore(base.SerializedStore):
         try:
             self._bigtable_setup(table, options)
             self._cache = BigTableCacheManager(app, options, self.bt_table)
-            self.batcher = self.bt_table.mutations_batcher(flush_count=1000)
+            self.batcher = self.bt_table.mutations_batcher(flush_count=5000)
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
@@ -298,7 +318,7 @@ class BigTableStore(base.SerializedStore):
         if self._cache.contains(bt_key):
             return self._cache.get(bt_key)
         else:
-            # We want to be sure that we don't have any pending writes
+
             res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
             if res is None:
                 value = None
@@ -314,9 +334,13 @@ class BigTableStore(base.SerializedStore):
         # first search cache:
         rows = BT.RowSet()
         for bt_key in bt_keys:
+            if self._cache.has_mutation(bt_key):
+                return bt_key, self._cache.get_mutation(bt_key)
+
             if self._cache.contains(bt_key):
                 value = self._cache.get(bt_key)
                 return bt_key, value
+
             else:
                 rows.add_row_key(bt_key)
 
@@ -331,21 +355,23 @@ class BigTableStore(base.SerializedStore):
         # Not found
         return None, None
 
-    def _bigtable_set(self, bt_key: bytes, value: Optional[bytes]):
+    def _bigtable_mutate(self, bt_key: bytes, value: Optional[bytes]):
+        self._cache.submit_mutation(bt_key, value)
         self._cache.set(bt_key, value)
-        row = self.bt_table.direct_row(bt_key)
-        row.set_cell(
-            self.column_family_id,
-            self.column_name,
-            value,
-        )
-        row.commit()
 
-    def _bigtable_del(self, bt_key: bytes):
-        self._cache.set(bt_key, None)
         row = self.bt_table.direct_row(bt_key)
-        row.delete()
-        row.commit()
+        if value is None:
+            row.delete()
+        else:
+            row.set_cell(
+                self.column_family_id,
+                self.column_name,
+                value,
+            )
+        self.batcher.mutate(row)
+        if self.batcher.total_mutation_count == 0:
+            self.log.info("Flushed mutations")
+            self._cache.clear_mutations()
 
     def _maybe_get_partition_from_message(self) -> Optional[int]:
         event = current_event()
@@ -416,7 +442,7 @@ class BigTableStore(base.SerializedStore):
             key_with_partition = self._get_bigtable_key(
                 key, partition=partition
             )
-            self._bigtable_set(key_with_partition, value)
+            self._bigtable_mutate(key_with_partition, value)
             self._cache.set_partition(key, partition)
         except Exception as ex:
             self.log.error(
@@ -432,7 +458,7 @@ class BigTableStore(base.SerializedStore):
                 key_with_partition = self._get_bigtable_key(
                     key, partition=partition
                 )
-                self._bigtable_del(key_with_partition)
+                self._bigtable_mutate(key_with_partition, None)
                 self._cache._partition_cache.pop(key, None)
         except Exception as ex:
             self.log.error(
@@ -573,7 +599,7 @@ class BigTableStore(base.SerializedStore):
                 self.column_name,
                 str(offset).encode(),
             )
-            row.commit()
+            self.batcher.mutate(row)
 
         except Exception as e:
             self.log.error(
@@ -605,10 +631,7 @@ class BigTableStore(base.SerializedStore):
             )
             msg = event.message
             bt_key = self._get_bigtable_key(msg.key, partition=tp.partition)
-            if msg.value is None:
-                self._bigtable_del(bt_key)
-            else:
-                self._bigtable_set(bt_key, msg.value)
+            self._bigtable_mutate(bt_key, msg.value)
 
         for tp, offset in tp_offsets.items():
             self.set_persisted_offset(tp, offset)
@@ -646,7 +669,7 @@ class BigTableStore(base.SerializedStore):
                 be serving data for.
         """
         for tp in tps:
-            # self._flush_mutations()
+            self.batcher.flush()
             self._cache.delete_partition(tp.partition)
         gc.collect()
 
