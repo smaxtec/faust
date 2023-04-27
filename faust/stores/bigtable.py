@@ -551,14 +551,13 @@ class BigTableStore(base.SerializedStore):
         See :meth:`set_persisted_offset`.
         """
         offset_key = self.get_offset_key(tp).encode()
-        offset = self._bigtable_get(offset_key)
-        if offset is not None:
-            return int(offset)
-        return None
+        row = self.bt_table.read_row(offset_key, filter_=self.row_filter)
+        if row is None:
+            return None
+        else:
+            return int(self.bigtable_exrtact_row_data(row))
 
-    def set_persisted_offset(
-        self, tp: TP, offset: int, recovery: bool = False
-    ) -> None:
+    def set_persisted_offset(self, tp: TP, offset: int) -> None:
         """Set the last persisted offset for this table.
 
         This will remember the last offset that we wrote to BigTableStore,
@@ -568,7 +567,14 @@ class BigTableStore(base.SerializedStore):
         """
         try:
             offset_key = self.get_offset_key(tp).encode()
-            self._bigtable_set(offset_key, str(offset).encode())
+            row = self.bt_table.direct_row(offset_key)
+            row.set_cell(
+                self.column_family_id,
+                self.column_name,
+                str(offset).encode(),
+            )
+            self.batcher.mutate(row)
+
         except Exception as e:
             self.log.error(
                 f"Failed to commit offset for {self.table.name}"
@@ -583,7 +589,7 @@ class BigTableStore(base.SerializedStore):
                 self.log.error("Row number {} failed to write".format(i))
 
         for tp, offset in tp_offsets.items():
-            self.set_persisted_offset(tp, offset, recovery=True)
+            self.set_persisted_offset(tp, offset)
 
     def apply_changelog_batch(
         self,
@@ -615,7 +621,6 @@ class BigTableStore(base.SerializedStore):
 
         for tp, offset in tp_offsets.items():
             self.set_persisted_offset(tp, offset)
-
 
     async def backup_partition(
         self,
