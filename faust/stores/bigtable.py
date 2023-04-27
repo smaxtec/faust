@@ -320,7 +320,7 @@ class BigTableStore(base.SerializedStore):
             else:
                 rows.add_row_key(bt_key)
 
-        self._flush_mutations()
+        # self._flush_mutations()
         for row in self.bt_table.read_rows(
             row_set=rows, filter_=BT.CellsColumnLimitFilter(1)
         ):
@@ -339,13 +339,13 @@ class BigTableStore(base.SerializedStore):
             self.column_name,
             value,
         )
-        self.batcher.mutate(row)
+        row.commit()
 
     def _bigtable_del(self, bt_key: bytes):
         self._cache.set(bt_key, None)
         row = self.bt_table.direct_row(bt_key)
         row.delete()
-        self.batcher.mutate(row)
+        row.commit()
 
     def _maybe_get_partition_from_message(self) -> Optional[int]:
         event = current_event()
@@ -573,7 +573,7 @@ class BigTableStore(base.SerializedStore):
                 self.column_name,
                 str(offset).encode(),
             )
-            self.batcher.mutate(row)
+            row.commit()
 
         except Exception as e:
             self.log.error(
@@ -646,7 +646,7 @@ class BigTableStore(base.SerializedStore):
                 be serving data for.
         """
         for tp in tps:
-            self._flush_mutations()
+            # self._flush_mutations()
             self._cache.delete_partition(tp.partition)
         gc.collect()
 
@@ -655,7 +655,7 @@ class BigTableStore(base.SerializedStore):
             self.batcher.flush()
 
     def assign_partitions(self, tps: Set[TP]) -> None:
-        self._flush_mutations()
+        # self._flush_mutations()
         self._cache.fill({tp.partition for tp in tps})
 
     async def on_rebalance(
