@@ -421,8 +421,8 @@ class BigTableStore(base.SerializedStore):
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in set for "
-                f"table {self.table_name} exception {ex} key {key} "
-                f"Traceback: {traceback.format_exc()}"
+                f"table {self.table_name} exception {ex} key {key=} "
+                f"{value=} Traceback: {traceback.format_exc()}"
             )
             raise ex
 
