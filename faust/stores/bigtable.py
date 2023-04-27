@@ -299,7 +299,6 @@ class BigTableStore(base.SerializedStore):
             return self._cache.get(bt_key)
         else:
             # We want to be sure that we don't have any pending writes
-            self.batcher.flush()
             res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
             if res is None:
                 value = None
@@ -321,7 +320,7 @@ class BigTableStore(base.SerializedStore):
             else:
                 rows.add_row_key(bt_key)
 
-        self.batcher.flush()
+        self._flush_mutations()
         for row in self.bt_table.read_rows(
             row_set=rows, filter_=BT.CellsColumnLimitFilter(1)
         ):
@@ -551,7 +550,7 @@ class BigTableStore(base.SerializedStore):
         """Return the last persisted offset.
         See :meth:`set_persisted_offset`.
         """
-        offset_key = self.get_offset_key(tp)
+        offset_key = self.get_offset_key(tp).encode()
         offset = self._bigtable_get(offset_key)
         if offset is not None:
             return int(offset)
@@ -654,8 +653,12 @@ class BigTableStore(base.SerializedStore):
             self._cache.delete_partition(tp.partition)
         gc.collect()
 
+    def _flush_mutations(self):
+        if self.batcher.total_size > 0:
+            self.batcher.flush()
+
     def assign_partitions(self, tps: Set[TP]) -> None:
-        self.batcher.flush()
+        self._flush_mutations()
         self._cache.fill({tp.partition for tp in tps})
 
     async def on_rebalance(
