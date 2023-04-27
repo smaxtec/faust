@@ -20,7 +20,7 @@ def to_bt_key(key):
     if len_prefix + 1 + len_first_id + 1 >= len_total:
         # This happens if there is e.g. no organisation id
         return key
-    len_second_id = key[len_prefix + 1 + +len_first_id + 1] // 2
+    len_second_id = key[len_prefix + 1 + len_first_id + 1] // 2
     key_prefix = key[len_total - len_second_id :]
     return key_prefix + key
 
@@ -893,7 +893,7 @@ class TestBigTableStore:
         row_mock.set_cell = MagicMock()
         store.bt_table.direct_row = MagicMock(return_value=row_mock)
         store.bt_table.mutate_rows = MagicMock()
-        store._persist_changelog_batch = MagicMock()
+        store.set_persisted_offset = MagicMock()
 
         class TestMessage:
             def __init__(self, value, key, tp, offset):
@@ -919,9 +919,7 @@ class TestBigTableStore:
         assert store.bt_table.direct_row.call_count == 5
         row_mock.delete.assert_called_once()
         assert row_mock.set_cell.call_count == 4
-        store._persist_changelog_batch.assert_called_once()
-        tp_offsets = store._persist_changelog_batch.call_args_list[0].args[1]
-        assert tp_offsets == {tp: 3, tp2: 4}
+        assert store.set_persisted_offset.call_count == 2
 
     def test_revoke_partitions(self, store):
         store._cache.delete_partition = MagicMock()
