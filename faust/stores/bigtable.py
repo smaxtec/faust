@@ -300,7 +300,6 @@ class BigTableStore(base.SerializedStore):
         else:
             # We want to be sure that we don't have any pending writes
             self.batcher.flush()
-            self.log.info(f"Reading {bt_key=} from BigTable")
             res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
             if res is None:
                 value = None
@@ -381,7 +380,6 @@ class BigTableStore(base.SerializedStore):
 
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
-            self.log.info("GET ", key)
             partition = self._maybe_get_partition_from_message()
             if partition is not None:
                 key_with_partition = self._get_bigtable_key(
@@ -391,7 +389,6 @@ class BigTableStore(base.SerializedStore):
                 value = self._bigtable_get(key_with_partition)
                 if value is not None:
                     self._cache.set_partition(key, partition)
-                    self.log.info("GOT ", key, value is not None)
                     return value
             else:
                 keys = set()
@@ -405,10 +402,8 @@ class BigTableStore(base.SerializedStore):
                 if value is not None:
                     partition = key_with_partition[0]
                     self._cache.set_partition(key, partition)
-                    self.log.info("GOT ", key, value is not None)
                     return value
 
-            self.log.info("GOT ", key, False)
             return None
         except Exception as ex:
             self.log.error(
