@@ -650,6 +650,7 @@ class BigTableStore(base.SerializedStore):
                 be serving data for.
         """
         for tp in tps:
+            self._flush_mutations()
             self._cache.delete_partition(tp.partition)
         gc.collect()
 
