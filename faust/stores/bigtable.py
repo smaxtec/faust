@@ -146,7 +146,7 @@ class BigTableCacheManager:
         self.total_mutation_count += 1
         self.flush_mutations_if_timer_over_or_full()
 
-    def flush_mutations_if_timer_over_or_full(self, force=False) -> None:
+    def flush_mutations_if_timer_over_or_full(self) -> None:
         if self.total_mutation_count == 0:
             return
 
@@ -154,7 +154,6 @@ class BigTableCacheManager:
         if (
             self._last_flush + five_min < time.time()
             or self.total_mutation_count > 10_000
-            or force
         ):
             self.bt_table.mutate_rows(list(self._mutation_rows.values()))
             self._mutation_values.clear()
