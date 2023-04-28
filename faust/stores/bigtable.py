@@ -115,6 +115,8 @@ class BigTableCacheManager:
         self._init_value_cache(options)
         self.filled_partitions = set()
         self._last_flush = time.time()
+        self._mutation_values = {}
+        self._mutation_rows = {}
         self.total_mutation_count = 0
 
     def _get_preload_rowset(self, partitions: Set[int]):
