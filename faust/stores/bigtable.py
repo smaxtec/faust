@@ -128,7 +128,7 @@ class BigTableCacheManager:
         return row_set, row_filter
 
     def submit_mutation(self, bt_key: bytes, value: Optional[bytes]) -> None:
-        row, _ = self.get_mutation(bt_key)
+        row = self._mutation_rows.get(bt_key, None)
         row = row if row else self.bt_table.direct_row(bt_key)
         if value is None:
             row.delete()
@@ -143,18 +143,15 @@ class BigTableCacheManager:
         self.total_mutation_count += 1
         self.flush_mutations_if_timer_over_or_full()
 
-    def get_mutation(
-        self, bt_key: bytes
-    ) -> Tuple[Optional[BT.DirectRow], Optional[bytes]]:
-        row = self._mutation_rows.get(bt_key, None)
-        value = self._mutation_values.get(bt_key, None)
-        return row, value
+    def flush_mutations_if_timer_over_or_full(self, force=False) -> None:
+        if self.total_mutation_count == 0:
+            return
 
-    def flush_mutations_if_timer_over_or_full(self) -> None:
         five_min = 5 * 60
         if (
             self._last_flush + five_min < time.time()
             or self.total_mutation_count > 10_000
+            or force
         ):
             self.bt_table.mutate_rows(self._mutation_rows.values())
             self._mutation_values.clear()
@@ -282,7 +279,6 @@ class BigTableStore(base.SerializedStore):
         try:
             self._bigtable_setup(table, options)
             self._cache = BigTableCacheManager(app, options, self.bt_table)
-            self.batcher = self.bt_table.mutations_batcher(flush_count=5000)
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
@@ -484,18 +480,8 @@ class BigTableStore(base.SerializedStore):
 
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
-            partitions_to_fill = set(self._active_partitions())
-            if self._cache._value_cache is not None:
-                partitions_to_fill -= self._cache.filled_partitions
-                for key, value in self._cache.items():
-                    if value is not None:
-                        yield self._get_faust_key(key), value
-
-            if len(partitions_to_fill) == 0:
-                return
-
             row_set = BT.RowSet()
-            for partition in partitions_to_fill:
+            for partition in self._active_partitions():
                 prefix_start = self._get_partition_prefix(partition)
                 prefix_end = self._get_partition_prefix(partition + 1)
                 row_set.add_row_range_from_keys(prefix_start, prefix_end)
@@ -582,11 +568,8 @@ class BigTableStore(base.SerializedStore):
         See :meth:`set_persisted_offset`.
         """
         offset_key = self.get_offset_key(tp).encode()
-        row = self.bt_table.read_row(offset_key, filter_=self.row_filter)
-        if row is None:
-            return None
-        else:
-            return int(self.bigtable_exrtact_row_data(row))
+        offset = self._bigtable_get(offset_key)
+        return int(offset) if offset is not None else None
 
     def set_persisted_offset(self, tp: TP, offset: int) -> None:
         """Set the last persisted offset for this table.
@@ -598,14 +581,7 @@ class BigTableStore(base.SerializedStore):
         """
         try:
             offset_key = self.get_offset_key(tp).encode()
-            row = self.bt_table.direct_row(offset_key)
-            row.set_cell(
-                COLUMN_FAMILY_ID,
-                COLUMN_NAME,
-                str(offset).encode(),
-            )
-            self.batcher.mutate(row)
-
+            self._bigtable_mutate(offset_key, str(offset).encode())
         except Exception as e:
             self.log.error(
                 f"Failed to commit offset for {self.table.name}"
