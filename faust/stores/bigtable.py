@@ -56,6 +56,7 @@ def get_current_partition():
 COLUMN_FAMILY_ID = "FaustColumnFamily"
 COLUMN_NAME = "DATA"
 
+
 class BigTableValueCache:
     """
     This is a dictionary which is only filled once, after that, every
@@ -155,7 +156,7 @@ class BigTableCacheManager:
             or self.total_mutation_count > 10_000
             or force
         ):
-            self.bt_table.mutate_rows(self._mutation_rows.values())
+            self.bt_table.mutate_rows(list(self._mutation_rows.values()))
             self._mutation_values.clear()
             self._mutation_rows.clear()
             self.total_mutation_count = 0
@@ -312,9 +313,7 @@ class BigTableStore(base.SerializedStore):
             )
             self.bt_table.create(
                 column_families={
-                    COLUMN_FAMILY_ID: BT.column_family.MaxVersionsGCRule(
-                        1
-                    )
+                    COLUMN_FAMILY_ID: BT.column_family.MaxVersionsGCRule(1)
                 }
             )
         else:
