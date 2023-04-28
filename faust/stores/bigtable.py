@@ -53,6 +53,9 @@ def get_current_partition():
     return event.message.partition
 
 
+COLUMN_FAMILY_ID = "FaustColumnFamily"
+COLUMN_NAME = "DATA"
+
 class BigTableValueCache:
     """
     This is a dictionary which is only filled once, after that, every
@@ -70,7 +73,6 @@ class BigTableValueCache:
         self.ttl = ttl
         self.ttl_over = False
         self.init_ts = int(time.time())
-        self.is_complete = (ttl == -1) and (size is None)
 
     def __len__(self):
         return len(self.data)
@@ -103,7 +105,8 @@ class BigTableValueCache:
 class BigTableCacheManager:
     _partition_cache: LRUCache[bytes, int]
     _value_cache: Optional[BigTableValueCache]
-    _mutation_cache: Dict[bytes, Optional[bytes]]
+    _mutation_values: Dict[bytes, Optional[bytes]]
+    _mutation_rows: Dict[bytes, BT.DirectRow]
 
     def __init__(self, app, options: Dict, bt_table: BT.Table) -> None:
         self.log = logging.getLogger(__name__)
@@ -111,6 +114,8 @@ class BigTableCacheManager:
         self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
         self._init_value_cache(options)
         self.filled_partitions = set()
+        self._last_flush = time.time()
+        self.total_mutation_count = 0
 
     def _get_preload_rowset(self, partitions: Set[int]):
         row_set = BT.RowSet()
@@ -123,17 +128,38 @@ class BigTableCacheManager:
         return row_set, row_filter
 
     def submit_mutation(self, bt_key: bytes, value: Optional[bytes]) -> None:
-        self._mutation_cache[bt_key] = value
+        row, _ = self.get_mutation(bt_key)
+        row = row if row else self.bt_table.direct_row(bt_key)
+        if value is None:
+            row.delete()
+        else:
+            row.set_cell(
+                COLUMN_FAMILY_ID,
+                COLUMN_NAME,
+                value,
+            )
+        self._mutation_values[bt_key] = value
+        self._mutation_rows[bt_key] = row
+        self.total_mutation_count += 1
+        self.flush_mutations_if_timer_over_or_full()
 
-    def has_mutation(self, bt_key) -> bool:
-        return bt_key in self._mutation_cache
+    def get_mutation(
+        self, bt_key: bytes
+    ) -> Tuple[Optional[BT.DirectRow], Optional[bytes]]:
+        row = self._mutation_rows.get(bt_key, None)
+        value = self._mutation_values.get(bt_key, None)
+        return row, value
 
-    def get_mutation(self, bt_key: bytes) -> Optional[bytes]:
-        return self._mutation_cache.get(bt_key)
-
-    def clear_mutations(self) -> None:
-        self._mutation_cache.clear()
-
+    def flush_mutations_if_timer_over_or_full(self) -> None:
+        five_min = 5 * 60
+        if (
+            self._last_flush + five_min < time.time()
+            or self.total_mutation_count > 10_000
+        ):
+            self.bt_table.mutate_rows(self._mutation_rows.values())
+            self._mutation_values.clear()
+            self._mutation_rows.clear()
+            self.total_mutation_count = 0
 
     def fill(self, partitions: Set[int]):
         start = time.time()
@@ -160,8 +186,8 @@ class BigTableCacheManager:
         )
 
     def get(self, bt_key: bytes) -> Optional[bytes]:
-        if self.has_mutation(bt_key):
-            return self.get_mutation(bt_key)
+        if self._mutation_rows.get(bt_key) is not None:
+            return self._mutation_values[bt_key]
         if self._value_cache is not None:
             return self._value_cache[bt_key]
         raise NotImplementedError(
@@ -173,6 +199,7 @@ class BigTableCacheManager:
             self._value_cache[bt_key] = value
 
     def items(self) -> Iterable[Tuple[bytes, bytes]]:
+        # Will very likely remove this method in the future
         if self._value_cache is not None:
             return self._value_cache.data.items()
         return []
@@ -188,18 +215,18 @@ class BigTableCacheManager:
         If we return None here, this means, that no assumption
         about the current key can be made.
         """
-        if self.has_mutation(bt_key):
+        if self._mutation_rows.get(bt_key, None) is not None:
             return True
         if self._value_cache is not None:
             return bt_key in self._value_cache.keys()
         return False
 
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
-        if not self._mutation_cache.keys().isdisjoint(key_set):
+        if not self._mutation_rows.keys().isdisjoint(key_set):
             return True
         if self._value_cache is not None:
-            found = not self._value_cache.keys().isdisjoint(key_set)
-            return found
+            if not self._value_cache.keys().isdisjoint(key_set):
+                return True
         return False
 
     def delete_partition(self, partition: int):
@@ -220,10 +247,8 @@ class BigTableCacheManager:
             )
             size = options.get(BigTableStore.VALUE_CACHE_SIZE_KEY, None)
             self._value_cache = BigTableValueCache(ttl=ttl, size=size)
-            self.is_complete = self._value_cache.is_complete
         else:
             self._value_cache = None
-            self.is_complete = False
 
 
 class BigTableStore(base.SerializedStore):
@@ -273,9 +298,6 @@ class BigTableStore(base.SerializedStore):
         self.table_name_generator = options.get(
             BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
         )
-        self.column_name = options.get(
-            BigTableStore.BT_COLUMN_NAME_KEY, "DATA"
-        )
         self.row_filter = BT.CellsColumnLimitFilter(1)
         self.offset_key_prefix = options.get(
             BigTableStore.BT_OFFSET_KEY_PREFIX, "offset_partitiion:"
@@ -291,7 +313,6 @@ class BigTableStore(base.SerializedStore):
             options.get(BigTableStore.BT_INSTANCE_KEY)
         )
         self.bt_table: BT.Table = self.instance.table(self.bt_table_name)
-        self.column_family_id = "FaustColumnFamily"
         if not self.bt_table.exists():
             logging.getLogger(__name__).info(
                 f"BigTableStore: Making new bigtablestore with {self.bt_table_name=} "
@@ -299,7 +320,7 @@ class BigTableStore(base.SerializedStore):
             )
             self.bt_table.create(
                 column_families={
-                    self.column_family_id: BT.column_family.MaxVersionsGCRule(
+                    COLUMN_FAMILY_ID: BT.column_family.MaxVersionsGCRule(
                         1
                     )
                 }
@@ -334,9 +355,6 @@ class BigTableStore(base.SerializedStore):
         # first search cache:
         rows = BT.RowSet()
         for bt_key in bt_keys:
-            if self._cache.has_mutation(bt_key):
-                return bt_key, self._cache.get_mutation(bt_key)
-
             if self._cache.contains(bt_key):
                 value = self._cache.get(bt_key)
                 return bt_key, value
@@ -344,7 +362,6 @@ class BigTableStore(base.SerializedStore):
             else:
                 rows.add_row_key(bt_key)
 
-        # self._flush_mutations()
         for row in self.bt_table.read_rows(
             row_set=rows, filter_=BT.CellsColumnLimitFilter(1)
         ):
@@ -356,22 +373,10 @@ class BigTableStore(base.SerializedStore):
         return None, None
 
     def _bigtable_mutate(self, bt_key: bytes, value: Optional[bytes]):
-        self._cache.submit_mutation(bt_key, value)
+        # Update the value cache if any exists
         self._cache.set(bt_key, value)
-
-        row = self.bt_table.direct_row(bt_key)
-        if value is None:
-            row.delete()
-        else:
-            row.set_cell(
-                self.column_family_id,
-                self.column_name,
-                value,
-            )
-        self.batcher.mutate(row)
-        if self.batcher.total_mutation_count == 0:
-            self.log.info("Flushed mutations")
-            self._cache.clear_mutations()
+        # Update the bigtable. Mutations are batched
+        self._cache.submit_mutation(bt_key, value)
 
     def _maybe_get_partition_from_message(self) -> Optional[int]:
         event = current_event()
@@ -595,8 +600,8 @@ class BigTableStore(base.SerializedStore):
             offset_key = self.get_offset_key(tp).encode()
             row = self.bt_table.direct_row(offset_key)
             row.set_cell(
-                self.column_family_id,
-                self.column_name,
+                COLUMN_FAMILY_ID,
+                COLUMN_NAME,
                 str(offset).encode(),
             )
             self.batcher.mutate(row)
@@ -669,16 +674,10 @@ class BigTableStore(base.SerializedStore):
                 be serving data for.
         """
         for tp in tps:
-            self.batcher.flush()
             self._cache.delete_partition(tp.partition)
         gc.collect()
 
-    def _flush_mutations(self):
-        if self.batcher.total_size > 0:
-            self.batcher.flush()
-
     def assign_partitions(self, tps: Set[TP]) -> None:
-        # self._flush_mutations()
         self._cache.fill({tp.partition for tp in tps})
 
     async def on_rebalance(
