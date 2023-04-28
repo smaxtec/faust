@@ -195,12 +195,6 @@ class BigTableCacheManager:
         if self._value_cache is not None:
             self._value_cache[bt_key] = value
 
-    def items(self) -> Iterable[Tuple[bytes, bytes]]:
-        # Will very likely remove this method in the future
-        if self._value_cache is not None:
-            return self._value_cache.data.items()
-        return []
-
     def get_partition(self, user_key: bytes) -> int:
         return self._partition_cache[user_key]
 
