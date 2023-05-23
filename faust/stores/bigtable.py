@@ -146,19 +146,20 @@ class BigTableCacheManager:
         self.total_mutation_count += 1
         self.flush_mutations_if_timer_over_or_full()
 
-    def flush_mutations_if_timer_over_or_full(self) -> None:
-        if self.total_mutation_count == 0:
-            return
+    def flush(self, ):
+        if self.total_mutation_count > 0:
+            self.bt_table.mutate_rows(list(self._mutation_rows.values()))
+            self._mutation_values.clear()
+            self._mutation_rows.clear()
+            self.total_mutation_count = 0
 
+    def flush_mutations_if_timer_over_or_full(self) -> None:
         five_min = 5 * 60
         if (
             self._last_flush + five_min < time.time()
             or self.total_mutation_count > 10_000
         ):
-            self.bt_table.mutate_rows(list(self._mutation_rows.values()))
-            self._mutation_values.clear()
-            self._mutation_rows.clear()
-            self.total_mutation_count = 0
+            self.flush()
 
     def fill(self, partitions: Set[int]):
         start = time.time()
@@ -480,13 +481,13 @@ class BigTableStore(base.SerializedStore):
                 prefix_end = self._get_partition_prefix(partition + 1)
                 row_set.add_row_range_from_keys(prefix_start, prefix_end)
 
+            # Write all mutations to bigtable
+            self._cache.flush()
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=self.row_filter
             ):
                 faust_key = self._get_faust_key(row.row_key)
                 value = self.bigtable_exrtact_row_data(row)
-                if self._cache._value_cache is not None:
-                    self._cache.set(row.row_key, value)
                 yield faust_key, value
         except Exception as ex:
             self.log.error(
