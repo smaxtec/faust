@@ -614,6 +614,7 @@ class BigTableStore(base.SerializedStore):
 
         for tp, offset in tp_offsets.items():
             self.set_persisted_offset(tp, offset)
+        self._cache.flush()
 
     async def backup_partition(
         self,
