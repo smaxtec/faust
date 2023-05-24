@@ -853,7 +853,9 @@ class Recovery(Service):
                         self._standbys_span = None
                     self.tables.on_standbys_ready()
             except Exception as ex:
-                logger.warning(f"Error in recovery {ex}")
+                # logger.warning(f"Error in recovery {ex}")
+                # Write a warning with traceback to the log
+                logger.warning("Error in recovery", exc_info=ex)
 
     def flush_buffers(self) -> None:
         """Flush changelog buffers."""
