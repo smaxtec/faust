@@ -148,10 +148,13 @@ class BigTableCacheManager:
 
     def flush(self, ):
         if self.total_mutation_count > 0:
-            self.bt_table.mutate_rows(list(self._mutation_rows.values()))
+            mutation_list = list(self._mutation_rows.items())
+            self.bt_table.mutate_rows(mutation_list)
             self._mutation_values.clear()
             self._mutation_rows.clear()
+            self.log.info(f"BigTableStore flushed {self.total_mutation_count} mutations")
             self.total_mutation_count = 0
+            self._last_flush = time.time()
 
     def flush_mutations_if_timer_over_or_full(self) -> None:
         five_min = 5 * 60
