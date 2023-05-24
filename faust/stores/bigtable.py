@@ -148,7 +148,7 @@ class BigTableCacheManager:
 
     def flush(self, ):
         if self.total_mutation_count > 0:
-            mutation_list = list(self._mutation_rows.items())
+            mutation_list = list(self._mutation_rows.values())
             self.bt_table.mutate_rows(mutation_list)
             self._mutation_values.clear()
             self._mutation_rows.clear()
