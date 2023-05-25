@@ -157,8 +157,8 @@ class BigTableCacheManager:
             self._mutation_rows.clear()
             self.log.info(
                 f"BigTableStore: flushed {self.total_mutation_count}"
-                f"mutations for {self.bt_table.name} table"
-                f"({actual_row_count=})"
+                f" mutations for {self.bt_table.name} table"
+                f" ({actual_row_count=})"
             )
             self.total_mutation_count = 0
             self._last_flush = time.time()
