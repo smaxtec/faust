@@ -606,7 +606,7 @@ class BigTableStore(base.SerializedStore):
         """
         try:
             offset_key = self.get_offset_key(tp).encode()
-            self._bigtable_mutate(offset_key, str(offset).encode())
+            self._cache.submit_mutation(offset_key, str(offset).encode())
         except Exception as e:
             self.log.error(
                 f"Failed to commit offset for {self.table.name}"
