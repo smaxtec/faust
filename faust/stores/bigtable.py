@@ -195,6 +195,11 @@ class BigTableCacheManager:
             f"{self.bt_table.name}:{partitions} in {end-start}s"
         )
 
+    def iteritems(self):
+        if self._value_cache is None or len(self.filled_partitions) == 0:
+            return []
+        return self._value_cache.data.items()
+
     def get(self, bt_key: bytes) -> Optional[bytes]:
         if self._mutation_rows.get(bt_key) is not None:
             return self._mutation_values[bt_key]
@@ -485,20 +490,35 @@ class BigTableStore(base.SerializedStore):
 
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
+
+            # Write all mutations to bigtable
+            start = time.time()
+            self._cache.flush()
+            if self._cache._value_cache is not None:
+                for k, v in self._cache.iteritems():
+                    faust_key = self._get_faust_key(k)
+                    yield faust_key, v
+
+            left_over_partitions = set(self._active_partitions())
+            left_over_partitions.difference_update(self._cache.filled_partitions)
             row_set = BT.RowSet()
-            for partition in self._active_partitions():
+
+            for partition in left_over_partitions:
                 prefix_start = self._get_partition_prefix(partition)
                 prefix_end = self._get_partition_prefix(partition + 1)
                 row_set.add_row_range_from_keys(prefix_start, prefix_end)
 
-            # Write all mutations to bigtable
-            self._cache.flush()
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=self.row_filter
             ):
                 faust_key = self._get_faust_key(row.row_key)
                 value = self.bigtable_exrtact_row_data(row)
+                self._cache.set(row.row_key, value)
                 yield faust_key, value
+            self._cache.filled_partitions.update(left_over_partitions)
+            end = time.time()
+            self.log.info(f"Time taken for _iteritems {end - start}s")
+
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error "
