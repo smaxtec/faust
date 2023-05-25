@@ -351,8 +351,6 @@ class BigTableStore(base.SerializedStore):
                 value = None
             else:
                 value = self.bigtable_exrtact_row_data(res)
-            # Has no effect if value_cace is None
-            self._cache.set(bt_key, value)
         return value
 
     def _bigtable_get_range(
