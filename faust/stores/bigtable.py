@@ -491,14 +491,17 @@ class BigTableStore(base.SerializedStore):
 
             # Write all mutations to bigtable
             start = time.time()
+            partitions = set(self._active_partitions())
             self._cache.flush()
             if self._cache._value_cache is not None:
+                self._cache.fill(partitions)
                 for k, v in self._cache.iteritems():
                     faust_key = self._get_faust_key(k)
                     yield faust_key, v
 
-            left_over_partitions = set(self._active_partitions())
-            left_over_partitions.difference_update(self._cache.filled_partitions)
+            left_over_partitions = partitions.difference(self._cache.filled_partitions)
+            if len(left_over_partitions) == 0:
+                return
             row_set = BT.RowSet()
 
             for partition in left_over_partitions:
