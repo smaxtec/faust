@@ -172,7 +172,6 @@ class BigTableCacheManager:
             self.flush()
 
     def fill(self, partitions: Set[int]):
-        start = time.time()
         partitions = partitions - self.filled_partitions
         if len(partitions) == 0:
             return
@@ -189,16 +188,6 @@ class BigTableCacheManager:
                 self.log.info(f"BigTableStore fill failed for {partitions=}")
                 raise e
             self.filled_partitions.update(partitions)
-        end = time.time()
-        self.log.info(
-            "BigTableStore: Finished fill for table"
-            f"{self.bt_table.name}:{partitions} in {end-start}s"
-        )
-
-    def iteritems(self):
-        if self._value_cache is None or len(self.filled_partitions) == 0:
-            return []
-        return self._value_cache.data.items()
 
     def get(self, bt_key: bytes) -> Optional[bytes]:
         if self._mutation_rows.get(bt_key) is not None:
@@ -488,23 +477,15 @@ class BigTableStore(base.SerializedStore):
 
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
-
-            # Write all mutations to bigtable
             start = time.time()
             partitions = set(self._active_partitions())
-            self._cache.flush()
-            if self._cache._value_cache is not None:
-                self._cache.fill(partitions)
-                for k, v in self._cache.iteritems():
-                    faust_key = self._get_faust_key(k)
-                    yield faust_key, v
-
-            left_over_partitions = partitions.difference(self._cache.filled_partitions)
-            if len(left_over_partitions) == 0:
-                return
             row_set = BT.RowSet()
 
-            for partition in left_over_partitions:
+            if len(partitions) == 0:
+                return
+
+            self._cache.flush()
+            for partition in partitions:
                 prefix_start = self._get_partition_prefix(partition)
                 prefix_end = self._get_partition_prefix(partition + 1)
                 row_set.add_row_range_from_keys(prefix_start, prefix_end)
@@ -516,9 +497,9 @@ class BigTableStore(base.SerializedStore):
                 value = self.bigtable_exrtact_row_data(row)
                 self._cache.set(row.row_key, value)
                 yield faust_key, value
-            self._cache.filled_partitions.update(left_over_partitions)
+            self._cache.filled_partitions.update(partitions)
             end = time.time()
-            self.log.info(f"Time taken for _iteritems {end - start}s")
+            self.log.info(f"BigTableStore: Time taken for _iteritems {end - start}s")
 
         except Exception as ex:
             self.log.error(
@@ -676,12 +657,25 @@ class BigTableStore(base.SerializedStore):
             tps: Set of topic partitions that we should no longer
                 be serving data for.
         """
-        for tp in tps:
-            self._cache.delete_partition(tp.partition)
+        partitions = {tp.partition for tp in tps}
+        for partition in partitions:
+            self._cache.delete_partition(partition)
+
+        self.log.info(
+            f"BigTableStore: Revoked partitions {partitions=} for table"
+            f" {self.table_name}"
+        )
         gc.collect()
 
     def assign_partitions(self, tps: Set[TP]) -> None:
-        self._cache.fill({tp.partition for tp in tps})
+        start = time.time()
+        partitions = {tp.partition for tp in tps}
+        self._cache.fill(partitions)
+        end = time.time()
+        self.log.info(
+            "BigTableStore: Finished assign_partitions for table"
+            f" {self.table_name}:{partitions} in {end-start}s"
+        )
 
     async def on_rebalance(
         self,
