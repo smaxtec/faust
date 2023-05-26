@@ -146,21 +146,19 @@ class BigTableCacheManager:
         self.total_mutation_count += 1
         self.flush_mutations_if_timer_over_or_full()
 
-    def flush(self, ):
+    def flush(self):
         # TODO: Make this a setting.
         # High values reduce the writes
         if self.total_mutation_count > 200:
-            mutation_list = list(self._mutation_rows.values())
-            actual_row_count = len(mutation_list)
-            self.bt_table.mutate_rows(mutation_list)
-            self._mutation_values.clear()
-            self._mutation_rows.clear()
             self.log.info(
                 f"BigTableStore: flushed {self.total_mutation_count}"
                 f" mutations for {self.bt_table.name} table"
-                f" ({actual_row_count=})"
             )
+            mutation_list = list(self._mutation_rows.values())
             self.total_mutation_count = 0
+            self.bt_table.mutate_rows(mutation_list)
+            self._mutation_values.clear()
+            self._mutation_rows.clear()
             self._last_flush = time.time()
 
     def flush_mutations_if_timer_over_or_full(self) -> None:
