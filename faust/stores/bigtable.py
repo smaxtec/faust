@@ -151,7 +151,7 @@ class BigTableCacheManager:
         # High values reduce the writes
         if self.total_mutation_count > 200:
             self.log.info(
-                f"BigTableStore: flushed {self.total_mutation_count}"
+                f"[^----BigTableStore: bigtable:] flushed {self.total_mutation_count}"
                 f" mutations for {self.bt_table.name} table"
             )
             mutation_list = list(self._mutation_rows.values())
@@ -477,12 +477,20 @@ class BigTableStore(base.SerializedStore):
         try:
             start = time.time()
             partitions = set(self._active_partitions())
-            row_set = BT.RowSet()
 
             if len(partitions) == 0:
                 return
 
             self._cache.flush()
+            if self._cache._value_cache is not None:
+                # If there is a value cache, we can return the values
+                self._cache.fill(partitions)
+                for k, v in self._cache._value_cache.data.items():
+                    faust_key = self._get_faust_key(k)
+                    yield faust_key, v
+                return
+
+            row_set = BT.RowSet()
             for partition in partitions:
                 prefix_start = self._get_partition_prefix(partition)
                 prefix_end = self._get_partition_prefix(partition + 1)
@@ -497,7 +505,7 @@ class BigTableStore(base.SerializedStore):
                 yield faust_key, value
             self._cache.filled_partitions.update(partitions)
             end = time.time()
-            self.log.info(f"BigTableStore: Time taken for _iteritems {end - start}s")
+            self.log.info(f"{self.table_name} _iteritems took {end - start}s")
 
         except Exception as ex:
             self.log.error(
@@ -660,7 +668,7 @@ class BigTableStore(base.SerializedStore):
             self._cache.delete_partition(partition)
 
         self.log.info(
-            f"BigTableStore: Revoked partitions {partitions=} for table"
+            f"Revoked partitions {partitions=} for table"
             f" {self.table_name}"
         )
         gc.collect()
@@ -671,7 +679,7 @@ class BigTableStore(base.SerializedStore):
         self._cache.fill(partitions)
         end = time.time()
         self.log.info(
-            "BigTableStore: Finished assign_partitions for table"
+            "Finished assign_partitions for table"
             f" {self.table_name}:{partitions} in {end-start}s"
         )
 
