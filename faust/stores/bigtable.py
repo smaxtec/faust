@@ -486,22 +486,21 @@ class BigTableStore(base.SerializedStore):
                 for k, v in self._cache._value_cache.data.items():
                     faust_key = self._get_faust_key(k)
                     yield faust_key, v
-                return
+            else:
+                row_set = BT.RowSet()
+                for partition in partitions:
+                    prefix_start = self._get_partition_prefix(partition)
+                    prefix_end = self._get_partition_prefix(partition + 1)
+                    row_set.add_row_range_from_keys(prefix_start, prefix_end)
 
-            row_set = BT.RowSet()
-            for partition in partitions:
-                prefix_start = self._get_partition_prefix(partition)
-                prefix_end = self._get_partition_prefix(partition + 1)
-                row_set.add_row_range_from_keys(prefix_start, prefix_end)
-
-            for row in self.bt_table.read_rows(
-                row_set=row_set, filter_=self.row_filter
-            ):
-                faust_key = self._get_faust_key(row.row_key)
-                value = self.bigtable_exrtact_row_data(row)
-                self._cache.set(row.row_key, value)
-                yield faust_key, value
-            self._cache.filled_partitions.update(partitions)
+                for row in self.bt_table.read_rows(
+                    row_set=row_set, filter_=self.row_filter
+                ):
+                    faust_key = self._get_faust_key(row.row_key)
+                    value = self.bigtable_exrtact_row_data(row)
+                    self._cache.set(row.row_key, value)
+                    yield faust_key, value
+                self._cache.filled_partitions.update(partitions)
             end = time.time()
             self.log.info(f"{self.table_name} _iteritems took {end - start}s")
 
