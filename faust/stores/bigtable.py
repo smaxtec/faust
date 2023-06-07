@@ -333,7 +333,6 @@ class BigTableStore(base.SerializedStore):
         if self._cache.contains(bt_key):
             return self._cache.get(bt_key)
         else:
-            self.flush()
             res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
             if res is None:
                 value = None
