@@ -209,8 +209,9 @@ class BigTableCacheManager:
         If we return None here, this means, that no assumption
         about the current key can be made.
         """
-        if self._mutation_rows.get(bt_key, None) is not None:
+        if self._mutation_rows.get(bt_key) is not None:
             return True
+
         if self._value_cache is not None:
             return bt_key in self._value_cache.keys()
         return False
@@ -218,12 +219,14 @@ class BigTableCacheManager:
     def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
         if not self._mutation_rows.keys().isdisjoint(key_set):
             return True
+
         if self._value_cache is not None:
             if not self._value_cache.keys().isdisjoint(key_set):
                 return True
         return False
 
     def delete_partition(self, partition: int):
+        self.flush()
         if self._value_cache is not None:
             keys = set(self._value_cache.keys())
             for k in keys:
@@ -330,7 +333,7 @@ class BigTableStore(base.SerializedStore):
         if self._cache.contains(bt_key):
             return self._cache.get(bt_key)
         else:
-
+            self.flush()
             res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
             if res is None:
                 value = None
@@ -343,13 +346,18 @@ class BigTableStore(base.SerializedStore):
     ) -> Tuple[Optional[bytes], Optional[bytes]]:
         # first search cache:
         rows = BT.RowSet()
+        found_deleted = False
         for bt_key in bt_keys:
             if self._cache.contains(bt_key):
                 value = self._cache.get(bt_key)
-                return bt_key, value
-
+                if value is not None:
+                    return bt_key, value
+                else:
+                    found_deleted = True
             else:
                 rows.add_row_key(bt_key)
+        if found_deleted:
+            return None, None
 
         for row in self.bt_table.read_rows(
             row_set=rows, filter_=BT.CellsColumnLimitFilter(1)
