@@ -149,10 +149,6 @@ class BigTableCacheManager:
 
     def flush(self):
         if self.total_mutation_count > 0:
-            self.log.info(
-                f"[^----BigTableStore: bigtable:] flushed {self.total_mutation_count}"
-                f" mutations for {self.bt_table.name} table"
-            )
             self.total_mutation_count = 0
             mutation_list = list(self._mutation_rows.values())
             self.bt_table.mutate_rows(mutation_list)
@@ -360,7 +356,7 @@ class BigTableStore(base.SerializedStore):
         # if found_deleted:
         # return None, None
         self._cache.flush()
-        self.log.info(f"BigTableStore: _bigtable_get_range {bt_keys=} for {self.table.name}")
+        # self.log.info(f"BigTableStore: _bigtable_get_range {bt_keys=} for {self.table.name}")
 
         for row in self.bt_table.read_rows(
             row_set=rows, filter_=BT.CellsColumnLimitFilter(1)
