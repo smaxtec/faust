@@ -112,6 +112,7 @@ class BigTableCacheManager:
     def __init__(self, app, options: Dict, bt_table: BT.Table) -> None:
         self.log = logging.getLogger(__name__)
         self.bt_table: BT.Table = bt_table
+        # TODO: Use settings to configure
         self._partition_cache = LRUCache(limit=10_000)
         self._init_value_cache(options)
         self.filled_partitions = set()
