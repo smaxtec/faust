@@ -424,6 +424,7 @@ class BigTableStore(base.SerializedStore):
                     return value
             else:
                 keys = set()
+                partitions_from_key = set(self._partitions_for_key(key))
                 for partition in partitions_from_key:
                     key_with_partition = self._get_bigtable_key(
                         key, partition=partition
