@@ -406,37 +406,21 @@ class BigTableStore(base.SerializedStore):
 
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
+            partitions = []
             partition = self._maybe_get_partition_from_message()
-            partitions_from_key = set()
-            if partition is None:
-                partitions_from_key = set(self._partitions_for_key(key))
-                if len(partitions_from_key) == 1:
-                    partition = partitions_from_key.pop()
-
             if partition is not None:
+                partitions = [partition]
+            else:
+                partitions = self._partitions_for_key(key)
+
+            for partition in partitions:
                 key_with_partition = self._get_bigtable_key(
                     key, partition=partition
                 )
-
                 value = self._bigtable_get(key_with_partition)
                 if value is not None:
                     self._cache.set_partition(key, partition)
                     return value
-            else:
-                keys = set()
-                partitions_from_key = set(self._partitions_for_key(key))
-                for partition in partitions_from_key:
-                    key_with_partition = self._get_bigtable_key(
-                        key, partition=partition
-                    )
-                    keys.add(key_with_partition)
-
-                key_with_partition, value = self._bigtable_get_range(keys)
-                if value is not None:
-                    partition = key_with_partition[0]
-                    self._cache.set_partition(key, partition)
-                    return value
-
             return None
         except Exception as ex:
             self.log.error(
