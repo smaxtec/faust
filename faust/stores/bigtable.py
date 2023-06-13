@@ -327,46 +327,10 @@ class BigTableStore(base.SerializedStore):
         return list(row_data.to_dict().values())[0][0].value
 
     def _bigtable_get(self, bt_key: bytes) -> Optional[bytes]:
-        if self._cache.contains(bt_key):
-            return self._cache.get(bt_key)
-        else:
-            res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
-            if res is None:
-                value = None
-            else:
-                value = self.bigtable_exrtact_row_data(res)
-        return value
-
-    def _bigtable_get_range(
-        self, bt_keys: Set[bytes]
-    ) -> Tuple[Optional[bytes], Optional[bytes]]:
-        # first search cache:
-        rows = BT.RowSet()
-        # found_deleted = False
-        # for bt_key in bt_keys:
-        # if self._cache.contains(bt_key):
-        # value = self._cache.get(bt_key)
-        # if value is not None:
-        # return bt_key, value
-        # else:
-        # found_deleted = True
-        # else:
-        # rows.add_row_key(bt_key)
-        #
-        # if found_deleted:
-        # return None, None
-        self._cache.flush()
-        # self.log.info(f"BigTableStore: _bigtable_get_range {bt_keys=} for {self.table.name}")
-
-        for row in self.bt_table.read_rows(
-            row_set=rows, filter_=BT.CellsColumnLimitFilter(1)
-        ):
-            # First hit will return
-            val = self.bigtable_exrtact_row_data(row)
-            return row.row_key, val
-
-        # Not found
-        return None, None
+        res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
+        if res is None:
+            return None
+        return self.bigtable_exrtact_row_data(res)
 
     def _bigtable_mutate(self, bt_key: bytes, value: Optional[bytes]):
         # Update the value cache if any exists
@@ -413,11 +377,21 @@ class BigTableStore(base.SerializedStore):
             else:
                 partitions = self._partitions_for_key(key)
 
+            # First we search the cache
             for partition in partitions:
-                key_with_partition = self._get_bigtable_key(
+                bt_key = self._get_bigtable_key(
                     key, partition=partition
                 )
-                value = self._bigtable_get(key_with_partition)
+                if self._cache.contains(bt_key):
+                    self._cache.set_partition(key, partition)
+                    return self._cache.get(bt_key)
+
+            # Then we search the bigtable
+            for partition in partitions:
+                bt_key = self._get_bigtable_key(
+                    key, partition=partition
+                )
+                value = self._bigtable_get(bt_key)
                 if value is not None:
                     self._cache.set_partition(key, partition)
                     return value
