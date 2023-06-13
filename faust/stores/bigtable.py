@@ -112,7 +112,7 @@ class BigTableCacheManager:
     def __init__(self, app, options: Dict, bt_table: BT.Table) -> None:
         self.log = logging.getLogger(__name__)
         self.bt_table: BT.Table = bt_table
-        self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
+        self._partition_cache = LRUCache(limit=10_000)
         self._init_value_cache(options)
         self.filled_partitions = set()
         self._last_flush = time.time()
@@ -345,18 +345,21 @@ class BigTableStore(base.SerializedStore):
     ) -> Tuple[Optional[bytes], Optional[bytes]]:
         # first search cache:
         rows = BT.RowSet()
-        found_deleted = False
-        for bt_key in bt_keys:
-            if self._cache.contains(bt_key):
-                value = self._cache.get(bt_key)
-                if value is not None:
-                    return bt_key, value
-                else:
-                    found_deleted = True
-            else:
-                rows.add_row_key(bt_key)
-        if found_deleted:
-            return None, None
+        # found_deleted = False
+        # for bt_key in bt_keys:
+        # if self._cache.contains(bt_key):
+        # value = self._cache.get(bt_key)
+        # if value is not None:
+        # return bt_key, value
+        # else:
+        # found_deleted = True
+        # else:
+        # rows.add_row_key(bt_key)
+        #
+        # if found_deleted:
+        # return None, None
+        self._cache.flush()
+        self.log.info(f"BigTableStore: _bigtable_get_range {bt_keys=} for {self.table.name}")
 
         for row in self.bt_table.read_rows(
             row_set=rows, filter_=BT.CellsColumnLimitFilter(1)
@@ -672,8 +675,7 @@ class BigTableStore(base.SerializedStore):
             self._cache.delete_partition(partition)
 
         self.log.info(
-            f"Revoked partitions {partitions=} for table"
-            f" {self.table_name}"
+            f"Revoked partitions {partitions=} for table" f" {self.table_name}"
         )
         gc.collect()
 
