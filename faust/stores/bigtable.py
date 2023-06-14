@@ -141,13 +141,11 @@ class BigTableCache:
             self.filled_partitions.update(partitions)
 
     def get(self, bt_key: bytes) -> Optional[bytes]:
-        if self._mutation_rows.get(bt_key) is not None:
+        if self._mutation_rows.get(bt_key, None) is not None:
             return self._mutation_values[bt_key]
+
         if self._value_cache is not None:
             return self._value_cache[bt_key]
-        raise NotImplementedError(
-            f"get is not implemented for {self.__class__} with no value cache"
-        )
 
     def set(self, bt_key: bytes, value: Optional[bytes]) -> None:
         if self._value_cache is not None:
@@ -164,7 +162,7 @@ class BigTableCache:
         If we return None here, this means, that no assumption
         about the current key can be made.
         """
-        if self._mutation_rows.get(bt_key) is not None:
+        if self._mutation_rows.get(bt_key, None) is not None:
             return True
 
         if self._value_cache is not None:
