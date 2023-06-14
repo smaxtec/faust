@@ -259,7 +259,7 @@ class BigTableStore(base.SerializedStore):
         if not self.bt_table.exists():
             logging.getLogger(__name__).info(
                 f"BigTableStore: Making new bigtablestore with {self.bt_table_name=} "
-                f"for {table.name}"
+                f"for {table.name} with {options=}"
             )
             self.bt_table.create(
                 column_families={
