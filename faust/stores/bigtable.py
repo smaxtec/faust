@@ -57,65 +57,22 @@ COLUMN_FAMILY_ID = "FaustColumnFamily"
 COLUMN_NAME = "DATA"
 
 
-class BigTableValueCache:
-    """
-    This is a dictionary which is only filled once, after that, every
-    successful access to a key, will remove it.
-    """
-
-    data: Union[Dict, LRUCache]
-
-    def __init__(self, ttl=-1, size: Optional[int] = None) -> None:
-        self.log = logging.getLogger(self.__class__.__name__)
-        if size is not None:
-            self.data = LRUCache(limit=size)
-        else:
-            self.data = {}
-        self.ttl = ttl
-        self.ttl_over = False
-        self.init_ts = int(time.time())
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, key):
-        if not self.ttl_over:
-            res = self.data[key]
-            self._maybe_ttl_clear()
-            return res
-
-    def __setitem__(self, key, value) -> None:
-        self._maybe_ttl_clear()
-        if not self.ttl_over:
-            self.data[key] = value
-
-    def __delitem__(self, key):
-        self.data.pop(key, None)
-
-    def _maybe_ttl_clear(self):
-        if self.ttl != -1 and not self.ttl_over:
-            now = int(time.time())
-            if now > self.init_ts + self.ttl:
-                self.data = {}
-                self.ttl_over = True
-
-    def keys(self):
-        return self.data.keys()
-
-
-class BigTableCacheManager:
+class BigTableCache:
     _partition_cache: LRUCache[bytes, int]
-    _value_cache: Optional[BigTableValueCache]
+    _value_cache: Optional[Dict]
     _mutation_values: Dict[bytes, Optional[bytes]]
     _mutation_rows: Dict[bytes, BT.DirectRow]
 
     def __init__(self, app, options: Dict, bt_table: BT.Table) -> None:
         self.log = logging.getLogger(__name__)
         self.bt_table: BT.Table = bt_table
-        # TODO: Use settings to configure
-        self._partition_cache = LRUCache(limit=10_000)
+        self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
         self._init_value_cache(options)
         self.filled_partitions = set()
+
+        self._flush_freq = options.get(
+            BigTableStore.BT_MUTATION_FLUSH_FREQ_SECONDS_KEY, 5 * 60
+        )
         self._last_flush = time.time()
         self._mutation_values = {}
         self._mutation_rows = {}
@@ -133,7 +90,10 @@ class BigTableCacheManager:
 
     def submit_mutation(self, bt_key: bytes, value: Optional[bytes]) -> None:
         row = self._mutation_rows.get(bt_key, None)
-        row = row if row else self.bt_table.direct_row(bt_key)
+        if row is None:
+            self.total_mutation_count += 1
+            row = self.bt_table.direct_row(bt_key)
+
         if value is None:
             row.delete()
         else:
@@ -144,7 +104,6 @@ class BigTableCacheManager:
             )
         self._mutation_values[bt_key] = value
         self._mutation_rows[bt_key] = row
-        self.total_mutation_count += 1
         self.flush_mutations_if_timer_over_or_full()
 
     def flush(self):
@@ -157,9 +116,8 @@ class BigTableCacheManager:
             self._last_flush = time.time()
 
     def flush_mutations_if_timer_over_or_full(self) -> None:
-        five_min = 5 * 60
         if (
-            self._last_flush + five_min < time.time()
+            self._last_flush + self._flush_freq < time.time()
             or self.total_mutation_count > 10_000
         ):
             self.flush()
@@ -228,19 +186,12 @@ class BigTableCacheManager:
             keys = set(self._value_cache.keys())
             for k in keys:
                 if k[0] == partition:
-                    del self._value_cache[k]
+                    self._value_cache.pop(k, None)
                     self._partition_cache.pop(k[1:], None)
 
-    def _init_value_cache(
-        self, options
-    ) -> Optional[Union[LRUCache, BigTableValueCache]]:
-        enable = options.get(BigTableStore.VALUE_CACHE_ENABLE_KEY, False)
-        if enable:
-            ttl = options.get(
-                BigTableStore.VALUE_CACHE_INVALIDATION_TIME_KEY, -1
-            )
-            size = options.get(BigTableStore.VALUE_CACHE_SIZE_KEY, None)
-            self._value_cache = BigTableValueCache(ttl=ttl, size=size)
+    def _init_value_cache(self, options):
+        if options.get(BigTableStore.BT_VALUE_CACHE_ENABLE_KEY, False):
+            self._value_cache = {}
         else:
             self._value_cache = None
 
@@ -251,7 +202,7 @@ class BigTableStore(base.SerializedStore):
     client: BT.Client
     instance: BT.Instance
     bt_table: BT.Table
-    _cache: BigTableCacheManager
+    _cache: BigTableCache
     _db_lock: asyncio.Lock
 
     BT_COLUMN_NAME_KEY = "bt_column_name_key"
@@ -259,9 +210,8 @@ class BigTableStore(base.SerializedStore):
     BT_OFFSET_KEY_PREFIX = "bt_offset_key_prefix"
     BT_PROJECT_KEY = "bt_project_key"
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
-    VALUE_CACHE_INVALIDATION_TIME_KEY = "value_cache_invalidation_time_key"
-    VALUE_CACHE_SIZE_KEY = "value_cache_size_key"
-    VALUE_CACHE_ENABLE_KEY = "value_cache_enable_key"
+    BT_VALUE_CACHE_ENABLE_KEY = "bt_value_cache_enable_key"
+    BT_MUTATION_FLUSH_FREQ_SECONDS_KEY = "bt_mutation_flush_freq_seconds_key"
 
     def __init__(
         self,
@@ -275,7 +225,7 @@ class BigTableStore(base.SerializedStore):
         self._log_counter = 0
         try:
             self._bigtable_setup(table, options)
-            self._cache = BigTableCacheManager(app, options, self.bt_table)
+            self._cache = BigTableCache(app, options, self.bt_table)
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
@@ -379,18 +329,14 @@ class BigTableStore(base.SerializedStore):
 
             # First we search the cache
             for partition in partitions:
-                bt_key = self._get_bigtable_key(
-                    key, partition=partition
-                )
+                bt_key = self._get_bigtable_key(key, partition=partition)
                 if self._cache.contains(bt_key):
                     self._cache.set_partition(key, partition)
                     return self._cache.get(bt_key)
 
             # Then we search the bigtable
             for partition in partitions:
-                bt_key = self._get_bigtable_key(
-                    key, partition=partition
-                )
+                bt_key = self._get_bigtable_key(key, partition=partition)
                 value = self._bigtable_get(bt_key)
                 if value is not None:
                     self._cache.set_partition(key, partition)
@@ -455,7 +401,7 @@ class BigTableStore(base.SerializedStore):
             if self._cache._value_cache is not None:
                 # If there is a value cache, we can return the values
                 self._cache.fill(partitions)
-                for k, v in self._cache._value_cache.data.items():
+                for k, v in self._cache._value_cache.items():
                     faust_key = self._get_faust_key(k)
                     yield faust_key, v
             else:
