@@ -207,8 +207,7 @@ class TestBigTableCache:
             manager.get(key_not_in)
 
         manager._value_cache = None
-        with pytest.raises(NotImplementedError):
-            manager.get(key_in)
+        assert manager.get(key_in) is None
 
     def test_set(self, manager):
         key_1 = b"\x13AAA"
@@ -416,88 +415,11 @@ class TestBigTableStore:
             return store
 
     def test_bigtable_bigtable_get_on_empty(self, store):
-        store._cache.contains = MagicMock(return_value=False)
-        store._cache.set = MagicMock()
         return_value = store._bigtable_get(self.TEST_KEY1)
-        store._cache.contains.assert_called_with(self.TEST_KEY1)
         store.bt_table.read_row.assert_called_once_with(
-            self.TEST_KEY1, filter_="a_filter"
-        )
-        store._cache.set.assert_called_with(self.TEST_KEY1, None)
-        assert return_value is None
-
-        store._cache.contains = MagicMock(return_value=None)
-        return_value = store._bigtable_get(self.TEST_KEY1)
-        store._cache.contains.assert_called_with(self.TEST_KEY1)
-        store.bt_table.read_row.assert_called_with(
             self.TEST_KEY1, filter_="a_filter"
         )
         assert return_value is None
-
-    def test_bigtable_bigtable_get_cache_miss(self, store):
-        store._cache.contains = MagicMock(return_value=None)
-        store.bt_table.add_test_data([self.TEST_KEY1])
-        return_value = store._bigtable_get(self.TEST_KEY1)
-        store.bt_table.read_row.assert_called_once_with(
-            self.TEST_KEY1, filter_="a_filter"
-        )
-        assert return_value == self.TEST_KEY1
-
-    def test_bigtable_bigtable_get_cache_hit(self, store):
-        store.bt_table.add_test_data([self.TEST_KEY1])
-        store._cache.contains = MagicMock(return_value=True)
-        store._cache.get = MagicMock(return_value=b"cache_res")
-        return_value = store._bigtable_get(self.TEST_KEY1)
-        store._cache.get.assert_called_once_with(self.TEST_KEY1)
-        store.bt_table.read_row.assert_not_called()
-        assert return_value == b"cache_res"
-
-        store._cache.contains = MagicMock(return_value=False)
-        store._cache.get = MagicMock()
-        return_value = store._bigtable_get(self.TEST_KEY1)
-        store._cache.get.assert_not_called()
-        store.bt_table.read_row.assert_called_once_with(
-            self.TEST_KEY1, filter_="a_filter"
-        )
-        assert return_value == self.TEST_KEY1
-
-    def test_bigtable_get_range_cache_miss(self, store):
-        store._cache.contains = MagicMock(return_value=None)
-
-        test_keys_in = [self.TEST_KEY1, self.TEST_KEY3]  # order is important
-        test_keys_not_in = {
-            self.TEST_KEY2,
-        }
-
-        return_value = store._bigtable_get_range(test_keys_not_in)
-        store.bt_table.read_rows.assert_called()
-        store.bt_table.read_rows.reset_mock()
-        assert return_value == (None, None)
-
-        store.bt_table.add_test_data(test_keys_in)
-        return_value = store._bigtable_get_range(test_keys_in)
-        store.bt_table.read_rows.assert_called()
-        store.bt_table.read_rows.reset_mock()
-        assert return_value == (
-            self.TEST_KEY1,
-            self.TEST_KEY1,
-        ) or return_value == ((self.TEST_KEY3, self.TEST_KEY3))
-
-    def test_bigtable_get_range_cache_hit(self, store):
-        store._cache.get = MagicMock(return_value="cache_res")
-        store._cache.contains = MagicMock(return_value=False)
-        result_value = store._bigtable_get_range(
-            [self.TEST_KEY1, self.TEST_KEY3]
-        )
-        store.bt_table.read_rows.assert_not_called
-        assert result_value == (None, None)
-
-        store._cache.contains = MagicMock(return_value=True)
-        result_value = store._bigtable_get_range(
-            [self.TEST_KEY1, self.TEST_KEY3]
-        )
-        store.bt_table.read_rows.assert_not_called
-        assert result_value == (self.TEST_KEY1, "cache_res")
 
     def test_bigtable_delete(self, store):
         row_mock = MagicMock()
@@ -614,7 +536,7 @@ class TestBigTableStore:
 
     def test_get_with_unknown_partition(self, store):
         store._maybe_get_partition_from_message = MagicMock(return_value=None)
-        store._partitions_for_key = MagicMock(return_value=[1, 3, 19])
+        store._partitions_for_key = MagicMock(return_value=[19, 3, 19])
         store._cache.set_partition = MagicMock()
         keys_searched = set()
         keys_searched.add(store._get_bigtable_key(self.TEST_KEY1, 1))
@@ -623,20 +545,19 @@ class TestBigTableStore:
 
         # Scenario: Found
         key_of_value = store._get_bigtable_key(self.TEST_KEY1, 19)
-        store._bigtable_get_range = MagicMock(
-            return_value=(key_of_value, b"a_value")
+        store._bigtable_get = MagicMock(
+            return_value=b"a_value"
         )
         res = store._get(self.TEST_KEY1)
         store._partitions_for_key.assert_called_once_with(self.TEST_KEY1)
-        store._bigtable_get_range.assert_called_once_with(keys_searched)
         store._cache.set_partition.assert_called_once_with(self.TEST_KEY1, 19)
         assert res == b"a_value"
 
         store._cache.set_partition.reset_mock()
         # Scenario: Not Found
-        store._bigtable_get_range = MagicMock(return_value=(None, None))
+        store._bigtable_get = MagicMock(return_value=None)
         res = store._get(self.TEST_KEY1)
-        store._bigtable_get_range.assert_called_once_with(keys_searched)
+        assert store._bigtable_get.call_count == 3
         store._cache.set_partition.assert_not_called()
         assert res is None
 
@@ -692,21 +613,28 @@ class TestBigTableStore:
         all_res = list(res)
         assert list(range(store.app.conf.topic_partitions)) == all_res
 
-    def test_iteritems(self, store):
+    def test_iteritems_with_cache(self, store):
         store._active_partitions = MagicMock(return_value=[1, 3])
         store._cache.flush = MagicMock(wraps=store._cache.flush)
+        store._cache.fill = MagicMock()
         store.bt_table.read_rows = MagicMock()
 
         _ = sorted(store._iteritems())
         store._cache.flush.assert_called_once()
+        store._cache.fill.assert_called_once()
         _ = sorted(store._iteritems())
-        assert store.bt_table.read_rows.call_count == 2
+        store.bt_table.read_rows.assert_not_called()
 
-        store._cache.filled_partitions = {1, 3}
-        store._active_partitions = MagicMock(return_value={1, 3})
+    def test_iteritems(self, store):
+        store._active_partitions = MagicMock(return_value=[1, 3])
+        store.bt_table.read_rows = MagicMock()
+        store._cache._value_cache = None
+        store._cache.flush = MagicMock(wraps=store._cache.flush)
+
         _ = sorted(store._iteritems())
-        # No new calls, we just return what's in the cache
-        assert store.bt_table.read_rows.call_count == 3
+        store._cache.flush.assert_called_once()
+        _ = sorted(store._iteritems())
+        store.bt_table.read_rows.assert_called()
 
     def test_iterkeys(self, store):
         values = [("K1", "V1"), ("K2", "V2")]
@@ -729,14 +657,13 @@ class TestBigTableStore:
 
     def test_set_persisted_offset(self, store):
         tp = TP("a_topic", 19)
-        store._bigtable_mutate = MagicMock(wraps=store._bigtable_mutate)
+        store._cache.submit_mutation = MagicMock(wraps=store._cache.submit_mutation)
         store._cache.flush_if_timer_over = MagicMock(return_value=False)
         expected_offset_key = store.get_offset_key(tp).encode()
         store.set_persisted_offset(tp, 123)
-        store._bigtable_mutate.assert_called_with(
+        store._cache.submit_mutation.assert_called_with(
             expected_offset_key, str(123).encode()
         )
-        assert store.persisted_offset(tp) == 123
 
     def test_apply_changelog_batch(self, store):
         row_mock = MagicMock()
@@ -798,12 +725,12 @@ class TestBigTableStore:
 
         def real_del_scenario(key, offset):
             store._del(key)
-            store._bigtable_mutate.reset_mock()
+            store._cache.submit_mutation.reset_mock()
             store.set_persisted_offset(TEST_TP, offset)
             return offset + 1
 
         def assert_offset_persisted(offset):
-            store._bigtable_mutate.assert_called_with(
+            store._cache.submit_mutation.assert_called_with(
                 OFFSET_KEY, str(offset).encode()
             )
 
@@ -812,6 +739,8 @@ class TestBigTableStore:
 
         store.bt_table.direct_row = MagicMock(return_value=row_mock)
         store._bigtable_mutate = MagicMock(wraps=store._bigtable_mutate)
+        store._cache.submit_mutation = MagicMock()
+
         partition = 0
         faust.stores.bigtable.get_current_partition = MagicMock(
             return_value=partition
