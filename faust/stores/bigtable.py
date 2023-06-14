@@ -269,7 +269,8 @@ class BigTableStore(base.SerializedStore):
         else:
             logging.getLogger(__name__).info(
                 "BigTableStore: Using existing "
-                f"bigtablestore with {self.bt_table_name=} for {table.name}"
+                f"bigtablestore with {self.bt_table_name=} for {table.name} "
+                f"with {options=}"
             )
 
     @staticmethod
