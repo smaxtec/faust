@@ -6,11 +6,8 @@ from mode.utils.collections import LRUCache
 
 import faust
 from faust.stores.bigtable import (
-    BigTableCacheManager,
+    BigTableCache,
     BigTableStore,
-    BigTableValueCache,
-    COLUMN_FAMILY_ID,
-    COLUMN_NAME,
 )
 from faust.types.tuples import TP
 
@@ -119,72 +116,7 @@ class BigTableMock:
             self.data[k] = k
 
 
-class TestBigTableValueCache:
-    def test_init(self):
-        # Test defaults
-        cache = BigTableValueCache()
-        assert cache.data == {}
-        assert cache.ttl == -1
-        assert cache.ttl_over is False
-
-        # Test with custom size
-        cache = BigTableValueCache(size=123)
-        assert isinstance(cache.data, LRUCache)
-        assert cache.data.limit == 123
-
-        # Test with custom ttl
-        cache = BigTableValueCache(ttl=123)
-        assert cache.data == {}
-        assert cache.ttl == 123
-        assert cache.ttl_over is False
-
-    def test__set_del_len_and_getitem(self):
-        cache = BigTableValueCache()
-        # Scenario ttl not over and no clear
-        cache._maybe_ttl_clear = MagicMock()
-        assert len(cache) == 0
-        cache["123"] = 123
-        assert cache._maybe_ttl_clear.call_count == 1
-        assert len(cache) == 1
-        assert cache["123"] == 123
-        assert cache._maybe_ttl_clear.call_count == 2
-        del cache["123"]
-        assert cache._maybe_ttl_clear.call_count == 2
-        assert len(cache) == 0
-
-    def test__set_del_len_and_getitem_after_tttl(self):
-        cache = BigTableValueCache()
-        # Scenario ttl over and clear
-        cache._maybe_ttl_clear = MagicMock()
-        cache.ttl_over = True
-        assert len(cache) == 0
-        cache["123"] = 123
-        assert cache._maybe_ttl_clear.call_count == 1
-        assert len(cache) == 0
-        assert "123" not in cache.keys()
-        assert cache._maybe_ttl_clear.call_count == 1
-        del cache["123"]
-        assert cache._maybe_ttl_clear.call_count == 1
-        assert len(cache) == 0
-
-    def test_maybe_ttl_clear(self):
-        time.time = MagicMock(return_value=0)
-        cache = BigTableValueCache(ttl=5)
-        assert cache.init_ts == 0
-
-        cache._maybe_ttl_clear()
-        assert cache.ttl_over is False  # Nothing cleared
-
-        time.time.return_value = 5
-        cache._maybe_ttl_clear()
-        assert cache.ttl_over is False  # Nothing cleared, edge case
-
-        time.time.return_value = 6
-        cache._maybe_ttl_clear()
-        assert cache.ttl_over is True  # Nothing cleared, edge case
-
-
-class TestBigTableCacheManager:
+class TestBigTableCache:
     def test_default__init__(self):
         bigtable_mock = BigTableMock()
         app_mock = MagicMock()
@@ -192,7 +124,7 @@ class TestBigTableCacheManager:
         app_mock.conf.table_key_index_size = 123
         time.time = MagicMock(return_value=0)
 
-        test_manager = BigTableCacheManager(MagicMock(), {}, bigtable_mock)
+        test_manager = BigTableCache(MagicMock(), {}, bigtable_mock)
         assert test_manager.bt_table == bigtable_mock
         assert test_manager._value_cache is None
 
@@ -203,14 +135,14 @@ class TestBigTableCacheManager:
         app_mock.conf.table_key_index_size = 2
         time.time = MagicMock(return_value=0)
         options = {
-            BigTableStore.VALUE_CACHE_ENABLE_KEY: True,
+            BigTableStore.BT_VALUE_CACHE_ENABLE_KEY: True,
         }
 
-        test_manager = BigTableCacheManager(
+        test_manager = BigTableCache(
             MagicMock(), options, bigtable_mock
         )
         assert test_manager.bt_table == bigtable_mock
-        assert isinstance(test_manager._value_cache, BigTableValueCache)
+        assert isinstance(test_manager._value_cache, dict)
 
     @pytest.fixture()
     def bt_imports(self):
@@ -234,9 +166,9 @@ class TestBigTableCacheManager:
                 app_mock.conf.table_key_index_size = 123
 
                 options = {
-                    BigTableStore.VALUE_CACHE_ENABLE_KEY: True,
+                    BigTableStore.BT_VALUE_CACHE_ENABLE_KEY: True,
                 }
-                manager = BigTableCacheManager(
+                manager = BigTableCache(
                     MagicMock(), options, bigtable_mock
                 )
                 manager._partition_cache = {}
@@ -476,7 +408,7 @@ class TestBigTableStore:
             options = {}
             options[BigTableStore.BT_INSTANCE_KEY] = "bt_instance"
             options[BigTableStore.BT_PROJECT_KEY] = "bt_project"
-            options[BigTableStore.VALUE_CACHE_ENABLE_KEY] = True
+            options[BigTableStore.BT_VALUE_CACHE_ENABLE_KEY] = True
             store = BigTableStore(
                 "bigtable://", MagicMock(), MagicMock(), options=options
             )
