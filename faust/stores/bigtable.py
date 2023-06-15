@@ -108,6 +108,7 @@ class BigTableCache:
 
     def flush(self):
         if self.total_mutation_count > 0:
+            self.log.info(f"Flushing {self.total_mutation_count} mutations")
             self.total_mutation_count = 0
             mutation_list = list(self._mutation_rows.values())
             self.bt_table.mutate_rows(mutation_list)
@@ -324,7 +325,7 @@ class BigTableStore(base.SerializedStore):
             if partition is not None:
                 partitions = [partition]
             else:
-                partitions = self._partitions_for_key(key)
+                partitions = set(self._partitions_for_key(key))
 
             # First we search the cache
             for partition in partitions:
@@ -495,6 +496,7 @@ class BigTableStore(base.SerializedStore):
         See :meth:`set_persisted_offset`.
         """
         offset_key = self.get_offset_key(tp).encode()
+        self._cache.flush()
         offset = self._bigtable_get(offset_key)
         return int(offset) if offset is not None else None
 
