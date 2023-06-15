@@ -158,15 +158,16 @@ class BigTableCache:
     def set_partition(self, user_key: bytes, partition: int):
         self._partition_cache[user_key] = partition
 
-    def contains(self, bt_key: bytes) -> Optional[bool]:
+    def contains(self, bt_key: bytes, with_delete=False) -> Optional[bool]:
         """
         If we return None here, this means, that no assumption
         about the current key can be made.
         """
-        if self._mutation_rows.get(bt_key, None) is not None:
+        if with_delete:
+            return self._mutation_rows.get(bt_key, None) is not None
+        elif self._mutation_values.get(bt_key, None) is not None:
             return True
-
-        if self._value_cache is not None:
+        elif self._value_cache is not None:
             return bt_key in self._value_cache.keys()
         return False
 
@@ -319,11 +320,18 @@ class BigTableStore(base.SerializedStore):
                 partitions = set(self._partitions_for_key(key))
 
             # First we search the cache
+            found_deleted = False
             for partition in partitions:
                 bt_key = self._get_bigtable_key(key, partition=partition)
                 if self._cache.contains(bt_key):
-                    self._cache.set_partition(key, partition)
-                    return self._cache.get(bt_key)
+                    value = self._cache.get(bt_key)
+                    if value is not None:
+                        self._cache.set_partition(key, partition)
+                        return value
+                    else:
+                        found_deleted = True
+            if found_deleted:
+                return None
 
             # Then we search the bigtable
             for partition in partitions:
