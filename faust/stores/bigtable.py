@@ -170,15 +170,6 @@ class BigTableCache:
             return bt_key in self._value_cache.keys()
         return False
 
-    def contains_any(self, key_set: Set[bytes]) -> Optional[bool]:
-        if not self._mutation_rows.keys().isdisjoint(key_set):
-            return True
-
-        if self._value_cache is not None:
-            if not self._value_cache.keys().isdisjoint(key_set):
-                return True
-        return False
-
     def delete_partition(self, partition: int):
         self.flush()
         if self._value_cache is not None:
