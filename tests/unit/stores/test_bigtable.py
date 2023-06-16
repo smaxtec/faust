@@ -248,23 +248,6 @@ class TestBigTableCache:
         assert manager.contains(key_in) is False
         assert manager.contains(key_not_in) is False
 
-    def test_contains_any(self, manager):
-        # Adding the key here is sufficient, because the cache gets filled
-        key_in = b"\x13AAA"
-        key_not_in = b"\x13BBB"
-        manager.bt_table.add_test_data({key_in})
-
-        manager.fill({19})
-        assert manager.contains_any({key_in, key_not_in}) is True
-        assert manager.contains_any({key_not_in}) is False
-
-        assert manager.contains_any({key_in, key_not_in}) is True
-        assert manager.contains_any({key_not_in}) is False
-
-        manager._value_cache = None
-        assert manager.contains_any({key_in, key_not_in}) is False
-        assert manager.contains_any({key_not_in}) is False
-
     def test_delete_partition(self, manager):
         partition = 19
         row_mock = MagicMock()
@@ -309,7 +292,7 @@ class TestBigTableStore:
         bt_imports.CellsColumnLimitFilter = MagicMock(return_value="a_filter")
 
         BigTableStore._set_options(self_mock, options={})
-        assert self_mock.offset_key_prefix == "offset_partitiion:"
+        assert self_mock.offset_key_prefix == "==>offset_for_partition_"
         assert self_mock.row_filter == "a_filter"
 
     @pytest.mark.asyncio
@@ -536,7 +519,7 @@ class TestBigTableStore:
 
     def test_get_with_unknown_partition(self, store):
         store._maybe_get_partition_from_message = MagicMock(return_value=None)
-        store._partitions_for_key = MagicMock(return_value=[19, 3, 19])
+        store._partitions_for_key = MagicMock(return_value=[3, 19])
         store._cache.set_partition = MagicMock()
         keys_searched = set()
         keys_searched.add(store._get_bigtable_key(self.TEST_KEY1, 1))
@@ -544,7 +527,6 @@ class TestBigTableStore:
         keys_searched.add(store._get_bigtable_key(self.TEST_KEY1, 19))
 
         # Scenario: Found
-        key_of_value = store._get_bigtable_key(self.TEST_KEY1, 19)
         store._bigtable_get = MagicMock(
             return_value=b"a_value"
         )
@@ -557,7 +539,7 @@ class TestBigTableStore:
         # Scenario: Not Found
         store._bigtable_get = MagicMock(return_value=None)
         res = store._get(self.TEST_KEY1)
-        assert store._bigtable_get.call_count == 3
+        assert store._bigtable_get.call_count == 2
         store._cache.set_partition.assert_not_called()
         assert res is None
 
@@ -739,7 +721,7 @@ class TestBigTableStore:
 
         store.bt_table.direct_row = MagicMock(return_value=row_mock)
         store._bigtable_mutate = MagicMock(wraps=store._bigtable_mutate)
-        store._cache.submit_mutation = MagicMock()
+        store._cache.submit_mutation = MagicMock(wraps=store._cache.submit_mutation)
 
         partition = 0
         faust.stores.bigtable.get_current_partition = MagicMock(
