@@ -109,12 +109,22 @@ class BigTableCache:
     def flush(self):
         if self.total_mutation_count > 0:
             self.log.info(f"Flushing {self.total_mutation_count} mutations")
-            self.total_mutation_count = 0
+            # Order is important here, we don't want to repeat mutations
+            self._last_flush = time.time()
             mutation_list = list(self._mutation_rows.values())
-            self.bt_table.mutate_rows(mutation_list)
+            try:
+                self.bt_table.mutate_rows(mutation_list)
+            except Exception as e:
+                self.log.warning(
+                    f"BigTableStore: flush failed with {e} "
+                    "will try again on next flush. "
+                    "No data is lost."
+                )
+                return
+
+            self.total_mutation_count = 0
             self._mutation_values.clear()
             self._mutation_rows.clear()
-            self._last_flush = time.time()
 
     def flush_mutations_if_timer_over_or_full(self) -> None:
         if (
@@ -323,7 +333,7 @@ class BigTableStore(base.SerializedStore):
             found_deleted = False
             for partition in partitions:
                 bt_key = self._get_bigtable_key(key, partition=partition)
-                if self._cache.contains(bt_key):
+                if self._cache.contains(bt_key, with_deleted=True):
                     value = self._cache.get(bt_key)
                     if value is not None:
                         self._cache.set_partition(key, partition)
