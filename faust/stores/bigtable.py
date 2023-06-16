@@ -333,7 +333,7 @@ class BigTableStore(base.SerializedStore):
             found_deleted = False
             for partition in partitions:
                 bt_key = self._get_bigtable_key(key, partition=partition)
-                if self._cache.contains(bt_key, with_deleted=True):
+                if self._cache.contains(bt_key, with_delete=True):
                     value = self._cache.get(bt_key)
                     if value is not None:
                         self._cache.set_partition(key, partition)
