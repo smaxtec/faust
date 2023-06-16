@@ -244,7 +244,7 @@ class BigTableStore(base.SerializedStore):
         )
         self.row_filter = BT.CellsColumnLimitFilter(1)
         self.offset_key_prefix = options.get(
-            BigTableStore.BT_OFFSET_KEY_PREFIX, "offset_partitiion:"
+                BigTableStore.BT_OFFSET_KEY_PREFIX, "==>offset_for_partition_"
         )
 
     def _bigtable_setup(self, table, options: Dict[str, Any]):
