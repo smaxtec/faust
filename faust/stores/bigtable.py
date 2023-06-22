@@ -159,8 +159,11 @@ class BigTableCache:
             return self._value_cache[bt_key]
 
     def set(self, bt_key: bytes, value: Optional[bytes]) -> None:
-        if self._value_cache is not None and value is not None:
-            self._value_cache[bt_key] = value
+        if self._value_cache is not None:
+            if value is None:
+                self._value_cache.pop(bt_key, None)
+            else:
+                self._value_cache[bt_key] = value
 
     def get_partition(self, user_key: bytes) -> int:
         return self._partition_cache[user_key]
