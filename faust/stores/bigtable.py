@@ -129,8 +129,7 @@ class BigTableCache:
     def flush_mutations_if_timer_over_or_full(self) -> None:
         if (
             self._last_flush + self._flush_freq < time.time()
-            # Now we try to flush all the time
-            or self.total_mutation_count > 0
+            or self.total_mutation_count > 10_000
         ):
             self.flush()
 
@@ -160,7 +159,7 @@ class BigTableCache:
             return self._value_cache[bt_key]
 
     def set(self, bt_key: bytes, value: Optional[bytes]) -> None:
-        if self._value_cache is not None:
+        if self._value_cache is not None and value is not None:
             self._value_cache[bt_key] = value
 
     def get_partition(self, user_key: bytes) -> int:
