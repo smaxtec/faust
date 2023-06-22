@@ -91,8 +91,8 @@ class BigTableCache:
     def submit_mutation(self, bt_key: bytes, value: Optional[bytes]) -> None:
         row = self._mutation_rows.get(bt_key, None)
         if row is None:
-            self.total_mutation_count += 1
             row = self.bt_table.direct_row(bt_key)
+        self.total_mutation_count += 1
 
         if value is None:
             row.delete()
@@ -129,7 +129,8 @@ class BigTableCache:
     def flush_mutations_if_timer_over_or_full(self) -> None:
         if (
             self._last_flush + self._flush_freq < time.time()
-            or self.total_mutation_count > 10_000
+            # Google allows a maximum of 100_000 mutattions
+            or self.total_mutation_count > 99_000
         ):
             self.flush()
 
