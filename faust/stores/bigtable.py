@@ -129,7 +129,8 @@ class BigTableCache:
     def flush_mutations_if_timer_over_or_full(self) -> None:
         if (
             self._last_flush + self._flush_freq < time.time()
-            or self.total_mutation_count > 10_000
+            # Now we try to flush all the time
+            or self.total_mutation_count > 0
         ):
             self.flush()
 
