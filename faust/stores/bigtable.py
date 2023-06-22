@@ -89,11 +89,8 @@ class BigTableCache:
         return row_set, row_filter
 
     def submit_mutation(self, bt_key: bytes, value: Optional[bytes]) -> None:
-        row = self._mutation_rows.get(bt_key, None)
-        if row is None:
-            row = self.bt_table.direct_row(bt_key)
-        self.total_mutation_count += 1
-
+        # Directly submit
+        row = self.bt_table.direct_row(bt_key)
         if value is None:
             row.delete()
         else:
@@ -102,9 +99,23 @@ class BigTableCache:
                 COLUMN_NAME,
                 value,
             )
-        self._mutation_values[bt_key] = value
-        self._mutation_rows[bt_key] = row
-        self.flush_mutations_if_timer_over_or_full()
+        row.commit()
+        # row = self._mutation_rows.get(bt_key, None)
+        # if row is None:
+            # row = self.bt_table.direct_row(bt_key)
+        # self.total_mutation_count += 1
+#
+        # if value is None:
+            # row.delete()
+        # else:
+            # row.set_cell(
+                # COLUMN_FAMILY_ID,
+                # COLUMN_NAME,
+                # value,
+            # )
+        # self._mutation_values[bt_key] = value
+        # self._mutation_rows[bt_key] = row
+        # self.flush_mutations_if_timer_over_or_full()
 
     def flush(self):
         if self.total_mutation_count > 0:
