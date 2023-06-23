@@ -536,7 +536,7 @@ class BigTableStore(base.SerializedStore):
             row.set_cell(
                 COLUMN_FAMILY_ID,
                 COLUMN_NAME,
-                offset,
+                str(offset).encode(),
             )
             row.commit()
         except Exception as e:
