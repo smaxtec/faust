@@ -188,10 +188,10 @@ class BigTableCache:
         If we return None here, this means, that no assumption
         about the current key can be made.
         """
-        if with_delete:
-            return self._mutation_rows.get(bt_key, None) is not None
-        elif self._mutation_values.get(bt_key, None) is not None:
-            return True
+        if self._mutation_rows.get(bt_key, None) is not None:
+            if with_delete:
+                return True
+            return self._mutation_values.get(bt_key, None) is not None
         elif self._value_cache is not None:
             return bt_key in self._value_cache.keys()
         return False
