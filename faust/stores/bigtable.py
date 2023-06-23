@@ -172,10 +172,7 @@ class BigTableCache:
 
     def set(self, bt_key: bytes, value: Optional[bytes]) -> None:
         if self._value_cache is not None:
-            if value is None:
-                self._value_cache.pop(bt_key, None)
-            else:
-                self._value_cache[bt_key] = value
+            self._value_cache[bt_key] = value
 
     def get_partition(self, user_key: bytes) -> int:
         return self._partition_cache[user_key]
@@ -183,15 +180,13 @@ class BigTableCache:
     def set_partition(self, user_key: bytes, partition: int):
         self._partition_cache[user_key] = partition
 
-    def contains(self, bt_key: bytes, with_delete=False) -> Optional[bool]:
+    def contains(self, bt_key: bytes) -> Optional[bool]:
         """
         If we return None here, this means, that no assumption
         about the current key can be made.
         """
         if self._mutation_rows.get(bt_key, None) is not None:
-            if with_delete:
-                return True
-            return self._mutation_values.get(bt_key, None) is not None
+            return True
         elif self._value_cache is not None:
             return bt_key in self._value_cache.keys()
         return False
@@ -348,7 +343,7 @@ class BigTableStore(base.SerializedStore):
             found_deleted = False
             for partition in partitions:
                 bt_key = self._get_bigtable_key(key, partition=partition)
-                if self._cache.contains(bt_key, with_delete=True):
+                if self._cache.contains(bt_key):
                     value = self._cache.get(bt_key)
                     if value is not None:
                         self._cache.set_partition(key, partition)
@@ -426,6 +421,8 @@ class BigTableStore(base.SerializedStore):
                 # If there is a value cache, we can return the values
                 self._cache.fill(partitions)
                 for k, v in self._cache._value_cache.items():
+                    if v is None:
+                        continue
                     faust_key = self._get_faust_key(k)
                     yield faust_key, v
             else:
