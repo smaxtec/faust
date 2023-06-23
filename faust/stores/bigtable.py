@@ -532,7 +532,7 @@ class BigTableStore(base.SerializedStore):
         """
         try:
             offset_key = self.get_offset_key(tp).encode()
-            row = self.bt_table.direct_row(bt_key)
+            row = self.bt_table.direct_row(offset_key)
             row.set_cell(
                 COLUMN_FAMILY_ID,
                 COLUMN_NAME,
