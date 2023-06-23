@@ -340,18 +340,18 @@ class BigTableStore(base.SerializedStore):
                 partitions = set(self._partitions_for_key(key))
 
             # First we search the cache
-            found_deleted = False
-            for partition in partitions:
-                bt_key = self._get_bigtable_key(key, partition=partition)
-                if self._cache.contains(bt_key):
-                    value = self._cache.get(bt_key)
-                    if value is not None:
-                        self._cache.set_partition(key, partition)
-                        return value
-                    else:
-                        found_deleted = True
-            if found_deleted:
-                return None
+            # found_deleted = False
+            # for partition in partitions:
+                # bt_key = self._get_bigtable_key(key, partition=partition)
+                # if self._cache.contains(bt_key):
+                    # value = self._cache.get(bt_key)
+                    # if value is not None:
+                        # self._cache.set_partition(key, partition)
+                        # return value
+                    # else:
+                        # found_deleted = True
+            # if found_deleted:
+                # return None
 
             # Then we search the bigtable
             for partition in partitions:
