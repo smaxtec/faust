@@ -89,8 +89,11 @@ class BigTableCache:
         return row_set, row_filter
 
     def submit_mutation(self, bt_key: bytes, value: Optional[bytes]) -> None:
-        # Directly submit
-        row = self.bt_table.direct_row(bt_key)
+        row = self._mutation_rows.get(bt_key, None)
+        if row is None:
+            row = self.bt_table.direct_row(bt_key)
+        self.total_mutation_count += 1
+
         if value is None:
             row.delete()
         else:
@@ -99,23 +102,9 @@ class BigTableCache:
                 COLUMN_NAME,
                 value,
             )
-        row.commit()
-        # row = self._mutation_rows.get(bt_key, None)
-        # if row is None:
-            # row = self.bt_table.direct_row(bt_key)
-        # self.total_mutation_count += 1
-#
-        # if value is None:
-            # row.delete()
-        # else:
-            # row.set_cell(
-                # COLUMN_FAMILY_ID,
-                # COLUMN_NAME,
-                # value,
-            # )
-        # self._mutation_values[bt_key] = value
-        # self._mutation_rows[bt_key] = row
-        # self.flush_mutations_if_timer_over_or_full()
+        self._mutation_values[bt_key] = value
+        self._mutation_rows[bt_key] = row
+        self.flush_mutations_if_timer_over_or_full()
 
     def flush(self):
         if self.total_mutation_count > 0:
@@ -254,7 +243,7 @@ class BigTableStore(base.SerializedStore):
         )
         self.row_filter = BT.CellsColumnLimitFilter(1)
         self.offset_key_prefix = options.get(
-                BigTableStore.BT_OFFSET_KEY_PREFIX, "==>offset_for_partition_"
+            BigTableStore.BT_OFFSET_KEY_PREFIX, "==>offset_for_partition_"
         )
 
     def _bigtable_setup(self, table, options: Dict[str, Any]):
@@ -298,7 +287,17 @@ class BigTableStore(base.SerializedStore):
         # Update the value cache if any exists
         self._cache.set(bt_key, value)
         # Update the bigtable. Mutations are batched
-        self._cache.submit_mutation(bt_key, value)
+        row = self.bt_table.direct_row(bt_key)
+        if value is None:
+            row.delete()
+        else:
+            row.set_cell(
+                COLUMN_FAMILY_ID,
+                COLUMN_NAME,
+                value,
+            )
+        row.commit()
+        # self._cache.submit_mutation(bt_key, value)
 
     def _maybe_get_partition_from_message(self) -> Optional[int]:
         event = current_event()
@@ -340,18 +339,18 @@ class BigTableStore(base.SerializedStore):
                 partitions = set(self._partitions_for_key(key))
 
             # First we search the cache
-            # found_deleted = False
-            # for partition in partitions:
-                # bt_key = self._get_bigtable_key(key, partition=partition)
-                # if self._cache.contains(bt_key):
-                    # value = self._cache.get(bt_key)
-                    # if value is not None:
-                        # self._cache.set_partition(key, partition)
-                        # return value
-                    # else:
-                        # found_deleted = True
-            # if found_deleted:
-                # return None
+            found_deleted = False
+            for partition in partitions:
+                bt_key = self._get_bigtable_key(key, partition=partition)
+                if self._cache.contains(bt_key):
+                    value = self._cache.get(bt_key)
+                    if value is not None:
+                        self._cache.set_partition(key, partition)
+                        return value
+                    else:
+                        found_deleted = True
+            if found_deleted:
+                return None
 
             # Then we search the bigtable
             for partition in partitions:
@@ -611,7 +610,13 @@ class BigTableStore(base.SerializedStore):
 
     def assign_partitions(self, tps: Set[TP]) -> None:
         start = time.time()
-        partitions = {tp.partition for tp in tps}
+
+        standby_tps = self.app.assignor.assigned_standbys()
+        my_topics = self.table.changelog_topic.topics
+        partitions = set()
+        for tp in tps:
+            if tp.topic in my_topics and tp not in standby_tps:
+                partitions.add(tp.partition)
         self._cache.fill(partitions)
         end = time.time()
         self.log.info(
@@ -637,4 +642,4 @@ class BigTableStore(base.SerializedStore):
         """
         async with self._db_lock:
             self.revoke_partitions(revoked)
-            self.assign_partitions(newly_assigned)
+            self.assign_partitions(assigned)
