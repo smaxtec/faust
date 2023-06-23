@@ -346,6 +346,7 @@ class BigTableStore(base.SerializedStore):
                     value = self._cache.get(bt_key)
                     if value is not None:
                         self._cache.set_partition(key, partition)
+                        self.log.info(f"Found value for key in cache {key=} {value=}")
                         return value
                     else:
                         found_deleted = True
@@ -357,6 +358,7 @@ class BigTableStore(base.SerializedStore):
                 bt_key = self._get_bigtable_key(key, partition=partition)
                 value = self._bigtable_get(bt_key)
                 if value is not None:
+                    self.log.info(f"Found value for key in table {key=} {value=}")
                     self._cache.set_partition(key, partition)
                     return value
             return None
@@ -530,7 +532,13 @@ class BigTableStore(base.SerializedStore):
         """
         try:
             offset_key = self.get_offset_key(tp).encode()
-            self._cache.submit_mutation(offset_key, str(offset).encode())
+            row = self.bt_table.direct_row(bt_key)
+            row.set_cell(
+                COLUMN_FAMILY_ID,
+                COLUMN_NAME,
+                offset,
+            )
+            row.commit()
         except Exception as e:
             self.log.error(
                 f"Failed to commit offset for {self.table.name}"
