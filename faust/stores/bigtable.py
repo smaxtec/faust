@@ -411,30 +411,18 @@ class BigTableStore(base.SerializedStore):
             if len(partitions) == 0:
                 return
 
-            self._cache.flush()
-            if self._cache._value_cache is not None:
-                # If there is a value cache, we can return the values
-                self._cache.fill(partitions)
-                for k, v in self._cache._value_cache.items():
-                    if v is None:
-                        continue
-                    faust_key = self._get_faust_key(k)
-                    yield faust_key, v
-            else:
-                row_set = BT.RowSet()
-                for partition in partitions:
-                    prefix_start = self._get_partition_prefix(partition)
-                    prefix_end = self._get_partition_prefix(partition + 1)
-                    row_set.add_row_range_from_keys(prefix_start, prefix_end)
+            row_set = BT.RowSet()
+            for partition in partitions:
+                prefix_start = self._get_partition_prefix(partition)
+                prefix_end = self._get_partition_prefix(partition + 1)
+                row_set.add_row_range_from_keys(prefix_start, prefix_end)
 
-                for row in self.bt_table.read_rows(
-                    row_set=row_set, filter_=self.row_filter
-                ):
-                    faust_key = self._get_faust_key(row.row_key)
-                    value = self.bigtable_exrtact_row_data(row)
-                    self._cache.set(row.row_key, value)
-                    yield faust_key, value
-                self._cache.filled_partitions.update(partitions)
+            for row in self.bt_table.read_rows(
+                row_set=row_set, filter_=self.row_filter
+            ):
+                faust_key = self._get_faust_key(row.row_key)
+                value = self.bigtable_exrtact_row_data(row)
+                yield faust_key, value
             end = time.time()
             self.log.info(f"{self.table_name} _iteritems took {end - start}s")
 
@@ -593,55 +581,55 @@ class BigTableStore(base.SerializedStore):
         """
         raise NotImplementedError("Not yet implemented for Bigtable.")
 
-    def revoke_partitions(self, tps: Set[TP]) -> None:
-        """De-assign partitions used on this worker instance.
-
-        Arguments:
-            table: The table that we store data for.
-            tps: Set of topic partitions that we should no longer
-                be serving data for.
-        """
-        partitions = {tp.partition for tp in tps}
-        for partition in partitions:
-            self._cache.delete_partition(partition)
-
-        self.log.info(
-            f"Revoked partitions {partitions=} for table" f" {self.table_name}"
-        )
-        gc.collect()
-
-    def assign_partitions(self, tps: Set[TP]) -> None:
-        start = time.time()
-
-        standby_tps = self.app.assignor.assigned_standbys()
-        my_topics = self.table.changelog_topic.topics
-        partitions = set()
-        for tp in tps:
-            if tp.topic in my_topics and tp not in standby_tps:
-                partitions.add(tp.partition)
-        self._cache.fill(partitions)
-        end = time.time()
-        self.log.info(
-            "Finished assign_partitions for table"
-            f" {self.table_name}:{partitions} in {end-start}s"
-        )
-
-    async def on_rebalance(
-        self,
-        assigned: Set[TP],
-        revoked: Set[TP],
-        newly_assigned: Set[TP],
-        generation_id: int = 0,
-    ) -> None:
-        """Rebalance occurred.
-
-        Arguments:
-            assigned: Set of all assigned topic partitions.
-            revoked: Set of newly revoked topic partitions.
-            newly_assigned: Set of newly assigned topic partitions,
-                for which we were not assigned the last time.
-            generation_id: the metadata generation identifier for the re-balance
-        """
-        async with self._db_lock:
-            self.revoke_partitions(revoked)
-            self.assign_partitions(assigned)
+    # def revoke_partitions(self, tps: Set[TP]) -> None:
+        # """De-assign partitions used on this worker instance.
+#
+        # Arguments:
+            # table: The table that we store data for.
+            # tps: Set of topic partitions that we should no longer
+                # be serving data for.
+        # """
+        # partitions = {tp.partition for tp in tps}
+        # for partition in partitions:
+            # self._cache.delete_partition(partition)
+#
+        # self.log.info(
+                # f"Revoked partitions {partitions=} for table" f" {self.table_name}"
+                # )
+        # gc.collect()
+#
+    # def assign_partitions(self, tps: Set[TP]) -> None:
+        # start = time.time()
+#
+        # standby_tps = self.app.assignor.assigned_standbys()
+        # my_topics = self.table.changelog_topic.topics
+        # partitions = set()
+        # for tp in tps:
+            # if tp.topic in my_topics and tp not in standby_tps:
+                # partitions.add(tp.partition)
+        # self._cache.fill(partitions)
+        # end = time.time()
+        # self.log.info(
+                # "Finished assign_partitions for table"
+                # f" {self.table_name}:{partitions} in {end-start}s"
+                # )
+#
+    # async def on_rebalance(
+            # self,
+            # assigned: Set[TP],
+            # revoked: Set[TP],
+            # newly_assigned: Set[TP],
+            # generation_id: int = 0,
+            # ) -> None:
+    # """Rebalance occurred.
+#
+        # Arguments:
+            # assigned: Set of all assigned topic partitions.
+            # revoked: Set of newly revoked topic partitions.
+            # newly_assigned: Set of newly assigned topic partitions,
+                # for which we were not assigned the last time.
+            # generation_id: the metadata generation identifier for the re-balance
+        # """
+        # async with self._db_lock:
+            # self.revoke_partitions(revoked)
+            # self.assign_partitions(assigned)
