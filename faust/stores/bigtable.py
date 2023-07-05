@@ -318,12 +318,12 @@ class BigTableStore(base.SerializedStore):
 
     def _get_faust_key(self, key: bytes) -> bytes:
         faust_key = key[1:]
-        return faust_key
+        return key
 
     def _get_bigtable_key(self, key: bytes, partition: int) -> bytes:
         prefix = self._get_partition_prefix(partition)
         bt_key = prefix + key
-        return bt_key
+        return key
 
     def _partitions_for_key(self, key: bytes) -> Iterable[int]:
         try:
@@ -406,23 +406,12 @@ class BigTableStore(base.SerializedStore):
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
             start = time.time()
-            partitions = set(self._active_partitions())
-
-            if len(partitions) == 0:
-                return
-
-            row_set = BT.RowSet()
-            for partition in partitions:
-                prefix_start = self._get_partition_prefix(partition)
-                prefix_end = self._get_partition_prefix(partition + 1)
-                row_set.add_row_range_from_keys(prefix_start, prefix_end)
-
-            for row in self.bt_table.read_rows(
-                row_set=row_set, filter_=self.row_filter
-            ):
+            for row in self.bt_table.read_rows(filter_=self.row_filter):
                 faust_key = self._get_faust_key(row.row_key)
                 value = self.bigtable_exrtact_row_data(row)
-                yield faust_key, value
+                if self.offset_key_prefix in row.row_key:
+                    continue
+                yield row.row_key, value
             end = time.time()
             self.log.info(f"{self.table_name} _iteritems took {end - start}s")
 
