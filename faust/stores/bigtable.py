@@ -299,7 +299,7 @@ class BigTableStore(base.SerializedStore):
         row.commit()
         # self._cache.submit_mutation(bt_key, value)
 
-    def _maybe_get_partition_from_message(self) -> Optional[int]:
+    def _maybe_get_partition_from_message_or_key(self, key) -> Optional[int]:
         event = current_event()
         if (
             event is not None
@@ -307,6 +307,8 @@ class BigTableStore(base.SerializedStore):
             and not self.table.use_partitioner
         ):
             return event.message.partition
+        elif self.table.use_partitioner:
+            return self.table.partition_for_key(key)
         else:
             return None
 
@@ -331,36 +333,28 @@ class BigTableStore(base.SerializedStore):
 
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
-            partitions = []
-            partition = self._maybe_get_partition_from_message()
-            if partition is not None:
-                partitions = [partition]
-            else:
-                partitions = set(self._partitions_for_key(key))
+            partition = self.table.partition_for_key(key)
+            bt_key = self._get_bigtable_key(key, partition=partition)
 
-            # First we search the cache
             found_deleted = False
-            for partition in partitions:
-                bt_key = self._get_bigtable_key(key, partition=partition)
-                if self._cache.contains(bt_key):
-                    value = self._cache.get(bt_key)
-                    if value is not None:
-                        self._cache.set_partition(key, partition)
-                        self.log.info(f"Found value for key in cache {key=} {value=}")
-                        return value
-                    else:
-                        found_deleted = True
+            if self._cache.contains(bt_key):
+                value = self._cache.get(bt_key)
+                if value is not None:
+                    self._cache.set_partition(key, partition)
+                    self.log.info(
+                        f"Found value for key in cache {key=} {value=}"
+                    )
+                    return value
+                else:
+                    found_deleted = True
             if found_deleted:
                 return None
 
-            # Then we search the bigtable
-            for partition in partitions:
-                bt_key = self._get_bigtable_key(key, partition=partition)
-                value = self._bigtable_get(bt_key)
-                if value is not None:
-                    self.log.info(f"Found value for key in table {key=} {value=}")
-                    self._cache.set_partition(key, partition)
-                    return value
+            value = self._bigtable_get(bt_key)
+            if value is not None:
+                self.log.info(f"Found value for key in table {key=} {value=}")
+                self._cache.set_partition(key, partition)
+                return value
             return None
         except Exception as ex:
             self.log.error(
@@ -370,7 +364,7 @@ class BigTableStore(base.SerializedStore):
 
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
-            partition = get_current_partition()
+            partition = self.table.partition_for_key(key)
             key_with_partition = self._get_bigtable_key(
                 key, partition=partition
             )
@@ -386,12 +380,12 @@ class BigTableStore(base.SerializedStore):
 
     def _del(self, key: bytes) -> None:
         try:
-            for partition in self._partitions_for_key(key):
-                key_with_partition = self._get_bigtable_key(
-                    key, partition=partition
-                )
-                self._bigtable_mutate(key_with_partition, None)
-                self._cache._partition_cache.pop(key, None)
+            partition = self.table.partition_for_key(key)
+            key_with_partition = self._get_bigtable_key(
+                key, partition=partition
+            )
+            self._bigtable_mutate(key_with_partition, None)
+            self._cache._partition_cache.pop(key, None)
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in delete for "
