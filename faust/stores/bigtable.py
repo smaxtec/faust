@@ -286,9 +286,6 @@ class BigTableStore(base.SerializedStore):
         return self.bigtable_exrtact_row_data(res)
 
     def _bigtable_mutate(self, bt_key: bytes, value: Optional[bytes]):
-        # Update the value cache if any exists
-        self._cache.set(bt_key, value)
-        # Update the bigtable. Mutations are batched
         row = self.bt_table.direct_row(bt_key)
         if value is None:
             row.delete()
