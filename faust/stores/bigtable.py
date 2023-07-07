@@ -203,7 +203,6 @@ class BigTableStore(base.SerializedStore):
     instance: BT.Instance
     bt_table: BT.Table
     _cache: BigTableCache
-    _db_lock: asyncio.Lock
 
     BT_COLUMN_NAME_KEY = "bt_column_name_key"
     BT_INSTANCE_KEY = "bt_instance_key"
@@ -222,7 +221,11 @@ class BigTableStore(base.SerializedStore):
         **kwargs: Any,
     ) -> None:
         self._set_options(options)
-        self._log_counter = 0
+        if table.use_partitioner is False:
+            raise ValueError(
+                "BigTableStore requires a partitioner to be set on the table"
+            )
+
         try:
             self._bigtable_setup(table, options)
             self._cache = BigTableCache(app, options, self.bt_table)
@@ -230,7 +233,6 @@ class BigTableStore(base.SerializedStore):
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
         super().__init__(url, app, table, **kwargs)
-        self._db_lock = asyncio.Lock()
 
     @staticmethod
     def default_translator(user_key):
@@ -333,27 +335,19 @@ class BigTableStore(base.SerializedStore):
 
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
-            partition = self.table.partition_for_key(key)
-            bt_key = self._get_bigtable_key(key, partition=partition)
-
             found_deleted = False
-            if self._cache.contains(bt_key):
-                value = self._cache.get(bt_key)
+            if self._cache.contains(key):
+                value = self._cache.get(key)
                 if value is not None:
-                    self._cache.set_partition(key, partition)
-                    self.log.info(
-                        f"Found value for key in cache {key=} {value=}"
-                    )
                     return value
                 else:
                     found_deleted = True
             if found_deleted:
                 return None
 
-            value = self._bigtable_get(bt_key)
+            value = self._bigtable_get(key)
             if value is not None:
                 self.log.info(f"Found value for key in table {key=} {value=}")
-                self._cache.set_partition(key, partition)
                 return value
             return None
         except Exception as ex:
@@ -364,12 +358,7 @@ class BigTableStore(base.SerializedStore):
 
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
-            partition = self.table.partition_for_key(key)
-            key_with_partition = self._get_bigtable_key(
-                key, partition=partition
-            )
-            self._bigtable_mutate(key_with_partition, value)
-            self._cache.set_partition(key, partition)
+            self._bigtable_mutate(key, value)
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in set for "
@@ -379,42 +368,18 @@ class BigTableStore(base.SerializedStore):
             raise ex
 
     def _del(self, key: bytes) -> None:
-        try:
-            partition = self.table.partition_for_key(key)
-            key_with_partition = self._get_bigtable_key(
-                key, partition=partition
-            )
-            self._bigtable_mutate(key_with_partition, None)
-            self._cache._partition_cache.pop(key, None)
-        except Exception as ex:
-            self.log.error(
-                f"FaustBigtableException Error in delete for "
-                f"table {self.table_name} exception {ex} key {key}"
-            )
-            raise ex
-
-    def _active_partitions(self) -> Iterator[int]:
-        actives = self.app.assignor.assigned_actives()
-        topic = self.table.changelog_topic_name
-        for partition in range(self.app.conf.topic_partitions):
-            tp = TP(topic=topic, partition=partition)
-            # for global tables, keys from all
-            # partitions are available.
-            if tp in actives or self.table.is_global:
-                yield partition
+        self._set(key, None)
 
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
             start = time.time()
             for row in self.bt_table.read_rows(filter_=self.row_filter):
-                faust_key = self._get_faust_key(row.row_key)
                 value = self.bigtable_exrtact_row_data(row)
                 if self.offset_key_prefix in row.row_key:
                     continue
                 yield row.row_key, value
             end = time.time()
             self.log.info(f"{self.table_name} _iteritems took {end - start}s")
-
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error "
@@ -424,27 +389,12 @@ class BigTableStore(base.SerializedStore):
             raise ex
 
     def _iterkeys(self) -> Iterator[bytes]:
-        try:
-            for row in self._iteritems():
-                yield row[0]
-        except Exception as ex:
-            self.log.error(
-                f"FaustBigtableException Error in _iterkeys "
-                f"for table {self.table_name} exception {ex}"
-            )
-            raise ex
+        for row in self._iteritems():
+            yield row[0]
 
     def _itervalues(self) -> Iterator[bytes]:
-        try:
-            for row in self._iteritems():
-                yield row[1]
-        except Exception as ex:
-            self.log.error(
-                f"FaustBigtableException Error "
-                f"in _itervalues for table {self.table_name}"
-                f" exception {ex}"
-            )
-            raise ex
+        for row in self._iteritems():
+            yield row[1]
 
     def _size(self) -> int:
         """Always returns 0 for Bigtable."""
@@ -489,8 +439,7 @@ class BigTableStore(base.SerializedStore):
         See :meth:`set_persisted_offset`.
         """
         offset_key = self.get_offset_key(tp).encode()
-        self._cache.flush()
-        offset = self._bigtable_get(offset_key)
+        offset = self._get(offset_key)
         return int(offset) if offset is not None else None
 
     def set_persisted_offset(self, tp: TP, offset: int) -> None:
@@ -503,13 +452,7 @@ class BigTableStore(base.SerializedStore):
         """
         try:
             offset_key = self.get_offset_key(tp).encode()
-            row = self.bt_table.direct_row(offset_key)
-            row.set_cell(
-                COLUMN_FAMILY_ID,
-                COLUMN_NAME,
-                str(offset).encode(),
-            )
-            row.commit()
+            self._set(offset_key, str(offset).encode())
         except Exception as e:
             self.log.error(
                 f"Failed to commit offset for {self.table.name}"
@@ -539,8 +482,7 @@ class BigTableStore(base.SerializedStore):
                 offset if tp not in tp_offsets else max(offset, tp_offsets[tp])
             )
             msg = event.message
-            bt_key = self._get_bigtable_key(msg.key, partition=tp.partition)
-            self._bigtable_mutate(bt_key, msg.value)
+            self._bigtable_mutate(msg.key, msg.value)
 
         for tp, offset in tp_offsets.items():
             self.set_persisted_offset(tp, offset)
@@ -619,6 +561,5 @@ class BigTableStore(base.SerializedStore):
                 # for which we were not assigned the last time.
             # generation_id: the metadata generation identifier for the re-balance
         # """
-        # async with self._db_lock:
-            # self.revoke_partitions(revoked)
-            # self.assign_partitions(assigned)
+        # self.revoke_partitions(revoked)
+        # self.assign_partitions(assigned)
