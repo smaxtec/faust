@@ -57,145 +57,6 @@ COLUMN_FAMILY_ID = "FaustColumnFamily"
 COLUMN_NAME = "DATA"
 
 
-class BigTableCache:
-    _partition_cache: LRUCache[bytes, int]
-    _value_cache: Optional[Dict]
-    _mutation_values: Dict[bytes, Optional[bytes]]
-    _mutation_rows: Dict[bytes, BT.DirectRow]
-
-    def __init__(self, app, options: Dict, bt_table: BT.Table) -> None:
-        self.log = logging.getLogger(__name__)
-        self.bt_table: BT.Table = bt_table
-        self._partition_cache = LRUCache(limit=app.conf.table_key_index_size)
-        self._init_value_cache(options)
-        self.filled_partitions = set()
-
-        self._flush_freq = options.get(
-            BigTableStore.BT_MUTATION_FLUSH_FREQ_SECONDS_KEY, 5 * 60
-        )
-        self._last_flush = time.time()
-        self._mutation_values = {}
-        self._mutation_rows = {}
-        self.total_mutation_count = 0
-
-    def _get_preload_rowset(self, partitions: Set[int]):
-        row_set = BT.RowSet()
-        row_filter = CellsColumnLimitFilter(1)
-        for partition in partitions:
-            preload_id = partition.to_bytes(1, "little")
-            row_set.add_row_range_from_keys(
-                start_key=preload_id, end_key=preload_id + b"\xff"
-            )
-        return row_set, row_filter
-
-    def submit_mutation(self, bt_key: bytes, value: Optional[bytes]) -> None:
-        row = self._mutation_rows.get(bt_key, None)
-        if row is None:
-            row = self.bt_table.direct_row(bt_key)
-        self.total_mutation_count += 1
-
-        if value is None:
-            row.delete()
-        else:
-            row.set_cell(
-                COLUMN_FAMILY_ID,
-                COLUMN_NAME,
-                value,
-            )
-        self._mutation_values[bt_key] = value
-        self._mutation_rows[bt_key] = row
-        self.flush_mutations_if_timer_over_or_full()
-
-    def flush(self):
-        if self.total_mutation_count > 0:
-            self.log.info(f"Flushing {self.total_mutation_count} mutations")
-            # Order is important here, we don't want to repeat mutations
-            self._last_flush = time.time()
-            mutation_list = list(self._mutation_rows.values())
-            try:
-                self.bt_table.mutate_rows(mutation_list)
-            except Exception as e:
-                self.log.warning(
-                    f"BigTableStore: flush failed with {e} "
-                    "will try again on next flush. "
-                    "No data is lost."
-                )
-                return
-
-            self.total_mutation_count = 0
-            self._mutation_values.clear()
-            self._mutation_rows.clear()
-
-    def flush_mutations_if_timer_over_or_full(self) -> None:
-        if (
-            self._last_flush + self._flush_freq < time.time()
-            # Google allows a maximum of 100_000 mutattions
-            or self.total_mutation_count > 99_000
-        ):
-            self.flush()
-
-    def fill(self, partitions: Set[int]):
-        partitions = partitions - self.filled_partitions
-        if len(partitions) == 0:
-            return
-
-        if self._value_cache is not None:
-            try:
-                row_set, row_filter = self._get_preload_rowset(partitions)
-                for row in self.bt_table.read_rows(
-                    row_set=row_set, filter_=row_filter
-                ):
-                    value = BigTableStore.bigtable_exrtact_row_data(row)
-                    self._value_cache[row.row_key] = value
-            except Exception as e:
-                self.log.info(f"BigTableStore fill failed for {partitions=}")
-                raise e
-            self.filled_partitions.update(partitions)
-
-    def get(self, bt_key: bytes) -> Optional[bytes]:
-        if self._mutation_rows.get(bt_key, None) is not None:
-            return self._mutation_values[bt_key]
-
-        if self._value_cache is not None:
-            return self._value_cache[bt_key]
-
-    def set(self, bt_key: bytes, value: Optional[bytes]) -> None:
-        if self._value_cache is not None:
-            self._value_cache[bt_key] = value
-
-    def get_partition(self, user_key: bytes) -> int:
-        return self._partition_cache[user_key]
-
-    def set_partition(self, user_key: bytes, partition: int):
-        self._partition_cache[user_key] = partition
-
-    def contains(self, bt_key: bytes) -> Optional[bool]:
-        """
-        If we return None here, this means, that no assumption
-        about the current key can be made.
-        """
-        if self._mutation_rows.get(bt_key, None) is not None:
-            return True
-        elif self._value_cache is not None:
-            return bt_key in self._value_cache.keys()
-        return False
-
-    def delete_partition(self, partition: int):
-        self.flush()
-        if self._value_cache is not None:
-            keys = set(self._value_cache.keys())
-            for k in keys:
-                if k[0] == partition:
-                    self._value_cache.pop(k, None)
-                    self._partition_cache.pop(k[1:], None)
-
-    def _init_value_cache(self, options):
-        if options.get(BigTableStore.BT_VALUE_CACHE_ENABLE_KEY, False):
-            self._value_cache = {}
-        else:
-            self._value_cache = None
-
-
 class BigTableStore(base.SerializedStore):
     """Bigtable table storage."""
 
@@ -228,7 +89,6 @@ class BigTableStore(base.SerializedStore):
 
         try:
             self._bigtable_setup(table, options)
-            self._cache = BigTableCache(app, options, self.bt_table)
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
@@ -296,7 +156,6 @@ class BigTableStore(base.SerializedStore):
                 value,
             )
         row.commit()
-        # self._cache.submit_mutation(bt_key, value)
 
     def _maybe_get_partition_from_message_or_key(self, key) -> Optional[int]:
         event = current_event()
@@ -324,24 +183,8 @@ class BigTableStore(base.SerializedStore):
         bt_key = prefix + key
         return key
 
-    def _partitions_for_key(self, key: bytes) -> Iterable[int]:
-        try:
-            return [self._cache.get_partition(key)]
-        except KeyError:
-            return self._active_partitions()
-
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
-            found_deleted = False
-            if self._cache.contains(key):
-                value = self._cache.get(key)
-                if value is not None:
-                    return value
-                else:
-                    found_deleted = True
-            if found_deleted:
-                return None
-
             value = self._bigtable_get(key)
             if value is not None:
                 self.log.info(f"Found value for key in table {key=} {value=}")
@@ -511,55 +354,3 @@ class BigTableStore(base.SerializedStore):
 
         """
         raise NotImplementedError("Not yet implemented for Bigtable.")
-
-    # def revoke_partitions(self, tps: Set[TP]) -> None:
-        # """De-assign partitions used on this worker instance.
-#
-        # Arguments:
-            # table: The table that we store data for.
-            # tps: Set of topic partitions that we should no longer
-                # be serving data for.
-        # """
-        # partitions = {tp.partition for tp in tps}
-        # for partition in partitions:
-            # self._cache.delete_partition(partition)
-#
-        # self.log.info(
-                # f"Revoked partitions {partitions=} for table" f" {self.table_name}"
-                # )
-        # gc.collect()
-#
-    # def assign_partitions(self, tps: Set[TP]) -> None:
-        # start = time.time()
-#
-        # standby_tps = self.app.assignor.assigned_standbys()
-        # my_topics = self.table.changelog_topic.topics
-        # partitions = set()
-        # for tp in tps:
-            # if tp.topic in my_topics and tp not in standby_tps:
-                # partitions.add(tp.partition)
-        # self._cache.fill(partitions)
-        # end = time.time()
-        # self.log.info(
-                # "Finished assign_partitions for table"
-                # f" {self.table_name}:{partitions} in {end-start}s"
-                # )
-#
-    # async def on_rebalance(
-            # self,
-            # assigned: Set[TP],
-            # revoked: Set[TP],
-            # newly_assigned: Set[TP],
-            # generation_id: int = 0,
-            # ) -> None:
-    # """Rebalance occurred.
-#
-        # Arguments:
-            # assigned: Set of all assigned topic partitions.
-            # revoked: Set of newly revoked topic partitions.
-            # newly_assigned: Set of newly assigned topic partitions,
-                # for which we were not assigned the last time.
-            # generation_id: the metadata generation identifier for the re-balance
-        # """
-        # self.revoke_partitions(revoked)
-        # self.assign_partitions(assigned)
