@@ -373,9 +373,10 @@ class BigTableStore(base.SerializedStore):
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
             start = time.time()
+            offset_key = self.offset_key_prefix.encode()
             for row in self.bt_table.read_rows(filter_=self.row_filter):
                 value = self.bigtable_exrtact_row_data(row)
-                if self.offset_key_prefix in row.row_key:
+                if offset_key in row.row_key:
                     continue
                 yield row.row_key, value
             end = time.time()
