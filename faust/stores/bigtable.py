@@ -63,7 +63,7 @@ class BigTableStore(base.SerializedStore):
     client: BT.Client
     instance: BT.Instance
     bt_table: BT.Table
-    _cache: BigTableCache
+    _cache: Optional[LRUCache]
 
     BT_COLUMN_NAME_KEY = "bt_column_name_key"
     BT_INSTANCE_KEY = "bt_instance_key"
@@ -87,6 +87,10 @@ class BigTableStore(base.SerializedStore):
                 "BigTableStore requires a partitioner to be set on the table"
             )
 
+        if options.get(BigTableStore.BT_VALUE_CACHE_ENABLE_KEY, True):
+            self._cache = LRUCache(limit=10000)
+        else:
+            self._cache = None
         try:
             self._bigtable_setup(table, options)
         except Exception as ex:
@@ -157,34 +161,12 @@ class BigTableStore(base.SerializedStore):
             )
         row.commit()
 
-    def _maybe_get_partition_from_message_or_key(self, key) -> Optional[int]:
-        event = current_event()
-        if (
-            event is not None
-            and not self.table.is_global
-            and not self.table.use_partitioner
-        ):
-            return event.message.partition
-        elif self.table.use_partitioner:
-            return self.table.partition_for_key(key)
-        else:
-            return None
-
-    def _get_partition_prefix(self, partition: int) -> bytes:
-        partition_bytes = partition.to_bytes(1, "little")
-        return b"".join([partition_bytes])
-
-    def _get_faust_key(self, key: bytes) -> bytes:
-        faust_key = key[1:]
-        return key
-
-    def _get_bigtable_key(self, key: bytes, partition: int) -> bytes:
-        prefix = self._get_partition_prefix(partition)
-        bt_key = prefix + key
-        return key
-
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
+            if self._cache is not None:
+                if key in self._cache:
+                    return self._cache.get(key)
+
             value = self._bigtable_get(key)
             if value is not None:
                 self.log.info(f"Found value for key in table {key=} {value=}")
@@ -198,6 +180,9 @@ class BigTableStore(base.SerializedStore):
 
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
+            if self._cache is not None:
+                self._cache[key] = value
+
             self._bigtable_mutate(key, value)
         except Exception as ex:
             self.log.error(
@@ -245,6 +230,11 @@ class BigTableStore(base.SerializedStore):
         try:
             if not self.app.conf.store_check_exists:
                 return True
+
+            # Check cache
+            if self._cache is not None and key in self._cache:
+                return self._cache[key] is not None
+
             return self._get(key) is not None
 
         except Exception as ex:
