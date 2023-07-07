@@ -168,6 +168,10 @@ class BigTableStore(base.SerializedStore):
                     return self._cache.get(key)
 
             value = self._bigtable_get(key)
+
+            if self._cache is not None:
+                self._cache[key] = value
+
             if value is not None:
                 self.log.info(f"Found value for key in table {key=} {value=}")
                 return value
