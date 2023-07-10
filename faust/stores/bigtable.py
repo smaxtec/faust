@@ -4,17 +4,7 @@ import gc
 import logging
 import time
 import traceback
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Iterable,
-    Iterator,
-    Optional,
-    Set,
-    Tuple,
-    Union,
-)
+from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple, Union
 
 try:  # pragma: no cover
     from google.cloud.bigtable import column_family
@@ -71,7 +61,7 @@ class BigTableStore(base.SerializedStore):
     BT_PROJECT_KEY = "bt_project_key"
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
     BT_VALUE_CACHE_ENABLE_KEY = "bt_value_cache_enable_key"
-    BT_MUTATION_FLUSH_FREQ_SECONDS_KEY = "bt_mutation_flush_freq_seconds_key"
+    BT_MAX_MUTATIONS_PER_FLUSH_KEY = "bt_max_mutations_per_flush_key"
 
     def __init__(
         self,
@@ -86,11 +76,6 @@ class BigTableStore(base.SerializedStore):
             raise ValueError(
                 "BigTableStore requires a partitioner to be set on the table"
             )
-
-        if options.get(BigTableStore.BT_VALUE_CACHE_ENABLE_KEY, True):
-            self._cache = LRUCache(limit=10000)
-        else:
-            self._cache = None
         try:
             self._bigtable_setup(table, options)
         except Exception as ex:
@@ -111,6 +96,23 @@ class BigTableStore(base.SerializedStore):
         self.offset_key_prefix = options.get(
             BigTableStore.BT_OFFSET_KEY_PREFIX, "==>offset_for_partition_"
         )
+
+        if options.get(BigTableStore.BT_VALUE_CACHE_ENABLE_KEY, True):
+            # TODO - make this configurable
+            self._cache = LRUCache(limit=10_000)
+        else:
+            self._cache = None
+
+        self._mutation_buffer_size = options.get(
+            BigTableStore.BT_MAX_MUTATIONS_PER_FLUSH_KEY, 0
+        )
+
+        if self._mutation_buffer_size <= 0:
+            self._mutation_buffer = None
+        else:
+            self._mutation_buffer = {}
+            self._num_mutations = 0
+
 
     def _bigtable_setup(self, table, options: Dict[str, Any]):
         self.bt_table_name = self.table_name_generator(table)
@@ -143,14 +145,21 @@ class BigTableStore(base.SerializedStore):
     def bigtable_exrtact_row_data(row_data):
         return list(row_data.to_dict().values())[0][0].value
 
-    def _bigtable_get(self, bt_key: bytes) -> Optional[bytes]:
-        res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
+    def _bigtable_get(self, key: bytes) -> Optional[bytes]:
+        if self._mutation_buffer is not None:
+            if key in self._mutation_buffer:
+                return self._mutation_buffer[key][1]
+
+        res = self.bt_table.read_row(key, filter_=self.row_filter)
         if res is None:
             return None
         return self.bigtable_exrtact_row_data(res)
 
-    def _bigtable_mutate(self, bt_key: bytes, value: Optional[bytes]):
-        row = self.bt_table.direct_row(bt_key)
+    def _bigtable_mutate(
+        self, key: bytes, value: Optional[bytes]
+    ):
+        row = self.bt_table.direct_row(key)
+
         if value is None:
             row.delete()
         else:
@@ -159,7 +168,12 @@ class BigTableStore(base.SerializedStore):
                 COLUMN_NAME,
                 value,
             )
-        row.commit()
+
+        if self._mutation_buffer is not None:
+            self._mutation_buffer[key] = (row, value)
+            self._num_mutations += 1
+        else:
+            row.commit()
 
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
@@ -288,6 +302,21 @@ class BigTableStore(base.SerializedStore):
         try:
             offset_key = self.get_offset_key(tp).encode()
             self._set(offset_key, str(offset).encode())
+
+            if (
+                self._mutation_buffer is not None
+                and self._num_mutations > self._mutation_buffer_size
+            ):
+                mutations = [r[0] for r in self._mutation_buffer.values()]
+                response = self.bt_table.mutate_rows(mutations)
+
+                for i, status in enumerate(response):
+                    if status.code != 0:
+                        raise Exception(f"Failed to commit mutation number {i}")
+                    else:
+                        self._mutation_buffer.pop(mutations[i].row_key, None)
+                        self._num_mutations -= 1
+
         except Exception as e:
             self.log.error(
                 f"Failed to commit offset for {self.table.name}"
