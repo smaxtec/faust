@@ -218,6 +218,17 @@ class BigTableStore(base.SerializedStore):
             start = time.time()
             offset_key = self.offset_key_prefix.encode()
             for row in self.bt_table.read_rows(filter_=self.row_filter):
+
+                if self._mutation_buffer is not None:
+                    mutation_row, mutation_val = self._mutation_buffer.get(
+                        row.row_key, (None, None)
+                    )
+                    if mutation_val is not None:
+                        yield row.row_key, mutation_val
+
+                    if mutation_row is not None:
+                        continue
+
                 value = self.bigtable_exrtact_row_data(row)
                 if offset_key in row.row_key:
                     continue
