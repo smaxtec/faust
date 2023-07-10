@@ -218,6 +218,8 @@ class BigTableStore(base.SerializedStore):
             start = time.time()
             offset_key = self.offset_key_prefix.encode()
             for row in self.bt_table.read_rows(filter_=self.row_filter):
+                if offset_key in row.row_key:
+                    continue
 
                 if self._mutation_buffer is not None:
                     mutation_row, mutation_val = self._mutation_buffer.get(
@@ -230,8 +232,6 @@ class BigTableStore(base.SerializedStore):
                         continue
 
                 value = self.bigtable_exrtact_row_data(row)
-                if offset_key in row.row_key:
-                    continue
                 yield row.row_key, value
             end = time.time()
             self.log.info(f"{self.table_name} _iteritems took {end - start}s")
