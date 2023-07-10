@@ -140,8 +140,12 @@ class BigTableStore(base.SerializedStore):
         return list(row_data.to_dict().values())[0][0].value
 
     def _bigtable_get(self, key: bytes) -> Optional[bytes]:
-        if self._mutation_buffer is not None and key in self._mutation_buffer:
-            return self._mutation_buffer[key][1]
+        if self._mutation_buffer is not None:
+            mutation_row, mutation_val = self._mutation_buffer.get(
+                key, (None, None)
+            )
+            if mutation_row is not None:
+                return mutation_val
 
         res = self.bt_table.read_row(key, filter_=self.row_filter)
         if res is None:
@@ -151,7 +155,12 @@ class BigTableStore(base.SerializedStore):
     def _bigtable_mutate(
         self, key: bytes, value: Optional[bytes]
     ):
-        row = self.bt_table.direct_row(key)
+        row = None
+        if self._mutation_buffer is not None:
+            row = self._mutation_buffer.get(key, (None, None))[0]
+
+        if row is None:
+            row = self.bt_table.direct_row(key)
 
         if value is None:
             row.delete()
@@ -320,7 +329,7 @@ class BigTableStore(base.SerializedStore):
                     else:
                         self._mutation_buffer.pop(mutations[i].row_key, None)
                         self._num_mutations -= 1
-                self.log.info(f"Committed mutations to BigTableStore for table {self.name}")
+                self.log.info(f"Committed mutations to BigTableStore for table {self.table.name}")
 
         except Exception as e:
             self.log.error(
