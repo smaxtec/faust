@@ -107,12 +107,8 @@ class BigTableStore(base.SerializedStore):
             BigTableStore.BT_OFFSET_KEY_PREFIX, "==>offset_for_partition_"
         )
 
-        if options.get(BigTableStore.BT_VALUE_CACHE_ENABLE_KEY, True):
-            # TODO - make this configurable
-            self._cache = LRUCache(limit=10_000)
-        else:
-            self._cache = None
-
+        # TODO - make this a configurable option
+        self._cache = LRUCache(limit=10_000)
         self._mutation_buffer_size = 10_000
         self._mutation_buffer = {}
         self._num_mutations = 0
