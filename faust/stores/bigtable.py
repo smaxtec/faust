@@ -140,9 +140,8 @@ class BigTableStore(base.SerializedStore):
         return list(row_data.to_dict().values())[0][0].value
 
     def _bigtable_get(self, key: bytes) -> Optional[bytes]:
-        if self._mutation_buffer is not None:
-            if key in self._mutation_buffer:
-                return self._mutation_buffer[key][1]
+        if self._mutation_buffer is not None and key in self._mutation_buffer:
+            return self._mutation_buffer[key][1]
 
         res = self.bt_table.read_row(key, filter_=self.row_filter)
         if res is None:
