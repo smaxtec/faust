@@ -335,9 +335,8 @@ class BigTableStore(base.SerializedStore):
                         raise Exception(
                             f"Failed to commit mutation number {i}"
                         )
-                    else:
-                        self._mutation_buffer.pop(mutations[i].row_key, None)
-                        self._num_mutations -= 1
+                self._mutation_buffer = {}
+                self._num_mutations = 0
                 self.log.info(
                     f"Committed mutations to BigTableStore for table {self.table.name}"
                 )
