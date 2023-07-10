@@ -4,7 +4,17 @@ import gc
 import logging
 import time
 import traceback
-from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Set, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 try:  # pragma: no cover
     from google.cloud.bigtable import column_family
@@ -107,7 +117,6 @@ class BigTableStore(base.SerializedStore):
         self._mutation_buffer = {}
         self._num_mutations = 0
 
-
     def _bigtable_setup(self, table, options: Dict[str, Any]):
         self.bt_table_name = self.table_name_generator(table)
         self.client: BT.Client = BT.Client(
@@ -152,9 +161,7 @@ class BigTableStore(base.SerializedStore):
             return None
         return self.bigtable_exrtact_row_data(res)
 
-    def _bigtable_mutate(
-        self, key: bytes, value: Optional[bytes]
-    ):
+    def _bigtable_mutate(self, key: bytes, value: Optional[bytes]):
         row = None
         if self._mutation_buffer is not None:
             row = self._mutation_buffer.get(key, (None, None))[0]
@@ -325,11 +332,15 @@ class BigTableStore(base.SerializedStore):
 
                 for i, status in enumerate(response):
                     if status.code != 0:
-                        raise Exception(f"Failed to commit mutation number {i}")
+                        raise Exception(
+                            f"Failed to commit mutation number {i}"
+                        )
                     else:
                         self._mutation_buffer.pop(mutations[i].row_key, None)
                         self._num_mutations -= 1
-                self.log.info(f"Committed mutations to BigTableStore for table {self.table.name}")
+                self.log.info(
+                    f"Committed mutations to BigTableStore for table {self.table.name}"
+                )
 
         except Exception as e:
             self.log.error(
