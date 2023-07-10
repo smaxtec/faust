@@ -103,15 +103,9 @@ class BigTableStore(base.SerializedStore):
         else:
             self._cache = None
 
-        self._mutation_buffer_size = options.get(
-            BigTableStore.BT_MAX_MUTATIONS_PER_FLUSH_KEY, 0
-        )
-
-        if self._mutation_buffer_size <= 0:
-            self._mutation_buffer = None
-        else:
-            self._mutation_buffer = {}
-            self._num_mutations = 0
+        self._mutation_buffer_size = 10_000
+        self._mutation_buffer = {}
+        self._num_mutations = 0
 
 
     def _bigtable_setup(self, table, options: Dict[str, Any]):
