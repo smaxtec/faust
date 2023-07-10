@@ -321,6 +321,7 @@ class BigTableStore(base.SerializedStore):
                     else:
                         self._mutation_buffer.pop(mutations[i].row_key, None)
                         self._num_mutations -= 1
+                self.log.info(f"Committed mutations to BigTableStore for table {self.name}")
 
         except Exception as e:
             self.log.error(
