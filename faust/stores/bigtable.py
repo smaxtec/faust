@@ -268,11 +268,16 @@ class BigTableStore(base.SerializedStore):
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
             start = time.time()
-            offset_key = self.offset_key_prefix.encode()
-            for row in self.bt_table.read_rows(filter_=self.row_filter):
-                if offset_key in row.row_key:
-                    continue
+            active_partitions = list(self._active_partitions())
 
+            row_set = RowSet()
+            for partition in active_partitions:
+                row_set.add_row_range_from_keys(
+                    start_key=self._add_partition_prefix_to_key(b"", partition),
+                    end_key=self._add_partition_prefix_to_key(b"", partition + 1)
+
+            offset_key = self.offset_key_prefix.encode()
+            for row in self.bt_table.read_rows(row_set=row_set, filter_=self.row_filter):
                 if self._mutation_buffer is not None:
                     mutation_row, mutation_val = self._mutation_buffer.get(
                         row.row_key, (None, None)
