@@ -140,11 +140,38 @@ class BigTableStore(base.SerializedStore):
                 f"with {options=}"
             )
 
+    def _add_partition_prefix_to_key(self, key: bytes, partition: Optional[int]) -> bytes:
+        if partition is None:
+            return key
+        separator = b"_..._"
+        partition_bytes = str(partition).encode("utf-8")
+        return separator.join([key, partition_bytes])
+
+    def _remove_partition_prefix_from_bigtable_key(self, key: bytes) -> bytes:
+        separator = b"_..._"
+        key, _ = key.rsplit(separator, 1)
+        return key
+
+    def _get_partition_from_bigtable_key(self, key: bytes) -> int:
+        separator = b"_..._"
+        _, partition_bytes = key.rsplit(separator, 1)
+        return int(partition_bytes)
+
+    def _get_partitions(self) -> Iterable[Optional[int]]:
+        if self.table.is_global or self.table.use_partitioner:
+            return [None]
+        event = current_event()
+        if event is not None:
+            partition = event.message.partition
+            return [partition]
+        else:
+            return []
     @staticmethod
     def bigtable_exrtact_row_data(row_data):
         return list(row_data.to_dict().values())[0][0].value
 
     def _bigtable_get(self, key: bytes) -> Optional[bytes]:
+        # key = self._add_partition_prefix_to_key(key, get_current_partition())
         if self._mutation_buffer is not None:
             mutation_row, mutation_val = self._mutation_buffer.get(
                 key, (None, None)
