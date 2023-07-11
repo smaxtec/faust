@@ -237,6 +237,7 @@ class BigTableStore(base.SerializedStore):
                         continue
 
                 value = self.bigtable_exrtact_row_data(row)
+                self._cache[row.row_key] = value
                 yield row.row_key, value
             end = time.time()
             self.log.info(f"{self.table_name} _iteritems took {end - start}s")
