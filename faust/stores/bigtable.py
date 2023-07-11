@@ -323,7 +323,7 @@ class BigTableStore(base.SerializedStore):
                 self._mutation_buffer is not None
                 and self._num_mutations > self._mutation_buffer_size
             ):
-                mutations = [r[0] for r in self._mutation_buffer.values()]
+                mutations = [r[0] for r in self._mutation_buffer.copy().values()]
                 response = self.bt_table.mutate_rows(mutations)
 
                 for i, status in enumerate(response):
