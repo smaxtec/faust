@@ -157,6 +157,16 @@ class BigTableStore(base.SerializedStore):
         _, partition_bytes = key.rsplit(separator, 1)
         return int(partition_bytes)
 
+    def _active_partitions(self) -> Iterator[int]:
+        actives = self.app.assignor.assigned_actives()
+        topic = self.table.changelog_topic_name
+        for partition in range(self.app.conf.topic_partitions):
+            tp = TP(topic=topic, partition=partition)
+            # for global tables, keys from all
+            # partitions are available.
+            if tp in actives or self.table.is_global:
+                yield partition
+
     def _get_partitions(self) -> Iterable[Optional[int]]:
         if self.table.is_global or self.table.use_partitioner:
             return [None]
@@ -164,48 +174,58 @@ class BigTableStore(base.SerializedStore):
         if event is not None:
             partition = event.message.partition
             return [partition]
-        else:
-            return []
+        return list(self._active_partitions())
+
+    def _get_possible_bt_keys(self, key: bytes) -> Iterable[bytes]:
+        partitions = self._get_partitions()
+        for partition in partitions:
+            yield self._add_partition_prefix_to_key(key, partition)
+
     @staticmethod
     def bigtable_exrtact_row_data(row_data):
         return list(row_data.to_dict().values())[0][0].value
 
     def _bigtable_get(self, key: bytes) -> Optional[bytes]:
-        # key = self._add_partition_prefix_to_key(key, get_current_partition())
-        if self._mutation_buffer is not None:
-            mutation_row, mutation_val = self._mutation_buffer.get(
-                key, (None, None)
-            )
-            if mutation_row is not None:
-                return mutation_val
+        for bt_key in self._get_possible_bt_keys(key):
+            if self._mutation_buffer is not None:
+                mutation_row, mutation_val = self._mutation_buffer.get(
+                    bt_key, (None, None)
+                )
+                if mutation_row is not None:
+                    return mutation_val
 
-        res = self.bt_table.read_row(key, filter_=self.row_filter)
-        if res is None:
-            return None
-        return self.bigtable_exrtact_row_data(res)
+            res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
+            if res is None:
+                return None
+            return self.bigtable_exrtact_row_data(res)
 
     def _bigtable_mutate(self, key: bytes, value: Optional[bytes]):
         row = None
-        if self._mutation_buffer is not None:
-            row = self._mutation_buffer.get(key, (None, None))[0]
+        keys = list(self._get_possible_bt_keys(key))
+        # On set we either have a partition in the message or none
+        assert value is None or len(keys) == 1
 
-        if row is None:
-            row = self.bt_table.direct_row(key)
+        for bt_key in keys:
+            if self._mutation_buffer is not None:
+                row = self._mutation_buffer.get(bt_key, (None, None))[0]
 
-        if value is None:
-            row.delete()
-        else:
-            row.set_cell(
-                COLUMN_FAMILY_ID,
-                COLUMN_NAME,
-                value,
-            )
+            if row is None:
+                row = self.bt_table.direct_row(bt_key)
 
-        if self._mutation_buffer is not None:
-            self._mutation_buffer[key] = (row, value)
-            self._num_mutations += 1
-        else:
-            row.commit()
+            if value is None:
+                row.delete()
+            else:
+                row.set_cell(
+                    COLUMN_FAMILY_ID,
+                    COLUMN_NAME,
+                    value,
+                )
+
+            if self._mutation_buffer is not None:
+                self._mutation_buffer[key] = (row, value)
+                self._num_mutations += 1
+            else:
+                row.commit()
 
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
