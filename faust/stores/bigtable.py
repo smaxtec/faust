@@ -82,10 +82,6 @@ class BigTableStore(base.SerializedStore):
         **kwargs: Any,
     ) -> None:
         self._set_options(options)
-        if table.use_partitioner is False:
-            raise ValueError(
-                "BigTableStore requires a partitioner to be set on the table"
-            )
         try:
             self._bigtable_setup(table, options)
         except Exception as ex:
