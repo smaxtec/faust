@@ -219,6 +219,7 @@ class BigTableStore(base.SerializedStore):
         partitions = self._get_all_possible_partitions()
         keys = [self._add_partition_prefix_to_key(key, p) for p in partitions]
         key = keys[0]
+
         row = None
         if self._mutation_buffer is not None:
             row = self._mutation_buffer.get(key, (None, None))[0]
@@ -227,7 +228,6 @@ class BigTableStore(base.SerializedStore):
             row = self.bt_table.direct_row(key)
 
         row.delete()
-
         if self._mutation_buffer is not None:
             self._set_mutation(key, row, None)
         else:
