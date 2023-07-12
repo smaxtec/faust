@@ -336,14 +336,18 @@ class BigTableStore(base.SerializedStore):
                         row.row_key, (None, None)
                     )
                     if mutation_val is not None:
-                        yield row.row_key, mutation_val
+                        key = self._remove_partition_prefix_from_bigtable_key(row.row_key)
+                        yield key, mutation_val
 
                     if mutation_row is not None:
                         continue
 
                 value = self.bigtable_exrtact_row_data(row)
-                self._cache[row.row_key] = value
-                yield row.row_key, value
+                key = self._remove_partition_prefix_from_bigtable_key(row.row_key)
+                if self._cache is not None:
+                    self._cache[key] = value
+                yield key, value
+
             end = time.time()
             self.log.info(f"{self.table_name} _iteritems took {end - start}s")
         except Exception as ex:
