@@ -235,7 +235,7 @@ class BigTableStore(base.SerializedStore):
     def _bigtable_set(
         self, key: bytes, value: bytes, no_key_translation=False
     ):
-        keys = [key] if no_key_translation else self._get_possible_bt_keys(key)
+        keys = [key] if no_key_translation else list(self._get_possible_bt_keys(key))
         assert len(keys) == 1
         key = keys[0]
         row = None
