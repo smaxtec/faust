@@ -140,7 +140,9 @@ class BigTableStore(base.SerializedStore):
                 f"with {options=}"
             )
 
-    def _add_partition_prefix_to_key(self, key: bytes, partition: Optional[int]) -> bytes:
+    def _add_partition_prefix_to_key(
+        self, key: bytes, partition: Optional[int]
+    ) -> bytes:
         if partition is None:
             return key
         separator = b"_..._"
@@ -167,7 +169,12 @@ class BigTableStore(base.SerializedStore):
             if tp in actives or self.table.is_global:
                 yield partition
 
-    def _get_partitions(self) -> Iterable[Optional[int]]:
+    def _get_all_possible_partitions(self) -> Iterable[Optional[int]]:
+        if self.table.is_global or self.table.use_partitioner:
+            return [None]
+        return list(self._active_partitions())
+
+    def _get_current_partitions(self) -> Iterable[Optional[int]]:
         if self.table.is_global or self.table.use_partitioner:
             return [None]
         event = current_event()
@@ -177,7 +184,7 @@ class BigTableStore(base.SerializedStore):
         return list(self._active_partitions())
 
     def _get_possible_bt_keys(self, key: bytes) -> Iterable[bytes]:
-        partitions = self._get_partitions()
+        partitions = self._get_current_partitions()
         for partition in partitions:
             yield self._add_partition_prefix_to_key(key, partition)
 
@@ -185,8 +192,11 @@ class BigTableStore(base.SerializedStore):
     def bigtable_exrtact_row_data(row_data):
         return list(row_data.to_dict().values())[0][0].value
 
-    def _bigtable_get(self, key: bytes) -> Optional[bytes]:
-        for bt_key in self._get_possible_bt_keys(key):
+    def _bigtable_get(
+        self, key: bytes, no_key_translation=False
+    ) -> Optional[bytes]:
+        keys = [key] if no_key_translation else self._get_possible_bt_keys(key)
+        for bt_key in keys:
             if self._mutation_buffer is not None:
                 mutation_row, mutation_val = self._mutation_buffer.get(
                     bt_key, (None, None)
@@ -199,33 +209,53 @@ class BigTableStore(base.SerializedStore):
                 return None
             return self.bigtable_exrtact_row_data(res)
 
-    def _bigtable_mutate(self, key: bytes, value: Optional[bytes]):
+    def _set_mutation(
+        self, key: bytes, row: DirectRow, value: Optional[bytes]
+    ):
+        self._mutation_buffer[key] = (row, value)
+        self._num_mutations += 1
+
+    def _bigtable_del(self, key: bytes):
+        partitions = self._get_all_possible_partitions()
+        keys = [self._add_partition_prefix_to_key(key, p) for p in partitions]
+        key = keys[0]
         row = None
-        keys = list(self._get_possible_bt_keys(key))
-        # On set we either have a partition in the message or none
-        assert value is None or len(keys) == 1
+        if self._mutation_buffer is not None:
+            row = self._mutation_buffer.get(key, (None, None))[0]
 
-        for bt_key in keys:
-            if self._mutation_buffer is not None:
-                row = self._mutation_buffer.get(bt_key, (None, None))[0]
+        if row is None:
+            row = self.bt_table.direct_row(key)
 
-            if row is None:
-                row = self.bt_table.direct_row(bt_key)
+        row.delete()
 
-            if value is None:
-                row.delete()
-            else:
-                row.set_cell(
-                    COLUMN_FAMILY_ID,
-                    COLUMN_NAME,
-                    value,
-                )
+        if self._mutation_buffer is not None:
+            self._set_mutation(key, row, None)
+        else:
+            row.commit()
 
-            if self._mutation_buffer is not None:
-                self._mutation_buffer[key] = (row, value)
-                self._num_mutations += 1
-            else:
-                row.commit()
+    def _bigtable_set(
+        self, key: bytes, value: bytes, no_key_translation=False
+    ):
+        keys = [key] if no_key_translation else self._get_possible_bt_keys(key)
+        assert len(keys) == 1
+        key = keys[0]
+        row = None
+        if self._mutation_buffer is not None:
+            row = self._mutation_buffer.get(key, (None, None))[0]
+
+        if row is None:
+            row = self.bt_table.direct_row(key)
+
+        row.set_cell(
+            COLUMN_FAMILY_ID,
+            COLUMN_NAME,
+            value,
+        )
+
+        if self._mutation_buffer is not None:
+            self._set_mutation(key, row, value)
+        else:
+            row.commit()
 
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
@@ -253,7 +283,7 @@ class BigTableStore(base.SerializedStore):
             if self._cache is not None:
                 self._cache[key] = value
 
-            self._bigtable_mutate(key, value)
+            self._bigtable_set(key, value)
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in set for "
@@ -263,7 +293,18 @@ class BigTableStore(base.SerializedStore):
             raise ex
 
     def _del(self, key: bytes) -> None:
-        self._set(key, None)
+        try:
+            if self._cache is not None:
+                self._cache[key] = None
+
+            self._bigtable_del(key)
+        except Exception as ex:
+            self.log.error(
+                f"FaustBigtableException Error in del for "
+                f"table {self.table_name} exception {ex} key {key=} "
+                f"Traceback: {traceback.format_exc()}"
+            )
+            raise ex
 
     def _iteritems(self) -> Iterator[Tuple[bytes, bytes]]:
         try:
@@ -271,14 +312,23 @@ class BigTableStore(base.SerializedStore):
             active_partitions = list(self._active_partitions())
 
             row_set = RowSet()
-            for partition in active_partitions:
-                row_set.add_row_range_from_keys(
-                    start_key=self._add_partition_prefix_to_key(b"", partition),
-                    end_key=self._add_partition_prefix_to_key(b"", partition + 1)
 
-            offset_key = self.offset_key_prefix.encode()
-            for row in self.bt_table.read_rows(row_set=row_set, filter_=self.row_filter):
+            if not (self.table.is_global or self.table.use_partitioner):
+                for partition in active_partitions:
+                    row_set.add_row_range_from_keys(
+                        start_key=self._add_partition_prefix_to_key(
+                            b"", partition
+                        ),
+                        end_key=self._add_partition_prefix_to_key(
+                            b"", partition + 1
+                        ),
+                    )
+
+            for row in self.bt_table.read_rows(
+                row_set=row_set, filter_=self.row_filter
+            ):
                 if self._mutation_buffer is not None:
+                    # Yield the mutation first if it exists
                     mutation_row, mutation_val = self._mutation_buffer.get(
                         row.row_key, (None, None)
                     )
@@ -357,7 +407,7 @@ class BigTableStore(base.SerializedStore):
         See :meth:`set_persisted_offset`.
         """
         offset_key = self.get_offset_key(tp).encode()
-        offset = self._get(offset_key)
+        offset = self._bigtable_get(offset_key, no_key_translation=True)
         return int(offset) if offset is not None else None
 
     def set_persisted_offset(self, tp: TP, offset: int) -> None:
@@ -370,13 +420,17 @@ class BigTableStore(base.SerializedStore):
         """
         try:
             offset_key = self.get_offset_key(tp).encode()
-            self._set(offset_key, str(offset).encode())
+            self._bigtable_set(
+                offset_key, str(offset).encode(), no_key_translation=True
+            )
 
             if (
                 self._mutation_buffer is not None
                 and self._num_mutations > self._mutation_buffer_size
             ):
-                mutations = [r[0] for r in self._mutation_buffer.copy().values()]
+                mutations = [
+                    r[0] for r in self._mutation_buffer.copy().values()
+                ]
                 response = self.bt_table.mutate_rows(mutations)
 
                 for i, status in enumerate(response):
@@ -385,10 +439,10 @@ class BigTableStore(base.SerializedStore):
                             f"Failed to commit mutation number {i}"
                         )
                 self._mutation_buffer = {}
-                self._num_mutations = 0
                 self.log.info(
-                    f"Committed mutations to BigTableStore for table {self.table.name}"
+                    f"Committed {self._num_mutations} mutations to BigTableStore for table {self.table.name}"
                 )
+                self._num_mutations = 0
 
         except Exception as e:
             self.log.error(
