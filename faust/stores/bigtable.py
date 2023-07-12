@@ -311,16 +311,14 @@ class BigTableStore(base.SerializedStore):
             active_partitions = list(self._active_partitions())
 
             row_set = RowSet()
-
             if not (self.table.is_global or self.table.use_partitioner):
                 for partition in active_partitions:
+                    prefix = self._add_partition_prefix_to_key(b"", partition)
+                    start_key = prefix + b"\x00"
+                    end_key = prefix + b"\xff"
+
                     row_set.add_row_range_from_keys(
-                        start_key=self._add_partition_prefix_to_key(
-                            b"", partition
-                        ),
-                        end_key=self._add_partition_prefix_to_key(
-                            b"", partition + 1
-                        ),
+                        start_key=start_key, end_key=end_key
                     )
 
             for row in self.bt_table.read_rows(
