@@ -215,23 +215,26 @@ class BigTableStore(base.SerializedStore):
         self._mutation_buffer[key] = (row, value)
         self._num_mutations += 1
 
-    def _bigtable_del(self, key: bytes):
-        partitions = self._get_all_possible_partitions()
-        keys = [self._add_partition_prefix_to_key(key, p) for p in partitions]
-        key = keys[0]
-
-        row = None
-        if self._mutation_buffer is not None:
-            row = self._mutation_buffer.get(key, (None, None))[0]
-
-        if row is None:
-            row = self.bt_table.direct_row(key)
-
-        row.delete()
-        if self._mutation_buffer is not None:
-            self._set_mutation(key, row, None)
+    def _bigtable_del(self, key: bytes, no_key_translation=False):
+        if no_key_translation:
+            keys = [key]
         else:
-            row.commit()
+            partitions = self._get_all_possible_partitions()
+            keys = [self._add_partition_prefix_to_key(key, p) for p in partitions]
+
+        for key in keys:
+            row = None
+            if self._mutation_buffer is not None:
+                row = self._mutation_buffer.get(key, (None, None))[0]
+
+            if row is None:
+                row = self.bt_table.direct_row(key)
+
+            row.delete()
+            if self._mutation_buffer is not None:
+                self._set_mutation(key, row, None)
+            else:
+                row.commit()
 
     def _bigtable_set(
         self, key: bytes, value: bytes, no_key_translation=False
@@ -473,10 +476,15 @@ class BigTableStore(base.SerializedStore):
                 offset if tp not in tp_offsets else max(offset, tp_offsets[tp])
             )
             msg = event.message
-            if msg.value is None:
-                self._del(msg.key)
+            if not (self.table.is_global or self.table.use_partitioner):
+                key = self._add_partition_prefix_to_key(msg.key, tp.partition)
             else:
-                self._set(msg.key, msg.value)
+                key = msg.key
+
+            if msg.value is None:
+                self._bigtable_del(msg.key, no_key_translation=True)
+            else:
+                self._bigtable_set(msg.key, msg.value, no_key_translation=True)
 
         for tp, offset in tp_offsets.items():
             self.set_persisted_offset(tp, offset)
