@@ -147,11 +147,11 @@ class BigTableStore(base.SerializedStore):
             return key
         separator = b"_..._"
         partition_bytes = str(partition).encode("utf-8")
-        return separator.join([key, partition_bytes])
+        return separator.join([partition_bytes, key])
 
     def _remove_partition_prefix_from_bigtable_key(self, key: bytes) -> bytes:
         separator = b"_..._"
-        key, _ = key.rsplit(separator, 1)
+        key = key.rsplit(separator, 1)[-1]
         return key
 
     def _get_partition_from_bigtable_key(self, key: bytes) -> int:
