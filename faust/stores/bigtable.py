@@ -260,6 +260,7 @@ class BigTableStore(base.SerializedStore):
         try:
             if self._cache is not None:
                 if key in self._cache:
+                    self.log.info(f"Found value for key in cache {key=} {value=}")
                     return self._cache.get(key)
 
             value = self._bigtable_get(key)
@@ -480,9 +481,9 @@ class BigTableStore(base.SerializedStore):
                 key = msg.key
 
             if msg.value is None:
-                self._bigtable_del(msg.key, no_key_translation=True)
+                self._bigtable_del(msg.key)
             else:
-                self._bigtable_set(msg.key, msg.value, no_key_translation=True)
+                self._bigtable_set(msg.key, msg.value)
 
         for tp, offset in tp_offsets.items():
             self.set_persisted_offset(tp, offset)
