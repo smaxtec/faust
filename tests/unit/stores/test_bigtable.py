@@ -258,7 +258,6 @@ class TestBigTableStore:
         store.bt_table.direct_row = MagicMock(return_value=row_mock)
         store._set_mutation = MagicMock()
 
-        import pdb; pdb.set_trace()
         store._bigtable_del(self.TEST_KEY1, no_key_translation=True)
         store._set_mutation.assert_called_once_with(self.TEST_KEY1, row_mock, None)
 
