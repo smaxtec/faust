@@ -216,7 +216,9 @@ class BigTableStore(base.SerializedStore):
             keys = [key]
         else:
             partitions = self._get_all_possible_partitions()
-            keys = [self._add_partition_prefix_to_key(key, p) for p in partitions]
+            keys = [
+                self._add_partition_prefix_to_key(key, p) for p in partitions
+            ]
 
         for key in keys:
             row = None
@@ -235,7 +237,11 @@ class BigTableStore(base.SerializedStore):
     def _bigtable_set(
         self, key: bytes, value: bytes, no_key_translation=False
     ):
-        keys = [key] if no_key_translation else list(self._get_possible_bt_keys(key))
+        keys = (
+            [key]
+            if no_key_translation
+            else list(self._get_possible_bt_keys(key))
+        )
         assert len(keys) == 1
         key = keys[0]
         row = None
@@ -260,7 +266,9 @@ class BigTableStore(base.SerializedStore):
         try:
             if self._cache is not None:
                 if key in self._cache:
-                    self.log.info(f"Found value for key in cache {key=} {value=}")
+                    self.log.info(
+                        f"Found value for key in cache {key=} {value=}"
+                    )
                     return self._cache.get(key)
 
             value = self._bigtable_get(key)
@@ -331,14 +339,18 @@ class BigTableStore(base.SerializedStore):
                         row.row_key, (None, None)
                     )
                     if mutation_val is not None:
-                        key = self._remove_partition_prefix_from_bigtable_key(row.row_key)
+                        key = self._remove_partition_prefix_from_bigtable_key(
+                            row.row_key
+                        )
                         yield key, mutation_val
 
                     if mutation_row is not None:
                         continue
 
                 value = self.bigtable_exrtact_row_data(row)
-                key = self._remove_partition_prefix_from_bigtable_key(row.row_key)
+                key = self._remove_partition_prefix_from_bigtable_key(
+                    row.row_key
+                )
                 if self._cache is not None:
                     self._cache[key] = value
                 yield key, value
