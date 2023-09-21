@@ -2,11 +2,9 @@ import time
 from unittest.mock import MagicMock, call, patch
 
 import pytest
-from mode.utils.collections import LRUCache
 
 import faust
 from faust.stores.bigtable import (
-    BigTableCache,
     BigTableStore,
 )
 from faust.types.tuples import TP
@@ -115,157 +113,6 @@ class BigTableMock:
         for k in keys:
             self.data[k] = k
 
-
-class TestBigTableCache:
-    def test_default__init__(self):
-        bigtable_mock = BigTableMock()
-        app_mock = MagicMock()
-        app_mock.conf = MagicMock()
-        app_mock.conf.table_key_index_size = 123
-        time.time = MagicMock(return_value=0)
-
-        test_manager = BigTableCache(MagicMock(), {}, bigtable_mock)
-        assert test_manager.bt_table == bigtable_mock
-        assert test_manager._value_cache is None
-
-    def test_iscomplete__init__(self):
-        bigtable_mock = BigTableMock()
-        app_mock = MagicMock()
-        app_mock.conf = MagicMock()
-        app_mock.conf.table_key_index_size = 2
-        time.time = MagicMock(return_value=0)
-        options = {
-            BigTableStore.BT_VALUE_CACHE_ENABLE_KEY: True,
-        }
-
-        test_manager = BigTableCache(
-            MagicMock(), options, bigtable_mock
-        )
-        assert test_manager.bt_table == bigtable_mock
-        assert isinstance(test_manager._value_cache, dict)
-
-    @pytest.fixture()
-    def bt_imports(self):
-        with patch("faust.stores.bigtable.BT") as bt:
-            bt.CellsColumnLimitFilter = MagicMock(return_value="a_filter")
-            bt.column_family.MaxVersionsGCRule = MagicMock(
-                return_value="a_rule"
-            )
-            bt.RowSet = MagicMock(return_value=RowSetMock())
-            yield bt
-
-    @pytest.fixture()
-    def manager(self, bt_imports):
-        with patch("faust.stores.bigtable.BT", bt_imports):
-            with patch(
-                "faust.stores.bigtable.time.time", MagicMock(return_value=0)
-            ):
-                bigtable_mock = BigTableMock()
-                app_mock = MagicMock()
-                app_mock.conf = MagicMock()
-                app_mock.conf.table_key_index_size = 123
-
-                options = {
-                    BigTableStore.BT_VALUE_CACHE_ENABLE_KEY: True,
-                }
-                manager = BigTableCache(
-                    MagicMock(), options, bigtable_mock
-                )
-                manager._partition_cache = {}
-                return manager
-
-    def test_fill(self, manager):
-        key = b"\x13AAA"
-        manager.bt_table.add_test_data({key})
-        # Scenario 1: Everything empty
-        manager.fill({19})
-        assert manager.bt_table.read_rows.call_count == 1
-        assert manager.filled_partitions == {19}
-
-        manager.fill({19})
-        assert manager.bt_table.read_rows.call_count == 1
-        assert manager.filled_partitions == {19}
-
-        manager.fill({16})
-        assert manager.bt_table.read_rows.call_count == 2
-        assert manager.filled_partitions == {19, 16}
-        assert manager.contains(key)
-
-    def test_get(self, manager):
-        key_in = b"\x13AAA"
-        key_not_in = b"\x13BBB"
-
-        manager.bt_table.add_test_data({key_in})
-        with pytest.raises(KeyError):
-            manager.get(key_in)
-
-        manager.fill({19})
-        res = manager.get(key_in)
-        assert res == key_in
-
-        with pytest.raises(KeyError):
-            manager.get(key_not_in)
-
-        manager._value_cache = None
-        assert manager.get(key_in) is None
-
-    def test_set(self, manager):
-        key_1 = b"\x13AAA"
-        key_2 = b"\x13ABB"
-        manager.set(key_1, key_1)
-        assert manager.contains(key_1)
-        assert manager.contains(key_2) is False
-
-        manager.set(key_2, key_2)
-        assert manager.contains(key_1)
-        assert manager.contains(key_2)
-        assert manager.get(key_1) == key_1
-        assert manager.get(key_2) == key_2
-
-    def test_partition_cache(self, manager):
-        key = b"aaa"
-        with pytest.raises(KeyError):
-            manager.get_partition(key)
-        manager.set_partition(key, 13)
-        assert manager.get_partition(key) == 13
-        manager.set_partition(key, 15)
-        assert manager.get_partition(key) == 15
-
-    def test_contains(self, manager):
-        # Adding the key here is sufficient, because the cache gets filled
-        key_in = b"\x13AAA"
-        key_not_in = b"\x13BBB"
-        manager.bt_table.add_test_data({key_in})
-        manager.fill({19})
-
-        assert manager.contains(key_in) is True
-        assert manager.contains(key_not_in) is False
-
-        assert manager.contains(key_in) is True
-        assert manager.contains(key_not_in) is False
-
-        manager._value_cache = None
-        assert manager.contains(key_in) is False
-        assert manager.contains(key_not_in) is False
-
-    def test_delete_partition(self, manager):
-        partition = 19
-        row_mock = MagicMock()
-        row_mock.delete = MagicMock()
-        row_mock.set_cell = MagicMock()
-        row_mock.row_key = b"\x13AAA"
-        manager.bt_table.direct_row = MagicMock(return_value=row_mock)
-        manager.bt_table.add_test_data({b"\x13AAA"})
-        manager.set(row_mock.row_key, row_mock)
-        manager.set_partition(row_mock.row_key[1:], partition)
-        manager.delete_partition(3)
-        assert len(manager._value_cache) == 1
-        assert len(manager._partition_cache) == 1
-        manager.delete_partition(partition)
-        assert len(manager._value_cache) == 0
-        assert len(manager._partition_cache) == 0
-        # Delete something that does not exist yet should not do anything
-        manager.delete_partition(999999)
 
 
 class TestBigTableStore:
@@ -409,10 +256,11 @@ class TestBigTableStore:
         row_mock.commit = MagicMock()
         row_mock.delete = MagicMock()
         store.bt_table.direct_row = MagicMock(return_value=row_mock)
-        store._cache.set = MagicMock()
+        store._set_mutation = MagicMock()
 
-        store._bigtable_mutate(self.TEST_KEY1, None)
-        store._cache.set.assert_called_once_with(self.TEST_KEY1, None)
+        import pdb; pdb.set_trace()
+        store._bigtable_del(self.TEST_KEY1, no_key_translation=True)
+        store._set_mutation.assert_called_once_with(self.TEST_KEY1, row_mock, None)
 
     def test_bigtable_set(self, store):
         row_mock = MagicMock()
