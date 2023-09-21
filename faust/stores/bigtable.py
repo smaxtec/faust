@@ -426,6 +426,34 @@ class BigTableStore(base.SerializedStore):
         offset = self._bigtable_get(offset_key, no_key_translation=True)
         return int(offset) if offset is not None else None
 
+    def _flush_mutation_buffer(self, offset: int, offset_key):
+        mutations = [
+            r[0] for r in self._mutation_buffer.copy().values()
+        ]
+        response = self.bt_table.mutate_rows(mutations)
+
+        for i, status in enumerate(response):
+            if status.code != 0:
+                raise Exception(
+                    f"Failed to commit mutation number {i}"
+                )
+
+        self._mutation_buffer = {}
+        self.log.info(
+            f"Committed {self._num_mutations} mutations to BigTableStore for table {self.table.name}"
+        )
+        self._bigtable_set(
+            offset_key, str(offset).encode(), no_key_translation=True
+        )
+        self._num_mutations = 0
+
+
+    def _should_flush_mutations(self) -> bool:
+        return (
+            self._mutation_buffer is not None
+            and self._num_mutations > self._mutation_buffer_size
+        )
+
     def set_persisted_offset(self, tp: TP, offset: int) -> None:
         """Set the last persisted offset for this table.
 
@@ -436,31 +464,13 @@ class BigTableStore(base.SerializedStore):
         """
         try:
             offset_key = self.get_offset_key(tp).encode()
-            self._bigtable_set(
-                offset_key, str(offset).encode(), no_key_translation=True
-            )
-
-            if (
-                self._mutation_buffer is not None
-                and self._num_mutations > self._mutation_buffer_size
-            ):
-                mutations = [
-                    r[0] for r in self._mutation_buffer.copy().values()
-                ]
-                response = self.bt_table.mutate_rows(mutations)
-
-                for i, status in enumerate(response):
-                    if status.code != 0:
-                        raise Exception(
-                            f"Failed to commit mutation number {i}"
-                        )
-                self._mutation_buffer = {}
-                self.log.info(
-                    f"Committed {self._num_mutations} mutations to BigTableStore for table {self.table.name}"
+            if self._should_flush_mutations():
+                self._flush_mutation_buffer(offset, offset_key)
+            elif self._mutation_buffer is None:
+                self._bigtable_set(
+                    offset_key, str(offset).encode(), no_key_translation=True
                 )
-                self._num_mutations = 0
-
-        except Exception as e:
+        except Exception:
             self.log.error(
                 f"Failed to commit offset for {self.table.name}"
                 " -> will cause additional changelogs if restart happens"
