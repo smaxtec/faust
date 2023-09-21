@@ -279,7 +279,7 @@ class TestBigTableStore:
             self.TEST_KEY1, row_mock, self.TEST_KEY1
         )
 
-    def test_maybe_get_partition_from_message(self, store):
+    def test_get_partition_from_message(self, store):
         event_mock = MagicMock()
         event_mock.message = MagicMock()
         event_mock.message.partition = 69
@@ -288,19 +288,23 @@ class TestBigTableStore:
         store.table.is_global = False
         store.table.use_partitioner = False
         with patch("faust.stores.bigtable.current_event", current_event_mock):
-            return_value = store._maybe_get_partition_from_message()
-            assert return_value == 69
+            return_value = store._get_current_partitions()
+            assert return_value == [69]
 
         store.table.is_global = True
         with patch("faust.stores.bigtable.current_event", current_event_mock):
-            return_value = store._maybe_get_partition_from_message()
-            assert return_value is None
+            return_value = store._get_current_partitions()
+            assert return_value == [None]
 
         store.table.is_global = False
         current_event_mock = MagicMock(return_value=None)
+
+        topic = store.table.changelog_topic_name
+        store.app.assignor.assigned_actives = MagicMock(return_value={TP(topic, 420)})
+        store.app.conf.topic_partitions = 421
         with patch("faust.stores.bigtable.current_event", current_event_mock):
-            return_value = store._maybe_get_partition_from_message()
-            assert return_value is None
+            return_value = store._get_current_partitions()
+            assert return_value == [420]
 
     def test_get_partition_prefix(self, store):
         partition = 0
