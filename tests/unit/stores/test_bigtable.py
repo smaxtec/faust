@@ -370,35 +370,35 @@ class TestBigTableStore:
         store._bigtable_get.assert_not_called()
         assert res is None
 
-
     def test_set(self, store):
-        partition = 19
-        faust.stores.bigtable.get_current_partition = MagicMock(
-            return_value=partition
-        )
-        store._bigtable_mutate = MagicMock()
-        store._cache.set_partition = MagicMock()
+        # Scenario: No cache
+        store._cache = None
+        store._bigtable_set = MagicMock()
         store._set(self.TEST_KEY1, b"a_value")
-        key_with_partition = store._get_bigtable_key(self.TEST_KEY1, partition)
-        store._bigtable_mutate.assert_called_once_with(
-            key_with_partition, b"a_value"
+        store._bigtable_set.assert_called_once_with(
+            self.TEST_KEY1, b"a_value"
         )
-        store._cache.set_partition.assert_called_once_with(
-            self.TEST_KEY1, partition
+
+        # Scenario: Cache active
+        store._cache = {}
+        store._set(self.TEST_KEY1, b"b_value")
+        assert store._cache[self.TEST_KEY1] == b"b_value"
+        store._bigtable_set.assert_called_with(
+            self.TEST_KEY1, b"b_value"
         )
 
     def test_del(self, store):
-        store._cache._partition_cache = {self.TEST_KEY1: 19}
-        store._partitions_for_key = MagicMock(return_value=[1, 3, 19])
-        store._bigtable_mutate = MagicMock()
+        # Scenario: No cache
+        store._cache = None
+        store._bigtable_del = MagicMock()
         store._del(self.TEST_KEY1)
-        calls = [
-            call(store._get_bigtable_key(self.TEST_KEY1, 1), None),
-            call(store._get_bigtable_key(self.TEST_KEY1, 3), None),
-            call(store._get_bigtable_key(self.TEST_KEY1, 19), None),
-        ]
-        store._bigtable_mutate.assert_has_calls(calls)
-        assert store._cache._partition_cache == {}
+        store._bigtable_del.assert_called_once_with(self.TEST_KEY1)
+
+        # Scenario: Cache active
+        store._cache = {}
+        store._del(self.TEST_KEY1)
+        assert store._cache[self.TEST_KEY1] is None
+        store._bigtable_del.assert_called_with(self.TEST_KEY1)
 
     def test_active_partitions(self, store):
         active_topics = [
