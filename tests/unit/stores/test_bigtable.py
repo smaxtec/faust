@@ -325,8 +325,8 @@ class TestBigTableStore:
 
     def test_get_keyerror(self, store):
         partition = 19
-        store._maybe_get_partition_from_message = MagicMock(
-            return_value=partition
+        store._get_current_partitions = MagicMock(
+            return_value=[partition]
         )
         store._bigtable_get = MagicMock(return_value=None)
         with pytest.raises(KeyError):
@@ -334,28 +334,42 @@ class TestBigTableStore:
 
     def test_get_with_known_partition(self, store):
         partition = 19
-        store._maybe_get_partition_from_message = MagicMock(
-            return_value=partition
+        store._cache = None
+        store._get_current_partitions = MagicMock(
+            return_value=[partition]
         )
-        store._cache.set_partition = MagicMock()
         # Scenario: Found
         store._bigtable_get = MagicMock(return_value=b"a_value")
         res = store._get(self.TEST_KEY1)
-        key_with_partition = store._get_bigtable_key(self.TEST_KEY1, partition)
-        store._bigtable_get.assert_called_once_with(key_with_partition)
-        store._cache.set_partition.assert_called_once_with(
+        key_with_partition = store._add_partition_prefix_to_key(
             self.TEST_KEY1, partition
         )
+        store._bigtable_get.assert_called_once_with(self.TEST_KEY1)
         assert res == b"a_value"
 
-        store._cache.set_partition.reset_mock()
         # Scenario: Not Found
         store._bigtable_get = MagicMock(return_value=None)
         res = store._get(self.TEST_KEY1)
-        key_with_partition = store._get_bigtable_key(self.TEST_KEY1, partition)
-        store._bigtable_get.assert_called_once_with(key_with_partition)
-        store._cache.set_partition.assert_not_called()
+        store._bigtable_get.assert_called_once_with(self.TEST_KEY1)
         assert res is None
+
+        # Scenario: Cache hit on value
+        store._bigtable_get = MagicMock(return_value=None)
+        store._cache = {self.TEST_KEY1: b"a_value_from_cache"}
+        res = store._get(self.TEST_KEY1)
+        store._bigtable_get.assert_not_called()
+        res2 = store._get(self.TEST_KEY2)
+        assert res == b"a_value_from_cache"
+        store._bigtable_get.assert_called_once_with(self.TEST_KEY2)
+        assert store._cache[self.TEST_KEY2] is None
+        assert res2 is None
+
+        # Scenario: Cache hit on None value
+        store._bigtable_get = MagicMock(return_value=None)
+        res = store._get(self.TEST_KEY2)
+        store._bigtable_get.assert_not_called()
+        assert res is None
+
 
     def test_get_with_unknown_partition(self, store):
         store._maybe_get_partition_from_message = MagicMock(return_value=None)
