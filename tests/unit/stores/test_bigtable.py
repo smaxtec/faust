@@ -300,7 +300,9 @@ class TestBigTableStore:
         current_event_mock = MagicMock(return_value=None)
 
         topic = store.table.changelog_topic_name
-        store.app.assignor.assigned_actives = MagicMock(return_value={TP(topic, 420)})
+        store.app.assignor.assigned_actives = MagicMock(
+            return_value={TP(topic, 420)}
+        )
         store.app.conf.topic_partitions = 421
         with patch("faust.stores.bigtable.current_event", current_event_mock):
             return_value = store._get_current_partitions()
@@ -308,7 +310,9 @@ class TestBigTableStore:
 
     def test_get_faust_key(self, store):
         key_with_partition = b"\x13_..._THEACTUALKEY"
-        res = store._remove_partition_prefix_from_bigtable_key(key_with_partition)
+        res = store._remove_partition_prefix_from_bigtable_key(
+            key_with_partition
+        )
         assert res == b"THEACTUALKEY"
 
     def test_get_key_with_partition(self, store):
@@ -316,7 +320,10 @@ class TestBigTableStore:
         res = store._add_partition_prefix_to_key(self.TEST_KEY1, partition)
         extracted_partition = store._get_partition_from_bigtable_key(res)
         assert extracted_partition == partition
-        assert store._remove_partition_prefix_from_bigtable_key(res) == self.TEST_KEY1
+        assert (
+            store._remove_partition_prefix_from_bigtable_key(res)
+            == self.TEST_KEY1
+        )
 
     def test_partitions_for_key(self, store):
         store._get_current_partitions = MagicMock(return_value=[19])
@@ -325,9 +332,7 @@ class TestBigTableStore:
 
     def test_get_keyerror(self, store):
         partition = 19
-        store._get_current_partitions = MagicMock(
-            return_value=[partition]
-        )
+        store._get_current_partitions = MagicMock(return_value=[partition])
         store._bigtable_get = MagicMock(return_value=None)
         with pytest.raises(KeyError):
             store[self.TEST_KEY1.decode()]
@@ -335,9 +340,7 @@ class TestBigTableStore:
     def test_get_with_known_partition(self, store):
         partition = 19
         store._cache = None
-        store._get_current_partitions = MagicMock(
-            return_value=[partition]
-        )
+        store._get_current_partitions = MagicMock(return_value=[partition])
         # Scenario: Found
         store._bigtable_get = MagicMock(return_value=b"a_value")
         res = store._get(self.TEST_KEY1)
@@ -375,17 +378,13 @@ class TestBigTableStore:
         store._cache = None
         store._bigtable_set = MagicMock()
         store._set(self.TEST_KEY1, b"a_value")
-        store._bigtable_set.assert_called_once_with(
-            self.TEST_KEY1, b"a_value"
-        )
+        store._bigtable_set.assert_called_once_with(self.TEST_KEY1, b"a_value")
 
         # Scenario: Cache active
         store._cache = {}
         store._set(self.TEST_KEY1, b"b_value")
         assert store._cache[self.TEST_KEY1] == b"b_value"
-        store._bigtable_set.assert_called_with(
-            self.TEST_KEY1, b"b_value"
-        )
+        store._bigtable_set.assert_called_with(self.TEST_KEY1, b"b_value")
 
     def test_del(self, store):
         # Scenario: No cache
@@ -423,28 +422,44 @@ class TestBigTableStore:
         all_res = list(res)
         assert list(range(store.app.conf.topic_partitions)) == all_res
 
-    def test_iteritems_with_cache(self, store):
-        store._active_partitions = MagicMock(return_value=[1, 3])
-        store._cache.flush = MagicMock(wraps=store._cache.flush)
-        store._cache.fill = MagicMock()
-        store.bt_table.read_rows = MagicMock()
-
-        _ = sorted(store._iteritems())
-        store._cache.flush.assert_called_once()
-        store._cache.fill.assert_called_once()
-        _ = sorted(store._iteritems())
-        store.bt_table.read_rows.assert_not_called()
-
     def test_iteritems(self, store):
         store._active_partitions = MagicMock(return_value=[1, 3])
         store.bt_table.read_rows = MagicMock()
-        store._cache._value_cache = None
-        store._cache.flush = MagicMock(wraps=store._cache.flush)
+        store._mutation_buffer = None
+        store._cache = {}
 
         _ = sorted(store._iteritems())
-        store._cache.flush.assert_called_once()
-        _ = sorted(store._iteritems())
-        store.bt_table.read_rows.assert_called()
+        store.bt_table.read_rows.assert_called_once()
+
+    def test_iteritems_with_mutations(self, store):
+        store._active_partitions = MagicMock(return_value=[1, 3])
+        store._mutation_buffer = {
+                self.TEST_KEY1: ("doesn't matter", b"a_value"),
+                self.TEST_KEY2: ("doesn't matter", None),
+        }
+        store.bt_table.read_rows = MagicMock(
+            return_value=[
+                MagicMock(
+                    row_key=self.TEST_KEY1,
+                    to_dict=MagicMock(
+                        return_value={"x": [MagicMock(value=b"1")]}
+                    ),
+                    commit=MagicMock(),
+                ),
+                MagicMock(
+                    row_key=self.TEST_KEY2,
+                    to_dict=MagicMock(
+                        return_value={"x": [MagicMock(value=b"this is overwritten")]}
+                    ),
+                    commit=MagicMock(),
+                ),
+            ]
+        )
+        res = sorted(store._iteritems())
+        store.bt_table.read_rows.assert_called_once()
+        assert res == [(self.TEST_KEY1, b"a_value")]
+        assert store._cache.get(self.TEST_KEY1) == b"a_value"
+        assert store._cache.get(self.TEST_KEY2) is None
 
     def test_iterkeys(self, store):
         values = [("K1", "V1"), ("K2", "V2")]

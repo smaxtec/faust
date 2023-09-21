@@ -266,9 +266,6 @@ class BigTableStore(base.SerializedStore):
         try:
             if self._cache is not None:
                 if key in self._cache:
-                    self.log.info(
-                        f"Found value for key in cache {key=} {value=}"
-                    )
                     return self._cache.get(key)
 
             value = self._bigtable_get(key)
@@ -338,13 +335,18 @@ class BigTableStore(base.SerializedStore):
                     mutation_row, mutation_val = self._mutation_buffer.get(
                         row.row_key, (None, None)
                     )
+                    key = self._remove_partition_prefix_from_bigtable_key(
+                        row.row_key
+                    )
                     if mutation_val is not None:
-                        key = self._remove_partition_prefix_from_bigtable_key(
-                            row.row_key
-                        )
+                        if self._cache is not None:
+                            self._cache[key] = mutation_val
                         yield key, mutation_val
+                        continue
 
                     if mutation_row is not None:
+                        if self._cache is not None:
+                            self._cache[key] = None
                         continue
 
                 value = self.bigtable_exrtact_row_data(row)
