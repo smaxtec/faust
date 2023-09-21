@@ -306,25 +306,17 @@ class TestBigTableStore:
             return_value = store._get_current_partitions()
             assert return_value == [420]
 
-    def test_get_partition_prefix(self, store):
-        partition = 0
-        res = store._get_partition_prefix(partition)
-        assert res[0] == partition
-
-        partition = 19
-        res = store._get_partition_prefix(partition)
-        assert res[0] == partition
-
     def test_get_faust_key(self, store):
-        key_with_partition = b"\x13THEACTUALKEY"
-        res = store._get_faust_key(key_with_partition)
+        key_with_partition = b"\x13_..._THEACTUALKEY"
+        res = store._remove_partition_prefix_from_bigtable_key(key_with_partition)
         assert res == b"THEACTUALKEY"
 
     def test_get_key_with_partition(self, store):
         partition = 19
-        res = store._get_bigtable_key(self.TEST_KEY1, partition)
-        assert res[0] == partition
-        assert store._get_faust_key(res) == self.TEST_KEY1
+        res = store._add_partition_prefix_to_key(self.TEST_KEY1, partition)
+        extracted_partition = store._get_partition_from_bigtable_key(res)
+        assert extracted_partition == partition
+        assert store._remove_partition_prefix_from_bigtable_key(res) == self.TEST_KEY1
 
     def test_partitions_for_key(self, store):
         store._cache.get_partition = MagicMock(return_value=19)

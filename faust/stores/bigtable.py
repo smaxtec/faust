@@ -152,7 +152,7 @@ class BigTableStore(base.SerializedStore):
 
     def _get_partition_from_bigtable_key(self, key: bytes) -> int:
         separator = b"_..._"
-        _, partition_bytes = key.rsplit(separator, 1)
+        partition_bytes, _ = key.rsplit(separator, 1)
         return int(partition_bytes)
 
     def _active_partitions(self) -> Iterator[int]:
@@ -493,9 +493,9 @@ class BigTableStore(base.SerializedStore):
                 key = msg.key
 
             if msg.value is None:
-                self._bigtable_del(msg.key)
+                self._bigtable_del(key, no_key_translation=True)
             else:
-                self._bigtable_set(msg.key, msg.value)
+                self._bigtable_set(key, msg.value, no_key_translation=True)
 
         for tp, offset in tp_offsets.items():
             self.set_persisted_offset(tp, offset)
