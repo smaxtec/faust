@@ -319,16 +319,9 @@ class TestBigTableStore:
         assert store._remove_partition_prefix_from_bigtable_key(res) == self.TEST_KEY1
 
     def test_partitions_for_key(self, store):
-        store._cache.get_partition = MagicMock(return_value=19)
-        res = store._partitions_for_key(self.TEST_KEY1)
-        store._cache.get_partition.assert_called_once_with(self.TEST_KEY1)
-        assert res == [19]
-
-        store._cache.get_partition = MagicMock(side_effect=KeyError)
-        store._active_partitions = MagicMock(return_value=[1, 2, 3])
-        res = store._partitions_for_key(self.TEST_KEY2)
-        store._cache.get_partition.assert_called_once_with(self.TEST_KEY2)
-        assert res == [1, 2, 3]
+        store._get_current_partitions = MagicMock(return_value=[19])
+        res = list(store._get_possible_bt_keys(self.TEST_KEY1))
+        assert res == [store._add_partition_prefix_to_key(self.TEST_KEY1, 19)]
 
     def test_get_keyerror(self, store):
         partition = 19
