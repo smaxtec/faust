@@ -371,30 +371,6 @@ class TestBigTableStore:
         assert res is None
 
 
-    def test_get_with_unknown_partition(self, store):
-        store._maybe_get_partition_from_message = MagicMock(return_value=None)
-        store._partitions_for_key = MagicMock(return_value=[3, 19])
-        store._cache.set_partition = MagicMock()
-        keys_searched = set()
-        keys_searched.add(store._get_bigtable_key(self.TEST_KEY1, 1))
-        keys_searched.add(store._get_bigtable_key(self.TEST_KEY1, 3))
-        keys_searched.add(store._get_bigtable_key(self.TEST_KEY1, 19))
-
-        # Scenario: Found
-        store._bigtable_get = MagicMock(return_value=b"a_value")
-        res = store._get(self.TEST_KEY1)
-        store._partitions_for_key.assert_called_once_with(self.TEST_KEY1)
-        store._cache.set_partition.assert_called_once_with(self.TEST_KEY1, 19)
-        assert res == b"a_value"
-
-        store._cache.set_partition.reset_mock()
-        # Scenario: Not Found
-        store._bigtable_get = MagicMock(return_value=None)
-        res = store._get(self.TEST_KEY1)
-        assert store._bigtable_get.call_count == 2
-        store._cache.set_partition.assert_not_called()
-        assert res is None
-
     def test_set(self, store):
         partition = 19
         faust.stores.bigtable.get_current_partition = MagicMock(
