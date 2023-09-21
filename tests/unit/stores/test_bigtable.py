@@ -482,15 +482,40 @@ class TestBigTableStore:
 
     def test_set_persisted_offset(self, store):
         tp = TP("a_topic", 19)
-        store._cache.submit_mutation = MagicMock(
-            wraps=store._cache.submit_mutation
-        )
-        store._cache.flush_if_timer_over = MagicMock(return_value=False)
         expected_offset_key = store.get_offset_key(tp).encode()
+        store._bigtable_set = MagicMock()
+        store.bt_table.mutate_rows = MagicMock()
+        store._mutation_buffer = None
+
         store.set_persisted_offset(tp, 123)
-        store._cache.submit_mutation.assert_called_with(
-            expected_offset_key, str(123).encode()
+        store._bigtable_set.called_once_with(expected_offset_key, b"123", no_key_translation=True)
+        store.bt_table.mutate_rows.assert_not_called()
+
+        store._bigtable_set = MagicMock()
+        store._mutation_buffer = {}
+        store._mutation_size = 0
+        store.set_persisted_offset(tp, 123)
+        store._bigtable_set.assert_not_called()
+        store.bt_table.mutate_rows.assert_not_called()
+
+        store._bigtable_set = MagicMock()
+        store._mutation_buffer = {
+
+            self.TEST_KEY1: ("doesn't matter", b"a_value"),
+            self.TEST_KEY2: ("doesn't matter", None),
+            self.TEST_KEY3: ("doesn't matter", b"c_value"),
+        }
+        mutations = [
+            r[0] for r in store._mutation_buffer.copy().values()
+        ]
+        store._num_mutations = 999999999999999999999999999999999999999999
+        store.set_persisted_offset(tp, 123)
+        store._bigtable_set.called_once_with(
+            expected_offset_key,
+            b"123",
+            no_key_translation=True
         )
+        store.bt_table.mutate_rows.assert_called_once_with(mutations)
 
     def test_apply_changelog_batch(self, store):
         row_mock = MagicMock()
