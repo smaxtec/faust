@@ -114,7 +114,6 @@ class BigTableMock:
             self.data[k] = k
 
 
-
 class TestBigTableStore:
     TEST_KEY1 = b"TEST_KEY1"
     TEST_KEY2 = b"TEST_KEY2"
@@ -259,21 +258,26 @@ class TestBigTableStore:
         store._set_mutation = MagicMock()
 
         store._bigtable_del(self.TEST_KEY1, no_key_translation=True)
-        store._set_mutation.assert_called_once_with(self.TEST_KEY1, row_mock, None)
+        store._set_mutation.assert_called_once_with(
+            self.TEST_KEY1, row_mock, None
+        )
 
     def test_bigtable_set(self, store):
         row_mock = MagicMock()
         row_mock.set_cell = MagicMock()
 
         store.bt_table.direct_row = MagicMock(return_value=row_mock)
-        store._cache.set = MagicMock(return_value=None)
-        store._cache.submit_mutation = MagicMock(return_value=None)
-        store._bigtable_mutate(self.TEST_KEY1, self.TEST_KEY1)
-        store._bigtable_mutate(self.TEST_KEY1, self.TEST_KEY1)
+        store._set_mutation = MagicMock(return_value=None)
+        store._bigtable_set(
+            self.TEST_KEY1, self.TEST_KEY1, no_key_translation=True
+        )
+        store._bigtable_set(
+            self.TEST_KEY1, self.TEST_KEY1, no_key_translation=True
+        )
 
-        store._cache.set.assert_called_with(self.TEST_KEY1, self.TEST_KEY1)
-        store._cache.submit_mutation.assert_called_with(self.TEST_KEY1, self.TEST_KEY1)
-
+        store._set_mutation.assert_called_with(
+            self.TEST_KEY1, row_mock, self.TEST_KEY1
+        )
 
     def test_maybe_get_partition_from_message(self, store):
         event_mock = MagicMock()
@@ -374,9 +378,7 @@ class TestBigTableStore:
         keys_searched.add(store._get_bigtable_key(self.TEST_KEY1, 19))
 
         # Scenario: Found
-        store._bigtable_get = MagicMock(
-            return_value=b"a_value"
-        )
+        store._bigtable_get = MagicMock(return_value=b"a_value")
         res = store._get(self.TEST_KEY1)
         store._partitions_for_key.assert_called_once_with(self.TEST_KEY1)
         store._cache.set_partition.assert_called_once_with(self.TEST_KEY1, 19)
@@ -486,7 +488,9 @@ class TestBigTableStore:
 
     def test_set_persisted_offset(self, store):
         tp = TP("a_topic", 19)
-        store._cache.submit_mutation = MagicMock(wraps=store._cache.submit_mutation)
+        store._cache.submit_mutation = MagicMock(
+            wraps=store._cache.submit_mutation
+        )
         store._cache.flush_if_timer_over = MagicMock(return_value=False)
         expected_offset_key = store.get_offset_key(tp).encode()
         store.set_persisted_offset(tp, 123)
@@ -568,7 +572,9 @@ class TestBigTableStore:
 
         store.bt_table.direct_row = MagicMock(return_value=row_mock)
         store._bigtable_mutate = MagicMock(wraps=store._bigtable_mutate)
-        store._cache.submit_mutation = MagicMock(wraps=store._cache.submit_mutation)
+        store._cache.submit_mutation = MagicMock(
+            wraps=store._cache.submit_mutation
+        )
 
         partition = 0
         faust.stores.bigtable.get_current_partition = MagicMock(
