@@ -508,7 +508,7 @@ class TestBigTableStore:
         mutations = [
             r[0] for r in store._mutation_buffer.copy().values()
         ]
-        store._num_mutations = 999999999999999999999999999999999999999999
+        store._num_mutations = 9999999999999999999999999999999
         store.set_persisted_offset(tp, 123)
         store._bigtable_set.called_once_with(
             expected_offset_key,
