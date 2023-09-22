@@ -522,8 +522,8 @@ class TestBigTableStore:
         row_mock.delete = MagicMock()
         row_mock.set_cell = MagicMock()
         store.bt_table.direct_row = MagicMock(return_value=row_mock)
-        store.bt_table.mutate_rows = MagicMock()
-        store._bigtable_mutate = MagicMock()
+        store._bigtable_del = MagicMock()
+        store._bigtable_set = MagicMock()
         store.set_persisted_offset = MagicMock()
         store._cache.submit_mutation = MagicMock()
         store._cache.set = MagicMock()
@@ -549,83 +549,6 @@ class TestBigTableStore:
             TestEvent(TestMessage("a", self.TEST_KEY1, tp, 2)),
         ]
         store.apply_changelog_batch(messages, lambda x: x, lambda x: x)
-        assert store._bigtable_mutate.call_count == 5
+        assert store._bigtable_set.call_count == 4
+        assert store._bigtable_del.call_count == 1
         assert store.set_persisted_offset.call_count == 2
-
-    def test_revoke_partitions(self, store):
-        store._cache.delete_partition = MagicMock()
-        TP1 = MagicMock()
-        TP1.partition = 1
-        TP2 = MagicMock()
-        TP2.partition = 2
-
-        store.revoke_partitions({TP1, TP2})
-        store._cache.delete_partition.assert_any_call(1)
-        store._cache.delete_partition.assert_any_call(2)
-
-    def test_mutation_flush(self, store):
-        # Mocks
-        TEST_TP = TP("a", 0)
-        TEST_OFFSET = 0
-        OFFSET_KEY = store.get_offset_key(TEST_TP).encode()
-
-        def real_set_scenario(key, value, offset):
-            store._set(key, value)
-            store._bigtable_mutate.reset_mock()
-            store.set_persisted_offset(TEST_TP, offset)
-            return offset + 1
-
-        def real_del_scenario(key, offset):
-            store._del(key)
-            store._cache.submit_mutation.reset_mock()
-            store.set_persisted_offset(TEST_TP, offset)
-            return offset + 1
-
-        def assert_offset_persisted(offset):
-            store._cache.submit_mutation.assert_called_with(
-                OFFSET_KEY, str(offset).encode()
-            )
-
-        row_mock = MagicMock()
-        row_mock.row_key = b"\x00TEST_KEY1"
-
-        store.bt_table.direct_row = MagicMock(return_value=row_mock)
-        store._bigtable_mutate = MagicMock(wraps=store._bigtable_mutate)
-        store._cache.submit_mutation = MagicMock(
-            wraps=store._cache.submit_mutation
-        )
-
-        partition = 0
-        faust.stores.bigtable.get_current_partition = MagicMock(
-            return_value=partition
-        )
-        store._cache.set_partition = MagicMock()
-        res = store._contains(self.TEST_KEY1)
-        store._bigtable_mutate.assert_not_called()
-        assert res is False
-
-        TEST_OFFSET = real_set_scenario(
-            self.TEST_KEY1, self.TEST_KEY1, TEST_OFFSET
-        )
-        res = store._contains(self.TEST_KEY1)
-        assert_offset_persisted(TEST_OFFSET - 1)
-        assert res is True
-
-        TEST_OFFSET = real_set_scenario(
-            self.TEST_KEY1, self.TEST_KEY1, TEST_OFFSET
-        )
-        res = store._contains(self.TEST_KEY1)
-        assert res is True
-        assert_offset_persisted(TEST_OFFSET - 1)
-
-        TEST_OFFSET = real_del_scenario(self.TEST_KEY1, TEST_OFFSET)
-        res = store._contains(self.TEST_KEY1)
-        assert res is False
-        assert_offset_persisted(TEST_OFFSET - 1)
-
-        TEST_OFFSET = real_set_scenario(
-            self.TEST_KEY1, self.TEST_KEY1, TEST_OFFSET
-        )
-        res = store._contains(self.TEST_KEY1)
-        assert_offset_persisted(TEST_OFFSET - 1)
-        assert res is True
