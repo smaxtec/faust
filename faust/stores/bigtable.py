@@ -330,6 +330,10 @@ class BigTableStore(base.SerializedStore):
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=self.row_filter
             ):
+                # abort it key is an offset key
+                if self.offset_key_prefix in row.row_key:
+                    continue
+
                 if self._mutation_buffer is not None:
                     # Yield the mutation first if it exists
                     mutation_row, mutation_val = self._mutation_buffer.get(
@@ -338,6 +342,8 @@ class BigTableStore(base.SerializedStore):
                     key = self._remove_partition_prefix_from_bigtable_key(
                         row.row_key
                     )
+
+
                     if mutation_val is not None:
                         if self._cache is not None:
                             self._cache[key] = mutation_val
