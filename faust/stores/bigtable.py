@@ -104,7 +104,7 @@ class BigTableStore(base.SerializedStore):
         # TODO - make this a configurable option
         self._cache = LRUCache(limit=100_000)
         self._mutation_buffer_size = 1_000
-        self._mutation_buffer = {}
+        self._mutation_buffer = None
         self._num_mutations = 0
 
     def _bigtable_setup(self, table, options: Dict[str, Any]):
