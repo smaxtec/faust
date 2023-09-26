@@ -498,6 +498,8 @@ class BigTableStore(base.SerializedStore):
                 of a changelog event.
         """
         tp_offsets: Dict[TP, int] = {}
+        mutation_buffer_size = self._mutation_buffer_size
+        self._mutation_buffer_size = 50_000
         for event in batch:
             tp, offset = event.message.tp, event.message.offset
             tp_offsets[tp] = (
@@ -516,6 +518,7 @@ class BigTableStore(base.SerializedStore):
 
         for tp, offset in tp_offsets.items():
             self.set_persisted_offset(tp, offset)
+        self._mutation_buffer_size = mutation_buffer_size
 
     async def backup_partition(
         self,
