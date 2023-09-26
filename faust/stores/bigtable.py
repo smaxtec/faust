@@ -101,9 +101,9 @@ class BigTableStore(base.SerializedStore):
         )
 
         # TODO - make this a configurable option
-        self._cache = LRUCache(limit=100_000)
+        self._cache = None # LRUCache(limit=100_000)
         self._mutation_buffer_size = 90_000
-        self._mutation_buffer = {}
+        self._mutation_buffer = None
         self._num_mutations = 0
         self._flush_interval = 600  # 10 minutes
         self._last_flush_time = None
@@ -328,12 +328,12 @@ class BigTableStore(base.SerializedStore):
                     mutation_row, mutation_val = self._mutation_buffer.get(
                         row.row_key, (None, None)
                     )
-                    key = self._remove_partition_prefix_from_bigtable_key(
-                        row.row_key
-                    )
 
 
                     if mutation_val is not None:
+                        key = self._remove_partition_prefix_from_bigtable_key(
+                            row.row_key
+                        )
                         if self._cache is not None:
                             self._cache[key] = mutation_val
                         yield key, mutation_val
