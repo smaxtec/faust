@@ -106,6 +106,8 @@ class BigTableStore(base.SerializedStore):
         self._mutation_buffer_size = 90_000
         self._mutation_buffer = {}
         self._num_mutations = 0
+        self._flush_interval = 600  # 10 minutes
+        self._last_flush_time = None
 
     def _bigtable_setup(self, table, options: Dict[str, Any]):
         self.bt_table_name = self.table_name_generator(table)
@@ -227,7 +229,7 @@ class BigTableStore(base.SerializedStore):
                 row.commit()
 
     def _bigtable_set(
-        self, key: bytes, value: bytes, no_key_translation=False, no_mutate=False
+        self, key: bytes, value: bytes, no_key_translation=False
     ):
         keys = (
             [key]
@@ -244,7 +246,7 @@ class BigTableStore(base.SerializedStore):
             value,
         )
 
-        if self._mutation_buffer is not None and not no_mutate:
+        if self._mutation_buffer is not None:
             self._set_mutation(key, row, value)
         else:
             row.commit()
