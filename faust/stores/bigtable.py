@@ -103,8 +103,8 @@ class BigTableStore(base.SerializedStore):
 
         # TODO - make this a configurable option
         self._cache = LRUCache(limit=100_000)
-        self._mutation_buffer_size = 1_000
-        self._mutation_buffer = None
+        self._mutation_buffer_size = 90_000
+        self._mutation_buffer = {}
         self._num_mutations = 0
 
     def _bigtable_setup(self, table, options: Dict[str, Any]):
@@ -219,13 +219,7 @@ class BigTableStore(base.SerializedStore):
             ]
 
         for key in keys:
-            row = None
-            if self._mutation_buffer is not None:
-                row = self._mutation_buffer.get(key, (None, None))[0]
-
-            if row is None:
-                row = self.bt_table.direct_row(key)
-
+            row = self.bt_table.direct_row(key)
             row.delete()
             if self._mutation_buffer is not None:
                 self._set_mutation(key, row, None)
@@ -233,7 +227,7 @@ class BigTableStore(base.SerializedStore):
                 row.commit()
 
     def _bigtable_set(
-        self, key: bytes, value: bytes, no_key_translation=False
+        self, key: bytes, value: bytes, no_key_translation=False, no_mutate=False
     ):
         keys = (
             [key]
@@ -242,12 +236,7 @@ class BigTableStore(base.SerializedStore):
         )
         assert len(keys) == 1
         key = keys[0]
-        row = None
-        if self._mutation_buffer is not None:
-            row = self._mutation_buffer.get(key, (None, None))[0]
-
-        if row is None:
-            row = self.bt_table.direct_row(key)
+        row = self.bt_table.direct_row(key)
 
         row.set_cell(
             COLUMN_FAMILY_ID,
@@ -255,7 +244,7 @@ class BigTableStore(base.SerializedStore):
             value,
         )
 
-        if self._mutation_buffer is not None:
+        if self._mutation_buffer is not None and not no_mutate:
             self._set_mutation(key, row, value)
         else:
             row.commit()
@@ -388,11 +377,6 @@ class BigTableStore(base.SerializedStore):
         try:
             if not self.app.conf.store_check_exists:
                 return True
-
-            # Check cache
-            if self._cache is not None and key in self._cache:
-                return self._cache[key] is not None
-
             return self._get(key) is not None
 
         except Exception as ex:
@@ -432,6 +416,9 @@ class BigTableStore(base.SerializedStore):
         return int(offset) if offset is not None else None
 
     def _flush_mutation_buffer(self, offset: int, offset_key):
+        self._bigtable_set(
+            offset_key, str(offset).encode(), no_key_translation=True
+        )
         mutations = [
             r[0] for r in self._mutation_buffer.copy().values()
         ]
@@ -447,16 +434,18 @@ class BigTableStore(base.SerializedStore):
         self.log.info(
             f"Committed {self._num_mutations} mutations to BigTableStore for table {self.table.name}"
         )
-        self._bigtable_set(
-            offset_key, str(offset).encode(), no_key_translation=True
-        )
         self._num_mutations = 0
+        self._last_flush_time = time.time()
 
 
     def _should_flush_mutations(self) -> bool:
         return (
             self._mutation_buffer is not None
-            and self._num_mutations > self._mutation_buffer_size
+            and (
+                self._num_mutations > self._mutation_buffer_size
+                or self._last_flush_time is None
+                or self._last_flush_time < time.time() - self._flush_interval
+            )
         )
 
     def set_persisted_offset(self, tp: TP, offset: int) -> None:
