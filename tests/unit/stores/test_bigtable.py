@@ -1,9 +1,8 @@
-import time
 from unittest.mock import MagicMock, call, patch
+import time
 
 import pytest
 
-import faust
 from faust.stores.bigtable import (
     BigTableStore,
 )
@@ -483,6 +482,7 @@ class TestBigTableStore:
     def test_set_persisted_offset(self, store):
         tp = TP("a_topic", 19)
         expected_offset_key = store.get_offset_key(tp).encode()
+        store._last_flush_time = time.time()
         store._bigtable_set = MagicMock()
         store.bt_table.mutate_rows = MagicMock()
         store._mutation_buffer = None
