@@ -327,11 +327,12 @@ class BigTableStore(base.SerializedStore):
                         start_key=start_key, end_key=end_key
                     )
 
+            offset_key_prefix = self.offset_key_prefix.encode()
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=self.row_filter
             ):
                 # abort it key is an offset key
-                if self.offset_key_prefix in row.row_key:
+                if offset_key_prefix in row.row_key:
                     continue
 
                 if self._mutation_buffer is not None:
