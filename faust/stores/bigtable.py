@@ -1,6 +1,4 @@
 """BigTable storage."""
-import asyncio
-import gc
 import logging
 import time
 import traceback
@@ -104,8 +102,8 @@ class BigTableStore(base.SerializedStore):
         )
 
         # TODO - make this a configurable option
-        self._cache = LRUCache(limit=10_000)
-        self._mutation_buffer_size = 10_000
+        self._cache = LRUCache(limit=100_000)
+        self._mutation_buffer_size = 1_000
         self._mutation_buffer = {}
         self._num_mutations = 0
 
