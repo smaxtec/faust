@@ -305,7 +305,9 @@ class BigTableStore(base.SerializedStore):
             active_partitions = list(self._active_partitions())
 
             row_set = RowSet()
-            if not (self.table.is_global or self.table.use_partitioner):
+
+            need_all_keys = (self.table.is_global or self.table.use_partitioner)
+            if not need_all_keys:
                 for partition in active_partitions:
                     prefix = self._add_partition_prefix_to_key(b"", partition)
                     start_key = prefix + b"\x00"
@@ -320,7 +322,7 @@ class BigTableStore(base.SerializedStore):
                 row_set=row_set, filter_=self.row_filter
             ):
                 # abort it key is an offset key
-                if offset_key_prefix in row.row_key:
+                if not need_all_keys and offset_key_prefix in row.row_key:
                     continue
 
                 if self._mutation_buffer is not None:
