@@ -21,6 +21,7 @@ try:  # pragma: no cover
     from google.cloud.bigtable.row_filters import CellsColumnLimitFilter
     from google.cloud.bigtable.row_set import RowSet
     from google.cloud.bigtable.table import Table
+    from google.api_core.exceptions import AlreadyExists
 
     # Make one container for all imported functions
     # This is needed for testing and controlling the imports
@@ -119,14 +120,22 @@ class BigTableStore(base.SerializedStore):
         )
         self.bt_table: BT.Table = self.instance.table(self.bt_table_name)
         if not self.bt_table.exists():
+            try:
+                self.bt_table.create(
+                    column_families={
+                        COLUMN_FAMILY_ID: BT.column_family.MaxVersionsGCRule(1)
+                    }
+                )
+            except AlreadyExists:
+                logging.getLogger(__name__).info(
+                    "BigTableStore: Using existing "
+                    f"bigtablestore with {self.bt_table_name=} for {table.name} "
+                    f"with {options=} due to AlreadyExists exception"
+                )
+                return
             logging.getLogger(__name__).info(
                 f"BigTableStore: Making new bigtablestore with {self.bt_table_name=} "
                 f"for {table.name} with {options=}"
-            )
-            self.bt_table.create(
-                column_families={
-                    COLUMN_FAMILY_ID: BT.column_family.MaxVersionsGCRule(1)
-                }
             )
         else:
             logging.getLogger(__name__).info(
