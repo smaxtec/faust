@@ -322,7 +322,7 @@ class BigTableStore(base.SerializedStore):
                 row_set=row_set, filter_=self.row_filter
             ):
                 # abort it key is an offset key
-                if not need_all_keys and offset_key_prefix in row.row_key:
+                if need_all_keys and offset_key_prefix in row.row_key:
                     continue
 
                 if self._mutation_buffer is not None:
