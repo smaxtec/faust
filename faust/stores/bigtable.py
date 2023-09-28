@@ -363,7 +363,10 @@ class BigTableStore(base.SerializedStore):
                 )
                 yield key, value
             end = time.time()
-            self.log.info(f"{self.table_name} _iteritems took {end - start}s ")
+            self.log.info(
+                f"{self.table_name} _bigtable_iteritems took {end - start}s "
+                f"for partitions {partitions}"
+            )
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error "
@@ -547,19 +550,19 @@ class BigTableStore(base.SerializedStore):
         """
         raise NotImplementedError("Not yet implemented for Bigtable.")
 
-    def revoke_partitions(self, table: CollectionT, tps: Set[TP]) -> None:
-        # remove all keys for partitions we are no longer from the value cache
-        if self._value_cache is not None:
-            partitions = [tp.partition for tp in tps]
-            for key in self._value_cache.copy().keys():
-                if self._get_partition_from_bigtable_key(key) in partitions:
-                    del self._value_cache[key]
-
     async def assign_partitions(
         self, table: CollectionT, tps: Set[TP], generation_id: int = 0
     ) -> None:
         # Fill cache with all keys for the partitions we are assigned
-        partitions = [tp.partition for tp in tps]
+        partitions = set()
+
+        standby_tps = self.app.assignor.assigned_standbys()
+        my_topics = table.changelog_topic.topics
+        for tp in tps:
+            if tp.topic in my_topics and tp not in standby_tps:
+                partitions.add(tp.partition)
+        if len(partitions) == 0:
+            return
         if self._value_cache is not None:
             for k, v in self._bigtable_iteritems(partitions=partitions):
                 self._value_cache[k] = v
@@ -580,5 +583,4 @@ class BigTableStore(base.SerializedStore):
                 for which we were not assigned the last time.
             generation_id: the metadata generation identifier for the re-balance
         """
-        self.revoke_partitions(self.table, revoked)
         await self.assign_partitions(self.table, newly_assigned, generation_id)
