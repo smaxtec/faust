@@ -364,7 +364,11 @@ class BigTableStore(base.SerializedStore):
                 yield key, value
 
             end = time.time()
-            self.log.info(f"{self.table_name} _iteritems took {end - start}s")
+            self.log.info(
+                f"{self.table_name} _iteritems took {end - start}s "
+                f"with {need_all_keys=} ",
+                f"for partitions {active_partitions}"
+            )
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error "
