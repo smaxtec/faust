@@ -10,6 +10,7 @@ from typing import (
     Iterator,
     List,
     Optional,
+    Set,
     Tuple,
     Union,
 )
@@ -319,6 +320,10 @@ class BigTableStore(base.SerializedStore):
             if partitions is None:
                 partitions = list(self._active_partitions())
             row_set = RowSet()
+            self.log.info(
+                f"BigtableStore: Iterating over {len(partitions)} partitions "
+                f"for table {self.table_name}"
+            )
 
             need_all_keys = self.table.is_global or self.table.use_partitioner
             if not need_all_keys:
@@ -358,9 +363,7 @@ class BigTableStore(base.SerializedStore):
                 )
                 yield key, value
             end = time.time()
-            self.log.info(
-                f"{self.table_name} _iteritems took {end - start}s "
-            )
+            self.log.info(f"{self.table_name} _iteritems took {end - start}s ")
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error "
