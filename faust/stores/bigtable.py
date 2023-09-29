@@ -39,7 +39,6 @@ try:  # pragma: no cover
 except ImportError:  # pragma: no cover
     BT = None  # noqa
 
-from mode.utils.collections import LRUCache
 from yarl import URL
 
 from faust.stores import base
@@ -63,7 +62,8 @@ class BigTableStore(base.SerializedStore):
     client: BT.Client
     instance: BT.Instance
     bt_table: BT.Table
-    _value_cache: Optional[LRUCache]
+    _startup_cache: Optional[Dict[bytes, bytes]]
+    _key_cache: Optional[Set[bytes]]
 
     BT_COLUMN_NAME_KEY = "bt_column_name_key"
     BT_INSTANCE_KEY = "bt_instance_key"
@@ -104,11 +104,21 @@ class BigTableStore(base.SerializedStore):
         )
 
         # TODO - make this a configurable option
-        self._value_cache_enable = True
-        if self._value_cache_enable:
-            self._value_cache: Dict[bytes, bytes] = {}
+        self._startup_cache_enable = True
+        if self._startup_cache_enable:
+            self._startup_cache: Dict[bytes, bytes] = {}
         else:
-            self._value_cache = None
+            self._startup_cache = None
+
+        # TODO - make this a configurable option
+        self._key_cache_enable = True
+        if self._key_cache_enable:
+            self._key_cache: Set[bytes] = set()
+        else:
+            self._key_cache = None
+
+        # TODO - make this a configurable option
+        # and use the MutationBatcher class of bt
         self._mutation_buffer_size = 90_000
         self._mutation_buffer = None
         self._num_mutations = 0
@@ -265,21 +275,15 @@ class BigTableStore(base.SerializedStore):
         else:
             row.commit()
 
-    def _get(self, key: bytes) -> Optional[bytes]:
+    def _get(self, key: bytes, invalidate_cache=True) -> Optional[bytes]:
         try:
-            if self._value_cache is not None:
-                if key in self._value_cache:
-                    return self._value_cache.get(key)
-
-            value = self._bigtable_get(key)
-
-            if self._value_cache is not None:
-                self._value_cache[key] = value
-
-            if value is not None:
-                self.log.info(f"Found value for key in table {key=} {value=}")
-                return value
-            return None
+            if self._startup_cache is not None:
+                if key in self._startup_cache:
+                    if invalidate_cache:
+                        return self._startup_cache.pop(key)
+                    else:
+                        return self._startup_cache[key]
+            return self._bigtable_get(key)
         except Exception as ex:
             self.log.error(
                 f"Error in get for table {self.table_name} exception {ex} key {key}"
@@ -288,9 +292,8 @@ class BigTableStore(base.SerializedStore):
 
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
-            if self._value_cache is not None:
-                self._value_cache[key] = value
-
+            if self._key_cache is not None:
+                self._key_cache.add(key)
             self._bigtable_set(key, value)
         except Exception as ex:
             self.log.error(
@@ -302,9 +305,10 @@ class BigTableStore(base.SerializedStore):
 
     def _del(self, key: bytes) -> None:
         try:
-            if self._value_cache is not None:
-                self._value_cache[key] = None
-
+            if self._startup_cache is not None:
+                self._startup_cache.pop(key, None)
+            if self._key_cache is not None:
+                self._key_cache.discard(key)
             self._bigtable_del(key)
         except Exception as ex:
             self.log.error(
@@ -378,17 +382,15 @@ class BigTableStore(base.SerializedStore):
     def _iteritems(
         self, partitions: Optional[List[int]] = None
     ) -> Iterator[Tuple[bytes, bytes]]:
-        if self._value_cache is not None:
-            # We always want to return the whole cache
-            for key, value in self._value_cache.items():
-                if value is not None:
-                    yield key, value
-        else:
-            yield from self._bigtable_iteritems(partitions)
+        yield from self._bigtable_iteritems(partitions)
 
     def _iterkeys(self) -> Iterator[bytes]:
-        for row in self._iteritems():
-            yield row[0]
+        if self._key_cache is not None:
+            for key in self._key_cache:
+                yield key
+        else:
+            for row in self._iteritems():
+                yield row[0]
 
     def _itervalues(self) -> Iterator[bytes]:
         for row in self._iteritems():
@@ -402,7 +404,10 @@ class BigTableStore(base.SerializedStore):
         try:
             if not self.app.conf.store_check_exists:
                 return True
-            return self._get(key) is not None
+            if self._key_cache is not None:
+                return key in self._key_cache
+            else:
+                return self._get(key, invalidate_cache=False) is not None
 
         except Exception as ex:
             self.log.error(
@@ -554,18 +559,24 @@ class BigTableStore(base.SerializedStore):
         self, table: CollectionT, tps: Set[TP], generation_id: int = 0
     ) -> None:
         # Fill cache with all keys for the partitions we are assigned
-        partitions = set()
+        if self._startup_cache is None and self._key_cache is None:
+            return
 
+        partitions = set()
         standby_tps = self.app.assignor.assigned_standbys()
         my_topics = table.changelog_topic.topics
         for tp in tps:
             if tp.topic in my_topics and tp not in standby_tps:
                 partitions.add(tp.partition)
+
         if len(partitions) == 0:
             return
-        if self._value_cache is not None:
-            for k, v in self._bigtable_iteritems(partitions=partitions):
-                self._value_cache[k] = v
+
+        for k, v in self._bigtable_iteritems(partitions=partitions):
+            if self._startup_cache is not None:
+                self._startup_cache[k] = v
+            if self._key_cache is not None:
+                self._key_cache.add(k)
 
     async def on_rebalance(
         self,
