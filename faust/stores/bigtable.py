@@ -554,12 +554,27 @@ class BigTableStore(base.SerializedStore):
         """
         raise NotImplementedError("Not yet implemented for Bigtable.")
 
-    async def assign_partitions(
-        self, table: CollectionT, tps: Set[TP], generation_id: int = 0
-    ) -> None:
-        # Fill cache with all keys for the partitions we are assigned
+    def _mutate_caches(self, partitions, operation="add"):
+        if operation == "add":
+            for k, v in self._bigtable_iteritems(partitions=partitions):
+                if self._startup_cache is not None:
+                    self._startup_cache[k] = v
+                if self._key_cache is not None:
+                    self._key_cache.add(k)
+        elif operation == "remove":
+            for k, v in self._bigtable_iteritems(partitions=partitions):
+                if self._startup_cache is not None:
+                    self._startup_cache.pop(k, None)
+                if self._key_cache is not None:
+                    self._key_cache.discard(k)
+        else:
+            raise ValueError(f"Invalid operation {operation}")
+
+    def _get_active_changelogtopic_partitions(
+        self, table: CollectionT, tps: Set[TP]
+    ) -> Set[int]:
         if self._startup_cache is None and self._key_cache is None:
-            return
+            return set()
 
         partitions = set()
         standby_tps = self.app.assignor.assigned_standbys()
@@ -567,15 +582,23 @@ class BigTableStore(base.SerializedStore):
         for tp in tps:
             if tp.topic in my_topics and tp not in standby_tps:
                 partitions.add(tp.partition)
+        return partitions
 
+    def revoke_partitions(self, table: CollectionT, tps: Set[TP]) -> None:
+        # Fill cache with all keys for the partitions we are assigned
+        partitions = self._get_active_changelogtopic_partitions(table, tps)
         if len(partitions) == 0:
             return
+        self._mutate_caches(partitions, "remove")
 
-        for k, v in self._bigtable_iteritems(partitions=partitions):
-            if self._startup_cache is not None:
-                self._startup_cache[k] = v
-            if self._key_cache is not None:
-                self._key_cache.add(k)
+    async def assign_partitions(
+        self, table: CollectionT, tps: Set[TP], generation_id: int = 0
+    ) -> None:
+        # Fill cache with all keys for the partitions we are assigned
+        partitions = self._get_active_changelogtopic_partitions(table, tps)
+        if len(partitions) == 0:
+            return
+        self._mutate_caches(partitions, "add")
 
     async def on_rebalance(
         self,
@@ -593,4 +616,5 @@ class BigTableStore(base.SerializedStore):
                 for which we were not assigned the last time.
             generation_id: the metadata generation identifier for the re-balance
         """
+        self.revoke_partitions(self.table, revoked)
         await self.assign_partitions(self.table, newly_assigned, generation_id)
