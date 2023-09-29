@@ -589,6 +589,7 @@ class BigTableStore(base.SerializedStore):
         partitions = self._get_active_changelogtopic_partitions(table, tps)
         if len(partitions) == 0:
             return
+        self.log.info(f"Revoking partitions {partitions} for {table.name}")
         self._mutate_caches(partitions, "remove")
 
     async def assign_partitions(
@@ -598,6 +599,7 @@ class BigTableStore(base.SerializedStore):
         partitions = self._get_active_changelogtopic_partitions(table, tps)
         if len(partitions) == 0:
             return
+        self.log.info(f"Assigning partitions {partitions} for {table.name}")
         self._mutate_caches(partitions, "add")
 
     async def on_rebalance(
