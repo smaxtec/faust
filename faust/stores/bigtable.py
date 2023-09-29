@@ -121,9 +121,7 @@ class BigTableStore(base.SerializedStore):
         # and use the MutationBatcher class of bt
         self._mutation_buffer_size = 90_000
         self._mutation_buffer = None
-        self._num_mutations = 0
         self._flush_interval = 600  # 10 minutes
-        self._last_flush_time = None
 
     def _bigtable_setup(self, table, options: Dict[str, Any]):
         self.bt_table_name = self.table_name_generator(table)
@@ -554,21 +552,12 @@ class BigTableStore(base.SerializedStore):
         """
         raise NotImplementedError("Not yet implemented for Bigtable.")
 
-    def _mutate_caches(self, partitions, operation="add"):
-        if operation == "add":
-            for k, v in self._bigtable_iteritems(partitions=partitions):
-                if self._startup_cache is not None:
-                    self._startup_cache[k] = v
-                if self._key_cache is not None:
-                    self._key_cache.add(k)
-        elif operation == "remove":
-            for k, v in self._bigtable_iteritems(partitions=partitions):
-                if self._startup_cache is not None:
-                    self._startup_cache.pop(k, None)
-                if self._key_cache is not None:
-                    self._key_cache.discard(k)
-        else:
-            raise ValueError(f"Invalid operation {operation}")
+    def _fill_caches(self, partitions):
+        for k, v in self._bigtable_iteritems(partitions=partitions):
+            if self._startup_cache is not None:
+                self._startup_cache[k] = v
+            if self._key_cache is not None:
+                self._key_cache.add(k)
 
     def _get_active_changelogtopic_partitions(
         self, table: CollectionT, tps: Set[TP]
@@ -584,14 +573,6 @@ class BigTableStore(base.SerializedStore):
                 partitions.add(tp.partition)
         return partitions
 
-    def revoke_partitions(self, table: CollectionT, tps: Set[TP]) -> None:
-        # Fill cache with all keys for the partitions we are assigned
-        partitions = self._get_active_changelogtopic_partitions(table, tps)
-        if len(partitions) == 0:
-            return
-        self.log.info(f"Revoking partitions {partitions} for {table.name}")
-        self._mutate_caches(partitions, "remove")
-
     async def assign_partitions(
         self, table: CollectionT, tps: Set[TP], generation_id: int = 0
     ) -> None:
@@ -600,7 +581,7 @@ class BigTableStore(base.SerializedStore):
         if len(partitions) == 0:
             return
         self.log.info(f"Assigning partitions {partitions} for {table.name}")
-        self._mutate_caches(partitions, "add")
+        self._fill_caches(partitions)
 
     async def on_rebalance(
         self,
@@ -618,5 +599,4 @@ class BigTableStore(base.SerializedStore):
                 for which we were not assigned the last time.
             generation_id: the metadata generation identifier for the re-balance
         """
-        self.revoke_partitions(self.table, revoked)
         await self.assign_partitions(self.table, newly_assigned, generation_id)
