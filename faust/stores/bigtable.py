@@ -308,7 +308,7 @@ class BigTableStore(base.SerializedStore):
             )
             raise ex
 
-    def _set(self, key: bytes, value: Optional[bytes]) -> None:big
+    def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
             if self._key_cache is not None:
                 self._key_cache.add(key)
