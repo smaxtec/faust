@@ -18,13 +18,13 @@ from typing import (
 try:  # pragma: no cover
     from google.api_core.exceptions import AlreadyExists
     from google.cloud.bigtable import column_family
+    from google.cloud.bigtable.batcher import MutationsBatcher
     from google.cloud.bigtable.client import Client
     from google.cloud.bigtable.instance import Instance
     from google.cloud.bigtable.row import DirectRow
     from google.cloud.bigtable.row_filters import CellsColumnLimitFilter
     from google.cloud.bigtable.row_set import RowSet
     from google.cloud.bigtable.table import Table
-    from google.cloud.bigtable.batcher import MutationsBatcher
 
     # Make one container for all imported functions
     # This is needed for testing and controlling the imports
@@ -84,7 +84,9 @@ class BigTableStore(base.SerializedStore):
     ) -> None:
         self._set_options(options)
         try:
-            self._bigtable_setup(table, options)
+            self._setup_bigtable(table, options)
+            self._setup_caches()
+            self._setup_mutation_batcher()
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
@@ -94,30 +96,7 @@ class BigTableStore(base.SerializedStore):
     def default_translator(user_key):
         return user_key
 
-    def _set_options(self, options) -> None:
-        self._all_options = options
-        self.table_name_generator = options.get(
-            BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
-        )
-        self.row_filter = BT.CellsColumnLimitFilter(1)
-        self.offset_key_prefix = options.get(
-            BigTableStore.BT_OFFSET_KEY_PREFIX, "==>offset_for_partition_"
-        )
-
-        # TODO - make this a configurable option
-        self._startup_cache_enable = True
-        if self._startup_cache_enable:
-            self._startup_cache: Dict[bytes, bytes] = {}
-        else:
-            self._startup_cache = None
-
-        # TODO - make this a configurable option
-        self._key_cache_enable = True
-        if self._key_cache_enable:
-            self._key_cache: Set[bytes] = set()
-        else:
-            self._key_cache = None
-
+    def _setup_mutation_batcher(self):
         # TODO - make this a configurable option
         # and use the MutationBatcher class of bt
         self._mutation_buffer_enable = True
@@ -131,11 +110,42 @@ class BigTableStore(base.SerializedStore):
                 flush_interval=self._flush_interval,
                 batch_completed_callback=lambda x: self._mutation_buffer.clear(),
             )
-
         else:
             self._mutation_buffer = None
 
-    def _bigtable_setup(self, table, options: Dict[str, Any]):
+
+
+    def _setup_caches(self, ):
+
+                # TODO - make this a configurable option
+                self._startup_cache_enable = True
+                if self._startup_cache_enable:
+                    self._startup_cache: Dict[bytes, bytes] = {}
+                else:
+                    self._startup_cache = None
+
+                # TODO - make this a configurable option
+                self._key_cache_enable = True
+                if self._key_cache_enable:
+                    self._key_cache: Set[bytes] = set()
+                else:
+                    self._key_cache = None
+
+
+
+    def _set_options(self, options) -> None:
+        self._all_options = options
+        self.table_name_generator = options.get(
+            BigTableStore.BT_TABLE_NAME_GENERATOR_KEY, lambda t: t.name
+        )
+        self.row_filter = BT.CellsColumnLimitFilter(1)
+        self.offset_key_prefix = options.get(
+            BigTableStore.BT_OFFSET_KEY_PREFIX, "==>offset_for_partition_"
+        )
+
+
+
+    def _setup_bigtable(self, table, options: Dict[str, Any]):
         self.bt_table_name = self.table_name_generator(table)
         self.client: BT.Client = BT.Client(
             options.get(BigTableStore.BT_PROJECT_KEY),
@@ -303,7 +313,7 @@ class BigTableStore(base.SerializedStore):
             )
             raise ex
 
-    def _set(self, key: bytes, value: Optional[bytes]) -> None:
+    def _set(self, key: bytes, value: Optional[bytes]) -> None:big
         try:
             if self._key_cache is not None:
                 self._key_cache.add(key)
@@ -490,8 +500,6 @@ class BigTableStore(base.SerializedStore):
                 of a changelog event.
         """
         tp_offsets: Dict[TP, int] = {}
-        mutation_buffer_size = self._mutation_buffer_size
-        self._mutation_buffer_size = 50_000
         for event in batch:
             tp, offset = event.message.tp, event.message.offset
             tp_offsets[tp] = (
@@ -510,7 +518,6 @@ class BigTableStore(base.SerializedStore):
 
         for tp, offset in tp_offsets.items():
             self.set_persisted_offset(tp, offset)
-        self._mutation_buffer_size = mutation_buffer_size
 
     async def backup_partition(
         self,
