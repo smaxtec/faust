@@ -404,10 +404,7 @@ class BigTableStore(base.SerializedStore):
         try:
             if not self.app.conf.store_check_exists:
                 return True
-            if self._key_cache is not None:
-                return key in self._key_cache
-            else:
-                return self._get(key, invalidate_cache=False) is not None
+            return self._get(key, invalidate_cache=False) is not None
 
         except Exception as ex:
             self.log.error(
