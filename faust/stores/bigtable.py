@@ -113,7 +113,9 @@ class BigTableStore(base.SerializedStore):
         else:
             self._mutation_buffer = None
 
-    def _setup_caches(self, ):
+    def _setup_caches(
+        self,
+    ):
         # TODO - make this a configurable option
         self._startup_cache_enable = True
         if self._startup_cache_enable:
@@ -137,8 +139,6 @@ class BigTableStore(base.SerializedStore):
         self.offset_key_prefix = options.get(
             BigTableStore.BT_OFFSET_KEY_PREFIX, "==>offset_for_partition_"
         )
-
-
 
     def _setup_bigtable(self, table, options: Dict[str, Any]):
         self.bt_table_name = self.table_name_generator(table)
@@ -245,10 +245,7 @@ class BigTableStore(base.SerializedStore):
             return self.bigtable_exrtact_row_data(res)
 
     def _set_mutation(
-        self,
-        key: bytes,
-        row: DirectRow,
-        value: Optional[bytes]
+        self, key: bytes, row: DirectRow, value: Optional[bytes]
     ):
         self._mutation_buffer[key] = value
         self._mutation_batcher.mutate(row)
