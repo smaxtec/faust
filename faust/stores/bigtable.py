@@ -96,19 +96,26 @@ class BigTableStore(base.SerializedStore):
     def default_translator(user_key):
         return user_key
 
+    def _flush_mutation_buffer(self):
+        self.log.info(
+            f"Flushing mutation buffer with size {len(self._mutation_buffer)}"
+            f" for table {self.table_name}"
+        )
+        self._mutation_buffer.clear()
+
     def _setup_mutation_batcher(self):
         # TODO - make this a configurable option
         # and use the MutationBatcher class of bt
         self._mutation_buffer_enable = True
         if self._mutation_buffer_enable:
-            self._mutation_buffer_size = 20_000
+            self._mutation_buffer_size = 10_000
             self._mutation_buffer = {}
             self._flush_interval = 300  # 5 minutes
             self._mutation_batcher = MutationsBatcher(
                 self.bt_table,
                 flush_count=self._mutation_buffer_size,
                 flush_interval=self._flush_interval,
-                batch_completed_callback=lambda x: self._mutation_buffer.clear(),
+                batch_completed_callback=lambda x: self._flush_mutation_buffer()
             )
         else:
             self._mutation_buffer = None
@@ -231,18 +238,13 @@ class BigTableStore(base.SerializedStore):
         self, key: bytes, no_key_translation=False
     ) -> Optional[bytes]:
         keys = [key] if no_key_translation else self._get_possible_bt_keys(key)
-        for bt_key in keys:
-            if (
-                self._mutation_buffer is not None
-                and bt_key in self._mutation_buffer
-            ):
-                return self._mutation_buffer[key]
-
+        if self._mutation_buffer is not None:
+            self._mutation_batcher.flush()
         for bt_key in keys:
             res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
-            if res is None:
-                return None
-            return self.bigtable_exrtact_row_data(res)
+            if res is not None:
+                return self.bigtable_exrtact_row_data(res)
+        return None
 
     def _set_mutation(
         self, key: bytes, row: DirectRow, value: Optional[bytes]
@@ -355,6 +357,9 @@ class BigTableStore(base.SerializedStore):
                         start_key=start_key, end_key=end_key
                     )
 
+            if self._mutation_buffer is not None:
+                self._mutation_batcher.flush()
+
             offset_key_prefix = self.offset_key_prefix.encode()
             for row in self.bt_table.read_rows(
                 row_set=row_set, filter_=self.row_filter
@@ -362,16 +367,6 @@ class BigTableStore(base.SerializedStore):
                 # abort it key is an offset key
                 if need_all_keys and offset_key_prefix in row.row_key:
                     continue
-
-                if self._mutation_buffer is not None:
-                    # Yield the mutation first if it exists
-                    mutation_val = self._mutation_buffer.get(row.row_key, None)
-                    if mutation_val is not None:
-                        key = self._remove_partition_prefix_from_bigtable_key(
-                            row.row_key
-                        )
-                        yield key, mutation_val
-                        continue
 
                 value = self.bigtable_exrtact_row_data(row)
                 key = self._remove_partition_prefix_from_bigtable_key(
