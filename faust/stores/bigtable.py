@@ -128,8 +128,6 @@ class BigTableStore(base.SerializedStore):
         else:
             self._key_cache = None
 
-
-
     def _set_options(self, options) -> None:
         self._all_options = options
         self.table_name_generator = options.get(
