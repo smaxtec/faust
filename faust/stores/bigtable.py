@@ -113,23 +113,20 @@ class BigTableStore(base.SerializedStore):
         else:
             self._mutation_buffer = None
 
-
-
     def _setup_caches(self, ):
+        # TODO - make this a configurable option
+        self._startup_cache_enable = True
+        if self._startup_cache_enable:
+            self._startup_cache: Dict[bytes, bytes] = {}
+        else:
+            self._startup_cache = None
 
-                # TODO - make this a configurable option
-                self._startup_cache_enable = True
-                if self._startup_cache_enable:
-                    self._startup_cache: Dict[bytes, bytes] = {}
-                else:
-                    self._startup_cache = None
-
-                # TODO - make this a configurable option
-                self._key_cache_enable = True
-                if self._key_cache_enable:
-                    self._key_cache: Set[bytes] = set()
-                else:
-                    self._key_cache = None
+        # TODO - make this a configurable option
+        self._key_cache_enable = True
+        if self._key_cache_enable:
+            self._key_cache: Set[bytes] = set()
+        else:
+            self._key_cache = None
 
 
 
