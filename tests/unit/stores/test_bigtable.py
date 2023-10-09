@@ -171,7 +171,7 @@ class TestBigTableStore:
         assert self_mock.table_name_generator == name_lambda
 
     @pytest.mark.asyncio
-    async def test_bigtable_setup(self, bt_imports):
+    async def test_setup_bigtable(self, bt_imports):
         self_mock = MagicMock()
 
         faust_table_mock = MagicMock()
@@ -199,7 +199,7 @@ class TestBigTableStore:
         options[BigTableStore.BT_INSTANCE_KEY] = "bt_instance"
         options[BigTableStore.BT_PROJECT_KEY] = "bt_project"
 
-        return_value = BigTableStore._bigtable_setup(
+        return_value = BigTableStore._setup_bigtable(
             self_mock, faust_table_mock, options
         )
         bt_imports.Client.assert_called_once_with(
@@ -220,7 +220,7 @@ class TestBigTableStore:
             faust_table_mock
         )
         table_mock.exists = MagicMock(return_value=False)
-        return_value = BigTableStore._bigtable_setup(
+        return_value = BigTableStore._setup_bigtable(
             self_mock, faust_table_mock, options
         )
         instance_mock.table.assert_called_once_with(self_mock.bt_table_name)
@@ -235,7 +235,7 @@ class TestBigTableStore:
             options = {}
             options[BigTableStore.BT_INSTANCE_KEY] = "bt_instance"
             options[BigTableStore.BT_PROJECT_KEY] = "bt_project"
-            options[BigTableStore.BT_VALUE_CACHE_ENABLE_KEY] = True
+            options[BigTableStore.BT_STARTUP_CACHE_ENABLE_KEY] = True
             store = BigTableStore(
                 "bigtable://", MagicMock(), MagicMock(), options=options
             )
