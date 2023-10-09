@@ -63,16 +63,19 @@ class BigTableStore(base.SerializedStore):
     client: BT.Client
     instance: BT.Instance
     bt_table: BT.Table
-    _startup_cache: Optional[Dict[bytes, bytes]]
-    _key_cache: Optional[Set[bytes]]
 
     BT_COLUMN_NAME_KEY = "bt_column_name_key"
     BT_INSTANCE_KEY = "bt_instance_key"
     BT_OFFSET_KEY_PREFIX = "bt_offset_key_prefix"
     BT_PROJECT_KEY = "bt_project_key"
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
-    BT_VALUE_CACHE_ENABLE_KEY = "bt_value_cache_enable_key"
-    BT_MAX_MUTATIONS_PER_FLUSH_KEY = "bt_max_mutations_per_flush_key"
+    BT_STARTUP_CACHE_ENABLE_KEY = "bt_startup_cache_enable_key"
+    BT_KEY_CACHE_ENABLE_KEY = "bt_key_cache_enable_key"
+    BT_MUTATION_BATCHER_ENABLE_KEY = "bt_mutation_batcher_enable_key"
+    BT_MUTATION_BATCHER_FLUSH_COUNT_KEY = "bt_mutation_batcher_flush_count_key"
+    BT_MUTATION_BATCHER_FLUSH_INTERVAL_KEY = (
+        "bt_mutation_batcher_flush_interval_key"
+    )
 
     def __init__(
         self,
@@ -101,30 +104,39 @@ class BigTableStore(base.SerializedStore):
             f"Flushed mutation buffer for {self.table_name}"
         )
 
-    def _setup_mutation_batcher(self):
-        # TODO - make this a configurable option
-        # and use the MutationBatcher class of bt
-        self._mutation_batcher_enable = True
+    def _setup_mutation_batcher(self, options):
+        self._mutation_batcher_enable = options.get(
+            BigTableStore.BT_MUTATION_BATCHER_ENABLE_KEY, False
+        )
         if self._mutation_batcher_enable:
+            flush_count = options.get(
+                BigTableStore.BT_MUTATION_BATCHER_FLUSH_COUNT_KEY, 10_000
+            )
+            flush_interval = options.get(
+                BigTableStore.BT_MUTATION_BATCHER_FLUSH_INTERVAL_KEY, 300
+            )
             self._mutation_batcher = MutationsBatcher(
                 self.bt_table,
-                flush_count=10_000,
-                flush_interval=300,
+                flush_count=flush_count,
+                flush_interval=flush_interval,
                 batch_completed_callback=lambda x: self._on_mutation_batcher_flushed(),
             )
 
     def _setup_caches(
         self,
+        options: Dict[str, Any] = None,
     ):
-        # TODO - make this a configurable option
-        self._startup_cache_enable = True
+        self._startup_cache_enable = options.get(
+            BigTableStore.BT_STARTUP_CACHE_ENABLE_KEY, False
+        )
         if self._startup_cache_enable:
             self._startup_cache: Dict[bytes, bytes] = {}
         else:
             self._startup_cache = None
 
-        # TODO - make this a configurable option
-        self._key_cache_enable = True
+        self._key_cache_enable = options.get(
+            BigTableStore.BT_KEY_CACHE_ENABLE_KEY, False
+        )
         if self._key_cache_enable:
             self._key_cache: Set[bytes] = set()
         else:
