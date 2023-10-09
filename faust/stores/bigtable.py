@@ -88,8 +88,8 @@ class BigTableStore(base.SerializedStore):
         self._set_options(options)
         try:
             self._setup_bigtable(table, options)
-            self._setup_caches()
-            self._setup_mutation_batcher()
+            self._setup_caches(options)
+            self._setup_mutation_batcher(options)
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
@@ -99,9 +99,9 @@ class BigTableStore(base.SerializedStore):
     def default_translator(user_key):
         return user_key
 
-    def _on_mutation_batcher_flushed(self):
+    def _on_mutation_batcher_flushed(self, status):
         self.log.info(
-            f"Flushed mutation buffer for {self.table_name}"
+            f"Flushed {len(status)} mutations for {self.table_name}"
         )
 
     def _setup_mutation_batcher(self, options):
@@ -119,7 +119,7 @@ class BigTableStore(base.SerializedStore):
                 self.bt_table,
                 flush_count=flush_count,
                 flush_interval=flush_interval,
-                batch_completed_callback=lambda x: self._on_mutation_batcher_flushed(),
+                batch_completed_callback=lambda x: self._on_mutation_batcher_flushed(x),
             )
 
     def _setup_caches(
