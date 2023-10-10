@@ -103,7 +103,6 @@ class BigTableStore(base.SerializedStore):
         self.log.info(
             f"Flushed {len(status)} mutations for {self.table_name}"
         )
-        self._mutation_cache.clear()
 
     def _setup_mutation_batcher(self, options):
         self._mutation_batcher_enable = options.get(
@@ -122,7 +121,6 @@ class BigTableStore(base.SerializedStore):
                 flush_interval=flush_interval,
                 batch_completed_callback=lambda x: self._on_mutation_batcher_flushed(x),
             )
-            self._mutation_cache: Dict[bytes, Union[bytes, None]] = {}
 
     def _setup_caches(
         self,
@@ -246,10 +244,6 @@ class BigTableStore(base.SerializedStore):
     ) -> Optional[bytes]:
         keys = [key] if no_key_translation else self._get_possible_bt_keys(key)
         if self._mutation_batcher_enable:
-            for bt_key in keys:
-                value = self._get_mutation(bt_key)
-                if value is not None:
-                    return value
             self._mutation_batcher.flush()
         for bt_key in keys:
             res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
@@ -261,10 +255,6 @@ class BigTableStore(base.SerializedStore):
         self, key: bytes, row: DirectRow, value: Optional[bytes]
     ):
         self._mutation_batcher.mutate(row)
-        self._mutation_cache[key] = value
-
-    def _get_mutation(self, key: bytes) -> Optional[bytes]:
-        return self._mutation_cache.get(key, None)
 
     def _bigtable_del(self, key: bytes, no_key_translation=False):
         if no_key_translation:
