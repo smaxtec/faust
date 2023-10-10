@@ -415,6 +415,10 @@ class BigTableStore(base.SerializedStore):
         try:
             if not self.app.conf.store_check_exists:
                 return True
+            if self._key_cache is not None and key in self._key_cache:
+                return True
+            if self._startup_cache is not None and key in self._startup_cache:
+                return True
             # We don't want to invalidate the cache here
             # because it is very likely that we will need the value soon
             return self._get(key, invalidate_cache=False) is not None
