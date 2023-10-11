@@ -1,6 +1,7 @@
 """BigTable storage."""
 import logging
 import time
+import threading
 import traceback
 from typing import (
     Any,
@@ -131,6 +132,10 @@ class BigTableStore(base.SerializedStore):
         )
         if self._startup_cache_enable:
             self._startup_cache: Dict[bytes, bytes] = {}
+            # Invalidate startup cache after 30 minutes
+            self._invalidation_timer = threading.Timer(
+                30*60, self._invalidate_startup_cache
+            )
         else:
             self._startup_cache = None
 
@@ -296,14 +301,39 @@ class BigTableStore(base.SerializedStore):
         else:
             row.commit()
 
-    def _get(self, key: bytes, invalidate_cache=True) -> Optional[bytes]:
+    def _del_cache(self, key: bytes):
+        if self._startup_cache is not None:
+            self._startup_cache.pop(key, None)
+        if self._key_cache is not None:
+            self._key_cache.discard(key)
+
+    def _set_cache(self, key: bytes, value):
+        if self._startup_cache is not None:
+            self._startup_cache[key] = value
+        if self._key_cache is not None:
+            self._key_cache.add(key)
+
+    def _get_cache(self, key: bytes):
+        if self._startup_cache is not None:
+            if key in self._startup_cache:
+                return self._startup_cache[key], True
+        if self._key_cache is not None:
+            if key not in self._key_cache:
+                return None, True
+        return None, False
+
+    def _invalidate_startup_cache(self):
+        if self._startup_cache is not None:
+            self._startup_cache.clear()
+            self._startup_cache = None
+            gc.collect()
+        self._invalidation_timer.cancel()
+
+    def _get(self, key: bytes) -> Optional[bytes]:
         try:
-            if self._startup_cache is not None:
-                if key in self._startup_cache:
-                    if invalidate_cache:
-                        return self._startup_cache.pop(key)
-                    else:
-                        return self._startup_cache[key]
+            value, found = self._get_cache(key)
+            if found:
+                return value
             return self._bigtable_get(key)
         except Exception as ex:
             self.log.error(
@@ -313,11 +343,7 @@ class BigTableStore(base.SerializedStore):
 
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
-            if self._startup_cache is not None:
-                # We want to invalidate the cache here
-                self._startup_cache.pop(key, None)
-            if self._key_cache is not None:
-                self._key_cache.add(key)
+            self._set_cache(key, value)
             self._bigtable_set(key, value)
         except Exception as ex:
             self.log.error(
@@ -329,10 +355,7 @@ class BigTableStore(base.SerializedStore):
 
     def _del(self, key: bytes) -> None:
         try:
-            if self._startup_cache is not None:
-                self._startup_cache.pop(key, None)
-            if self._key_cache is not None:
-                self._key_cache.discard(key)
+            self._del_cache(key)
             self._bigtable_del(key)
         except Exception as ex:
             self.log.error(
@@ -418,10 +441,7 @@ class BigTableStore(base.SerializedStore):
         try:
             if not self.app.conf.store_check_exists:
                 return True
-            # We don't want to invalidate the cache here
-            # because it is very likely that we will need the value soon
-            return self._get(key, invalidate_cache=False) is not None
-
+            return self._get(key) is not None
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _contains for table "
@@ -508,16 +528,10 @@ class BigTableStore(base.SerializedStore):
 
             if msg.value is None:
                 self._bigtable_del(key, no_key_translation=True)
-                if self._startup_cache is not None:
-                    self._startup_cache.pop(msg.key, None)
-                if self._key_cache is not None:
-                    self._key_cache.discard(msg.key)
+                self._del_cache(key)
             else:
                 self._bigtable_set(key, msg.value, no_key_translation=True)
-                if self._startup_cache is not None:
-                    self._startup_cache[msg.key] = msg.value
-                if self._key_cache is not None:
-                    self._key_cache.add(msg.key)
+                self._set_cache(key, msg.value)
 
         for tp, offset in tp_offsets.items():
             self.set_persisted_offset(tp, offset)
@@ -548,10 +562,9 @@ class BigTableStore(base.SerializedStore):
 
     def _fill_caches(self, partitions):
         for k, v in self._bigtable_iteritems(partitions=partitions):
-            if self._startup_cache is not None:
-                self._startup_cache[k] = v
-            if self._key_cache is not None:
-                self._key_cache.add(k)
+            self._set_cache(k, v)
+        if self._statup_cache is not None:
+            self._invalidation_timer.start()
 
     def _get_active_changelogtopic_partitions(
         self, table: CollectionT, tps: Set[TP]
