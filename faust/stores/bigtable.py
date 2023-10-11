@@ -248,8 +248,10 @@ class BigTableStore(base.SerializedStore):
         self, key: bytes, no_key_translation=False
     ) -> Optional[bytes]:
         keys = [key] if no_key_translation else self._get_possible_bt_keys(key)
+
         if self._mutation_batcher_enable:
             self._mutation_batcher.flush()
+
         for bt_key in keys:
             res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
             if res is not None:
@@ -303,7 +305,7 @@ class BigTableStore(base.SerializedStore):
 
     def _del_cache(self, key: bytes):
         if self._startup_cache is not None:
-            self._startup_cache.pop(key, None)
+            self._startup_cache[key] = None
         if self._key_cache is not None:
             self._key_cache.discard(key)
 
