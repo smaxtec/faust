@@ -313,6 +313,9 @@ class BigTableStore(base.SerializedStore):
 
     def _set(self, key: bytes, value: Optional[bytes]) -> None:
         try:
+            if self._startup_cache is not None:
+                # We want to invalidate the cache here
+                self._startup_cache.pop(key, None)
             if self._key_cache is not None:
                 self._key_cache.add(key)
             self._bigtable_set(key, value)
