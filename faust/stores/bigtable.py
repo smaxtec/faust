@@ -530,18 +530,12 @@ class BigTableStore(base.SerializedStore):
                 offset if tp not in tp_offsets else max(offset, tp_offsets[tp])
             )
             msg = event.message
-
-            if not (self.table.is_global or self.table.use_partitioner):
-                key = self._add_partition_prefix_to_key(msg.key, tp.partition)
-            else:
-                key = msg.key
+            key = msg.key
 
             if msg.value is None:
-                self._bigtable_del(key, no_key_translation=True)
-                self._del_cache(key)
+                self._del(key)
             else:
-                self._bigtable_set(key, msg.value, no_key_translation=True)
-                self._set_cache(key, msg.value)
+                self._set(key, msg.value)
 
         for tp, offset in tp_offsets.items():
             self.set_persisted_offset(tp, offset)
