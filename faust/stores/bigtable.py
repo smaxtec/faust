@@ -209,20 +209,17 @@ class BigTableStore(base.SerializedStore):
         partition_bytes, _ = key.rsplit(separator, 1)
         return int(partition_bytes)
 
-    def _active_partitions(self) -> Iterator[int]:
+    def _active_partitions(self) -> List[int]:
         actives = self.app.assignor.assigned_actives()
         topic = self.table.changelog_topic_name
+        partitions = []
         for partition in range(self.app.conf.topic_partitions):
             tp = TP(topic=topic, partition=partition)
             # for global tables, keys from all
             # partitions are available.
             if tp in actives or self.table.is_global:
-                yield partition
-
-    def _get_all_possible_partitions(self) -> Iterable[Optional[int]]:
-        if self.table.is_global or self.table.use_partitioner:
-            return [None]
-        return list(self._active_partitions())
+                partitions.append(partition)
+        return partitions
 
     def _get_current_partitions(self) -> Iterable[Optional[int]]:
         event = current_event()
@@ -232,10 +229,8 @@ class BigTableStore(base.SerializedStore):
             and not self.table.use_partitioner
         ):
             partition = event.message.partition
-
             return [partition]
-        partitions = list(self._active_partitions())
-        return partitions
+        return self._active_partitions()
 
     def _get_possible_bt_keys(self, key: bytes) -> Iterable[bytes]:
         partitions = self._get_current_partitions()
@@ -271,7 +266,7 @@ class BigTableStore(base.SerializedStore):
         if no_key_translation:
             keys = [key]
         else:
-            partitions = self._get_all_possible_partitions()
+            partitions = self._active_partitions()
             keys = [
                 self._add_partition_prefix_to_key(key, p) for p in partitions
             ]
@@ -384,7 +379,7 @@ class BigTableStore(base.SerializedStore):
         try:
             start = time.time()
             if partitions is None:
-                partitions = list(self._active_partitions())
+                partitions = self._active_partitions()
             row_set = RowSet()
             self.log.info(
                 f"BigtableStore: Iterating over {len(partitions)} partitions "
