@@ -242,8 +242,10 @@ class BigTableStore(base.SerializedStore):
 
     def _get_possible_bt_keys(self, key: bytes) -> Iterable[bytes]:
         partitions = self._get_current_partitions()
+        bt_keys = []
         for partition in partitions:
-            yield self._add_partition_prefix_to_key(key, partition)
+            bt_keys.append(self._add_partition_prefix_to_key(key, partition))
+        return bt_keys
 
     @staticmethod
     def bigtable_exrtact_row_data(row_data):
