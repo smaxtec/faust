@@ -231,6 +231,10 @@ class BigTableStore(base.SerializedStore):
         if event is not None:
             partition = event.message.partition
             return [partition]
+        self.log.info(
+            f"BigtableStore: _get_current_partitions: "
+            f"current_event is None for {self.table_name}"
+        )
         return list(self._active_partitions())
 
     def _get_possible_bt_keys(self, key: bytes) -> Iterable[bytes]:
