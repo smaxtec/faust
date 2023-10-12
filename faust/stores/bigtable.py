@@ -225,19 +225,16 @@ class BigTableStore(base.SerializedStore):
         return list(self._active_partitions())
 
     def _get_current_partitions(self) -> Iterable[Optional[int]]:
-        if self.table.is_global or self.table.use_partitioner:
-            return [None]
         event = current_event()
-        if event is not None:
+        if (
+            event is not None
+            and not self.table.is_global
+            and not self.table.use_partitioner
+        ):
             partition = event.message.partition
 
             return [partition]
         partitions = list(self._active_partitions())
-        self.log.info(
-            f"BigtableStore: _get_current_partitions: "
-            f"current_event is None for {self.table_name} "
-            f"with {partitions=}"
-        )
         return partitions
 
     def _get_possible_bt_keys(self, key: bytes) -> Iterable[bytes]:
