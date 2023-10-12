@@ -282,12 +282,13 @@ class BigTableStore(base.SerializedStore):
     def _bigtable_set(
         self, key: bytes, value: bytes, no_key_translation=False
     ):
-        event = current_event()
-        assert event is not None
-        partition = event.message.partition
-        key = self._add_partition_prefix_to_key(key, partition)
-        row = self.bt_table.direct_row(key)
+        if not no_key_translation:
+            event = current_event()
+            assert event is not None
+            partition = event.message.partition
+            key = self._add_partition_prefix_to_key(key, partition)
 
+        row = self.bt_table.direct_row(key)
         row.set_cell(
             COLUMN_FAMILY_ID,
             COLUMN_NAME,
