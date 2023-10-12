@@ -265,6 +265,7 @@ class BigTableStore(base.SerializedStore):
             f"BigtableStore: _bigtable_get: "
             f"no row found for {self.table_name} "
             f"for key {key} with {keys=}"
+        )
         return None
 
     def _bigtable_del(self, key: bytes, no_key_translation=False):
