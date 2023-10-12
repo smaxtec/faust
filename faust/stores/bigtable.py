@@ -531,11 +531,11 @@ class BigTableStore(base.SerializedStore):
             key = self._add_partition_prefix_to_key(msg.key, msg.partition)
 
             if msg.value is None:
-                self._bigtable_del(key, no_key_translation=True)
                 self._del_cache(msg.key)
+                self._bigtable_del(key, no_key_translation=True)
             else:
-                self._bigtable_set(key, msg.value, no_key_translation=True)
                 self._set_cache(msg.key, msg.value)
+                self._bigtable_set(key, msg.value, no_key_translation=True)
 
         for tp, offset in tp_offsets.items():
             self.set_persisted_offset(tp, offset)
