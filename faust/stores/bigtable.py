@@ -230,12 +230,15 @@ class BigTableStore(base.SerializedStore):
         event = current_event()
         if event is not None:
             partition = event.message.partition
+
             return [partition]
+        partitions = list(self._active_partitions())
         self.log.info(
             f"BigtableStore: _get_current_partitions: "
-            f"current_event is None for {self.table_name}"
+            f"current_event is None for {self.table_name} "
+            f"with {partitions=}"
         )
-        return list(self._active_partitions())
+        return partitions
 
     def _get_possible_bt_keys(self, key: bytes) -> Iterable[bytes]:
         partitions = self._get_current_partitions()
@@ -258,6 +261,10 @@ class BigTableStore(base.SerializedStore):
             res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
             if res is not None:
                 return self.bigtable_exrtact_row_data(res)
+        self.log.info(
+            f"BigtableStore: _bigtable_get: "
+            f"no row found for {self.table_name} "
+            f"for key {key} with {keys=}"
         return None
 
     def _bigtable_del(self, key: bytes, no_key_translation=False):
