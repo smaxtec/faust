@@ -255,11 +255,6 @@ class BigTableStore(base.SerializedStore):
             res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
             if res is not None:
                 return self.bigtable_exrtact_row_data(res)
-        self.log.info(
-            f"BigtableStore: _bigtable_get: "
-            f"no row found for {self.table_name} "
-            f"for key {key} with {keys=}"
-        )
         return None
 
     def _bigtable_del(self, key: bytes, no_key_translation=False):
