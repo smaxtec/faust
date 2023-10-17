@@ -282,7 +282,7 @@ class BigTableStore(base.SerializedStore):
     def _set_mutation(self, mutated_row: DirectRow):
         self._mutation_batcher.mutate(mutated_row)
 
-    def _bigtable_get(self, keys: List[bytes], is_offset_key=False) -> Tuple[Optional[bytes], Optional[int]]:
+    def _bigtable_get(self, keys: List[bytes]) -> Tuple[Optional[bytes], Optional[int]]:
         rowset = RowSet()
         for key in keys:
             value, found = self._get_cache(key)
@@ -299,6 +299,10 @@ class BigTableStore(base.SerializedStore):
             if row is not None:
                 partition = self._get_partition_from_bigtable_key(row.row_key)
                 return self.bigtable_exrtact_row_data(row), partition
+        self.log.info(
+            "BigTableStore: No data found for keys "
+            f"{keys} in table {self.table_name}"
+        )
         return None, None
 
     def _get(self, key: bytes) -> Optional[bytes]:
