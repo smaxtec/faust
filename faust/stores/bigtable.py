@@ -282,12 +282,15 @@ class BigTableStore(base.SerializedStore):
     def _set_mutation(self, mutated_row: DirectRow):
         self._mutation_batcher.mutate(mutated_row)
 
-    def _bigtable_get(self, keys: List[bytes]) -> Tuple[Optional[bytes], Optional[int]]:
+    def _bigtable_get(self, keys: List[bytes], is_offset_key=False) -> Tuple[Optional[bytes], Optional[int]]:
         rowset = RowSet()
         for key in keys:
             value, found = self._get_cache(key)
             if found:
-                partition = self._get_partition_from_bigtable_key(key)
+                if is_offset_key:
+                    partition = None
+                else:
+                    partition = self._get_partition_from_bigtable_key(key)
                 return value, partition
             rowset.add_row_key(key)
 
@@ -297,7 +300,10 @@ class BigTableStore(base.SerializedStore):
         rows = self.bt_table.read_rows(row_set=rowset, filter_=self.row_filter)
         for row in rows:
             if row is not None:
-                partition = self._get_partition_from_bigtable_key(row.row_key)
+                if is_offset_key:
+                    partition = None
+                else:
+                    partition = self._get_partition_from_bigtable_key(row.row_key)
                 return self.bigtable_exrtact_row_data(row), partition
         return None, None
 
@@ -473,7 +479,7 @@ class BigTableStore(base.SerializedStore):
         See :meth:`set_persisted_offset`.
         """
         offset_key = self.get_offset_key(tp).encode()
-        offset, _ = self._bigtable_get([offset_key])
+        offset, _ = self._bigtable_get([offset_key], is_offset_key=True)
         return int(offset) if offset is not None else None
 
     def set_persisted_offset(self, tp: TP, offset: int) -> None:
