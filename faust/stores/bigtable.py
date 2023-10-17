@@ -206,8 +206,8 @@ class BigTableStore(base.SerializedStore):
 
     def _get_partition_from_bigtable_key(self, key: bytes) -> int:
         separator = b"_..._"
-        partition_bytes, _ = key.rsplit(separator, 1)
-        return int(partition_bytes)
+        partition_str, _ = key.rsplit(separator, 1)
+        return int(partition_str)
 
     def _active_partitions(self) -> List[int]:
         actives = self.app.assignor.assigned_actives()
@@ -215,13 +215,12 @@ class BigTableStore(base.SerializedStore):
         partitions = []
         for partition in range(self.app.conf.topic_partitions):
             tp = TP(topic=topic, partition=partition)
-            # for global tables, keys from all
-            # partitions are available.
             if tp in actives or self.table.is_global:
                 partitions.append(partition)
         return partitions
 
-    def _get_current_partitions(self) -> Iterable[Optional[int]]:
+
+    def _get_current_partitions(self) -> List[int]:
         event = current_event()
         if (
             event is not None
@@ -232,7 +231,8 @@ class BigTableStore(base.SerializedStore):
             return [partition]
         return self._active_partitions()
 
-    def _get_possible_bt_keys(self, key: bytes) -> Iterable[bytes]:
+    def _get_bigtable_keys(self, key: bytes) -> List[bytes]:
+        # TODO - Add key index here if needed
         partitions = self._get_current_partitions()
         bt_keys = []
         for partition in partitions:
@@ -242,58 +242,6 @@ class BigTableStore(base.SerializedStore):
     @staticmethod
     def bigtable_exrtact_row_data(row_data):
         return list(row_data.to_dict().values())[0][0].value
-
-    def _bigtable_get(
-        self, key: bytes, no_key_translation=False
-    ) -> Optional[bytes]:
-        keys = [key] if no_key_translation else self._get_possible_bt_keys(key)
-
-        if self._mutation_batcher_enable:
-            self._mutation_batcher.flush()
-
-        for bt_key in keys:
-            res = self.bt_table.read_row(bt_key, filter_=self.row_filter)
-            if res is not None:
-                return self.bigtable_exrtact_row_data(res)
-        return None
-
-    def _bigtable_del(self, key: bytes, no_key_translation=False):
-        if no_key_translation:
-            keys = [key]
-        else:
-            partitions = self._active_partitions()
-            keys = [
-                self._add_partition_prefix_to_key(key, p) for p in partitions
-            ]
-
-        for key in keys:
-            row = self.bt_table.direct_row(key)
-            row.delete()
-            if self._mutation_batcher_enable:
-                self._set_mutation(row)
-            else:
-                row.commit()
-
-    def _bigtable_set(
-        self, key: bytes, value: bytes, no_key_translation=False
-    ):
-        if not no_key_translation:
-            event = current_event()
-            assert event is not None
-            partition = event.message.partition
-            key = self._add_partition_prefix_to_key(key, partition)
-
-        row = self.bt_table.direct_row(key)
-        row.set_cell(
-            COLUMN_FAMILY_ID,
-            COLUMN_NAME,
-            value,
-        )
-
-        if self._mutation_batcher_enable:
-            self._set_mutation(row)
-        else:
-            row.commit()
 
     def _del_cache(self, key: bytes):
         if self._startup_cache is not None:
@@ -332,21 +280,53 @@ class BigTableStore(base.SerializedStore):
     def _set_mutation(self, mutated_row: DirectRow):
         self._mutation_batcher.mutate(mutated_row)
 
+    def _bigtable_get(self, keys: List[bytes]) -> Optional[bytes]:
+        rowset = RowSet()
+        for key in keys:
+            value, found = self._get_cache(key)
+            if found:
+                return value
+            rowset.add_row_key(key)
+
+        if self._mutation_batcher_enable:
+            self._mutation_batcher.flush()
+
+        rows = self.bt_table.read_rows(row_set=rowset, filter_=self.row_filter)
+        for row in rows:
+            if row is not None:
+                return self.bigtable_exrtact_row_data(row)
+        return None
+
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
-            # value, found = self._get_cache(key)
-            # if found:
-            # return value
-            return self._bigtable_get(key)
+            keys = self._get_bigtable_keys(key)
+            return self._bigtable_get(keys)
         except Exception as ex:
             self.log.error(
                 f"Error in get for table {self.table_name} exception {ex} key {key}"
             )
             raise ex
 
+    def _bigtable_set(self, key: bytes, value: bytes):
+        self._set_cache(key, value)
+        row = self.bt_table.direct_row(key)
+        row.set_cell(
+            COLUMN_FAMILY_ID,
+            COLUMN_NAME,
+            value,
+        )
+
+        if self._mutation_batcher_enable:
+            self._set_mutation(row)
+        else:
+            row.commit()
+
     def _set(self, key: bytes, value: bytes) -> None:
         try:
-            self._set_cache(key, value)
+            event = current_event()
+            assert event is not None
+            partition = event.message.partition
+            key = self._add_partition_prefix_to_key(key, partition)
             self._bigtable_set(key, value)
         except Exception as ex:
             self.log.error(
@@ -356,10 +336,21 @@ class BigTableStore(base.SerializedStore):
             )
             raise ex
 
+    def _bigtable_del(self, key: bytes):
+
+        row = self.bt_table.direct_row(key)
+        row.delete()
+        self._del_cache(key)
+        if self._mutation_batcher_enable:
+            self._set_mutation(row)
+        else:
+            row.commit()
+
     def _del(self, key: bytes) -> None:
         try:
-            self._del_cache(key)
-            self._bigtable_del(key)
+            keys = self._get_bigtable_keys(key)
+            for key in keys:
+                self._bigtable_del(key)
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in del for "
@@ -383,12 +374,7 @@ class BigTableStore(base.SerializedStore):
             if not need_all_keys:
                 for partition in partitions:
                     prefix = self._add_partition_prefix_to_key(b"", partition)
-                    start_key = prefix + b"\x00"
-                    end_key = prefix + b"\xff"
-
-                    row_set.add_row_range_from_keys(
-                        start_key=start_key, end_key=end_key
-                    )
+                    row_set.add_row_range_with_prefix(prefix)
 
             if self._mutation_batcher_enable:
                 self._mutation_batcher.flush()
@@ -478,7 +464,7 @@ class BigTableStore(base.SerializedStore):
         See :meth:`set_persisted_offset`.
         """
         offset_key = self.get_offset_key(tp).encode()
-        offset = self._bigtable_get(offset_key, no_key_translation=True)
+        offset = self._bigtable_get([offset_key])
         return int(offset) if offset is not None else None
 
     def set_persisted_offset(self, tp: TP, offset: int) -> None:
@@ -491,9 +477,7 @@ class BigTableStore(base.SerializedStore):
         """
         try:
             offset_key = self.get_offset_key(tp).encode()
-            self._bigtable_set(
-                offset_key, str(offset).encode(), no_key_translation=True
-            )
+            self._bigtable_set(offset_key, str(offset).encode())
         except Exception:
             self.log.error(
                 f"Failed to commit offset for {self.table.name}"
@@ -526,11 +510,9 @@ class BigTableStore(base.SerializedStore):
             key = self._add_partition_prefix_to_key(msg.key, msg.partition)
 
             if msg.value is None:
-                self._del_cache(msg.key)
-                self._bigtable_del(key, no_key_translation=True)
+                self._bigtable_del(key)
             else:
-                self._set_cache(msg.key, msg.value)
-                self._bigtable_set(key, msg.value, no_key_translation=True)
+                self._bigtable_set(key, msg.value)
 
         for tp, offset in tp_offsets.items():
             self.set_persisted_offset(tp, offset)
