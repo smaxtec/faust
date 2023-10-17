@@ -287,10 +287,7 @@ class BigTableStore(base.SerializedStore):
         for key in keys:
             value, found = self._get_cache(key)
             if found:
-                if is_offset_key:
-                    partition = None
-                else:
-                    partition = self._get_partition_from_bigtable_key(key)
+                partition = self._get_partition_from_bigtable_key(key)
                 return value, partition
             rowset.add_row_key(key)
 
@@ -300,10 +297,7 @@ class BigTableStore(base.SerializedStore):
         rows = self.bt_table.read_rows(row_set=rowset, filter_=self.row_filter)
         for row in rows:
             if row is not None:
-                if is_offset_key:
-                    partition = None
-                else:
-                    partition = self._get_partition_from_bigtable_key(row.row_key)
+                partition = self._get_partition_from_bigtable_key(row.row_key)
                 return self.bigtable_exrtact_row_data(row), partition
         return None, None
 
@@ -479,7 +473,10 @@ class BigTableStore(base.SerializedStore):
         See :meth:`set_persisted_offset`.
         """
         offset_key = self.get_offset_key(tp).encode()
-        offset, _ = self._bigtable_get([offset_key], is_offset_key=True)
+        if self._mutation_batcher_enable:
+            self._mutation_batcher.flush()
+        row = self.bt_table.read_row(offset_key, filter_=self.row_filter)
+        offset = self.bigtable_exrtact_row_data(row) if row is not None else None
         return int(offset) if offset is not None else None
 
     def set_persisted_offset(self, tp: TP, offset: int) -> None:
