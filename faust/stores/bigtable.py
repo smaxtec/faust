@@ -293,10 +293,6 @@ class BigTableStore(base.SerializedStore):
             if row is not None:
                 partition = self._get_partition_from_bigtable_key(row.row_key)
                 return self.bigtable_exrtact_row_data(row), partition
-        self.log.info(
-            "BigTableStore: No data found for keys "
-            f"{keys} in table {self.table_name}"
-        )
         return None, None
 
     def _get(self, key: bytes) -> Optional[bytes]:
@@ -306,6 +302,11 @@ class BigTableStore(base.SerializedStore):
             value, partition = self._bigtable_get(keys)
             if value is not None:
                 self._key_index[key] = partition
+            else:
+                self.log.info(
+                    "BigTableStore: No data found for keys "
+                    f"{keys} in table {self.table_name}"
+                )
             return value
         except Exception as ex:
             self.log.error(
@@ -437,7 +438,13 @@ class BigTableStore(base.SerializedStore):
         try:
             if not self.app.conf.store_check_exists:
                 return True
-            return self._get(key) is not None
+            partitions = self._get_partitions_for_key(key)
+            keys = [self._add_partition_prefix_to_key(key, p) for p in partitions]
+            value, partition = self._bigtable_get(keys)
+            found = value is not None
+            if found:
+                self._key_index[key] = partition
+            return found
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _contains for table "
