@@ -50,12 +50,6 @@ from faust.streams import current_event
 from faust.types import TP, AppT, CollectionT, EventT
 
 
-def get_current_partition():
-    event = current_event()
-    assert event is not None
-    return event.message.partition
-
-
 COLUMN_FAMILY_ID = "FaustColumnFamily"
 COLUMN_NAME = "DATA"
 
