@@ -438,13 +438,7 @@ class BigTableStore(base.SerializedStore):
         try:
             if not self.app.conf.store_check_exists:
                 return True
-            partitions = self._get_partitions_for_key(key)
-            keys = [self._add_partition_prefix_to_key(key, p) for p in partitions]
-            value, partition = self._bigtable_get(keys)
-            found = value is not None
-            if found:
-                self._key_index[key] = partition
-            return found
+            return self._get(key) is not None
         except Exception as ex:
             self.log.error(
                 f"FaustBigtableException Error in _contains for table "
