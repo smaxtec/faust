@@ -327,6 +327,7 @@ class BigTableStore(base.SerializedStore):
                         f"key {key} "
                         f"event.partition {event.message.partition} "
                         f"event.message.tp.partition {event.message.tp.partition} "
+                        f"event.message.tp.topic {event.message.tp.topic} "
                         f"event.message.topic {event.message.topic} "
                         f"event.key {event.key} "
                         f"bt_keys {keys} "
