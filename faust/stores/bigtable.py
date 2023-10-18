@@ -223,6 +223,7 @@ class BigTableStore(base.SerializedStore):
         event = current_event()
         if (
             event is not None
+            and event.message.topic is not None
             and not self.table.is_global
             and not self.table.use_partitioner
         ):
