@@ -292,43 +292,11 @@ class BigTableStore(base.SerializedStore):
 
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
-            event = current_event()
-            if key in self._key_index:
-                partitions =  [self._key_index[key]]
-            else:
-                if (
-                    event is not None
-                    and event.message.topic is not None
-                    and not self.table.is_global
-                    and not self.table.use_partitioner
-                ):
-                    partition = event.message.partition
-                    partitions = [partition]
-                else:
-                    actives = self.app.assignor.assigned_actives()
-                    topic = self.table.changelog_topic_name
-                    partitions = []
-                    for partition in range(self.app.conf.topic_partitions):
-                        tp = TP(topic=topic, partition=partition)
-                        if tp in actives or self.table.is_global:
-                            partitions.append(partition)
+            partitions = self._get_partitions_for_key(key)
             keys = [self._add_partition_prefix_to_key(key, p) for p in partitions]
             value, partition = self._bigtable_get(keys)
             if value is not None:
                 self._key_index[key] = partition
-            else:
-                if event is not None:
-                    self.log.info(
-                        "BigTableStore: No data found for "
-                        f"key {key} "
-                        f"event.partition {event.message.partition} "
-                        f"event.message.tp.partition {event.message.tp.partition} "
-                        f"event.message.tp.topic {event.message.tp.topic} "
-                        f"event.message.topic {event.message.topic} "
-                        f"event.key {event.key} "
-                        f"bt_keys {keys} "
-                        f"in table {self.table_name} "
-                    )
             return value
         except Exception as ex:
             self.log.error(
