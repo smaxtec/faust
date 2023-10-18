@@ -360,7 +360,6 @@ class BigTableStore(base.SerializedStore):
         try:
             event = current_event()
             assert event is not None
-            assert event.message.topic is not None
             partition = event.message.partition
             key = self._add_partition_prefix_to_key(key, partition)
             self._bigtable_set(key, value)
