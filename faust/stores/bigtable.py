@@ -114,9 +114,6 @@ class BigTableStore(base.SerializedStore):
                 self.bt_table,
                 flush_count=flush_count,
                 flush_interval=flush_interval,
-                batch_completed_callback=lambda x: self._on_mutation_batcher_flushed(
-                    x
-                ),
             )
 
     def _setup_caches(
@@ -270,9 +267,6 @@ class BigTableStore(base.SerializedStore):
                 f"Invalidated startup cache for table {self.table_name}"
             )
         self._invalidation_timer.cancel()
-
-    def _on_mutation_batcher_flushed(self, status):
-        self.log.info(f"Flushed {len(status)} mutations for {self.table_name}")
 
     def _set_mutation(self, mutated_row: DirectRow):
         self._mutation_batcher.mutate(mutated_row)
