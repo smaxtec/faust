@@ -326,7 +326,9 @@ class BigTableStore(base.SerializedStore):
                         "BigTableStore: No data found for "
                         f"key {key} "
                         f"event.partition {event.message.partition} "
-                        f"event.key {event.key}"
+                        f"event.message.tp.partition {event.message.tp.partition} "}
+                        f"event.message.topic {event.message.topic} "}
+                        f"event.key {event.key} "
                         f"bt_keys {keys} "
                         f"in table {self.table_name} "
                     )
