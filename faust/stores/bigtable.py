@@ -125,20 +125,9 @@ class BigTableStore(base.SerializedStore):
         )
         if self._startup_cache_enable:
             self._startup_cache: Dict[bytes, bytes] = {}
-            # Invalidate startup cache after 30 minutes
-            self._invalidation_timer = threading.Timer(
-                30 * 60, self._invalidate_startup_cache
-            )
+            self._invalidation_timer: Optional[threading.Timer] = None
         else:
             self._startup_cache = None
-
-        self._key_cache_enable = options.get(
-            BigTableStore.BT_KEY_CACHE_ENABLE_KEY, False
-        )
-        if self._key_cache_enable:
-            self._key_cache: Set[bytes] = set()
-        else:
-            self._key_cache = None
 
 
     def _set_options(self, options) -> None:
@@ -240,22 +229,15 @@ class BigTableStore(base.SerializedStore):
     def _del_cache(self, key: bytes):
         if self._startup_cache is not None:
             self._startup_cache[key] = None
-        if self._key_cache is not None:
-            self._key_cache.discard(key)
 
     def _set_cache(self, key: bytes, value):
         if self._startup_cache is not None:
             self._startup_cache[key] = value
-        if self._key_cache is not None:
-            self._key_cache.add(key)
 
     def _get_cache(self, key: bytes):
         if self._startup_cache is not None:
             if key in self._startup_cache:
                 return self._startup_cache[key], True
-        if self._key_cache is not None:
-            if key not in self._key_cache:
-                return None, True
         return None, False
 
     def _invalidate_startup_cache(self):
@@ -266,7 +248,9 @@ class BigTableStore(base.SerializedStore):
             self.log.info(
                 f"Invalidated startup cache for table {self.table_name}"
             )
-        self._invalidation_timer.cancel()
+        self._invalidation_timer.start()
+        del self._invalidation_timer
+        self._invalidation_timer = None
 
     def _set_mutation(self, mutated_row: DirectRow):
         self._mutation_batcher.mutate(mutated_row)
@@ -274,12 +258,7 @@ class BigTableStore(base.SerializedStore):
     def _bigtable_get(self, keys: List[bytes]) -> Tuple[Optional[bytes], Optional[int]]:
         rowset = RowSet()
         for key in keys:
-            value, found = self._get_cache(key)
-            if found:
-                partition = self._get_partition_from_bigtable_key(key)
-                return value, partition
             rowset.add_row_key(key)
-
         if self._mutation_batcher_enable:
             self._mutation_batcher.flush()
 
@@ -292,7 +271,12 @@ class BigTableStore(base.SerializedStore):
 
     def _get(self, key: bytes) -> Optional[bytes]:
         try:
+            value, found = self._get_cache(key)
+            if found:
+                return value
+
             partitions = self._get_partitions_for_key(key)
+
             keys = [self._add_partition_prefix_to_key(key, p) for p in partitions]
             value, partition = self._bigtable_get(keys)
             if value is not None:
@@ -305,7 +289,6 @@ class BigTableStore(base.SerializedStore):
             raise ex
 
     def _bigtable_set(self, key: bytes, value: bytes):
-        self._set_cache(key, value)
         row = self.bt_table.direct_row(key)
         row.set_cell(
             COLUMN_FAMILY_ID,
@@ -320,10 +303,13 @@ class BigTableStore(base.SerializedStore):
 
     def _set(self, key: bytes, value: bytes) -> None:
         try:
+            self._set_cache(key, value)
+
             event = current_event()
             assert event is not None
             partition = event.message.partition
             key = self._add_partition_prefix_to_key(key, partition)
+
             self._bigtable_set(key, value)
             self._key_index[key] = partition
         except Exception as ex:
@@ -337,7 +323,6 @@ class BigTableStore(base.SerializedStore):
     def _bigtable_del(self, key: bytes):
         row = self.bt_table.direct_row(key)
         row.delete()
-        self._del_cache(key)
         if self._mutation_batcher_enable:
             self._set_mutation(row)
         else:
@@ -345,6 +330,7 @@ class BigTableStore(base.SerializedStore):
 
     def _del(self, key: bytes) -> None:
         try:
+            self._del_cache(key)
             partitions = self._get_partitions_for_key(key)
             for partition in partitions:
                 key = self._add_partition_prefix_to_key(key, partition)
@@ -409,12 +395,8 @@ class BigTableStore(base.SerializedStore):
         yield from self._bigtable_iteritems(partitions)
 
     def _iterkeys(self) -> Iterator[bytes]:
-        if self._key_cache is not None:
-            for key in self._key_cache:
-                yield key
-        else:
-            for row in self._iteritems():
-                yield row[0]
+        for row in self._iteritems():
+            yield row[0]
 
     def _itervalues(self) -> Iterator[bytes]:
         for row in self._iteritems():
@@ -545,13 +527,23 @@ class BigTableStore(base.SerializedStore):
     def _fill_caches(self, partitions):
         for k, v in self._bigtable_iteritems(partitions=partitions):
             self._set_cache(k, v)
-        if self._statup_cache is not None:
-            self._invalidation_timer.start()
+
+        # Invalidate startup cache after 30 minutes
+        # or reset the timer if already running
+        if self._startup_cache is not None:
+            if self._invalidation_timer is not None:
+                self._invalidation_timer.cancel()
+                self._invalidation_timer.start()
+            else:
+                self._invalidation_timer = threading.Timer(
+                    30 * 60, self._invalidate_startup_cache
+                )
+                self._invalidation_timer.start()
 
     def _get_active_changelogtopic_partitions(
         self, table: CollectionT, tps: Set[TP]
     ) -> Set[int]:
-        if self._startup_cache is None and self._key_cache is None:
+        if self._startup_cache is None:
             return set()
 
         partitions = set()
