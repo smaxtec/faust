@@ -129,7 +129,6 @@ class BigTableStore(base.SerializedStore):
         else:
             self._startup_cache = None
 
-
     def _set_options(self, options) -> None:
         self._all_options = options
         self.table_name_generator = options.get(
@@ -204,7 +203,6 @@ class BigTableStore(base.SerializedStore):
                 partitions.append(partition)
         return partitions
 
-
     def _get_current_partitions(self) -> List[int]:
         event = current_event()
         if (
@@ -255,7 +253,9 @@ class BigTableStore(base.SerializedStore):
     def _set_mutation(self, mutated_row: DirectRow):
         self._mutation_batcher.mutate(mutated_row)
 
-    def _bigtable_get(self, keys: List[bytes]) -> Tuple[Optional[bytes], Optional[int]]:
+    def _bigtable_get(
+        self, keys: List[bytes]
+    ) -> Tuple[Optional[bytes], Optional[int]]:
         rowset = RowSet()
         for key in keys:
             rowset.add_row_key(key)
@@ -277,7 +277,9 @@ class BigTableStore(base.SerializedStore):
 
             partitions = self._get_partitions_for_key(key)
 
-            keys = [self._add_partition_prefix_to_key(key, p) for p in partitions]
+            keys = [
+                self._add_partition_prefix_to_key(key, p) for p in partitions
+            ]
             value, partition = self._bigtable_get(keys)
             if value is not None:
                 self._key_index[key] = partition
@@ -357,7 +359,9 @@ class BigTableStore(base.SerializedStore):
             need_all_keys = self.table.is_global or self.table.use_partitioner
             if not need_all_keys:
                 for partition in partitions:
-                    prefix = self._add_partition_prefix_to_key(b"", partition).decode()
+                    prefix = self._add_partition_prefix_to_key(
+                        b"", partition
+                    ).decode()
                     row_set.add_row_range_with_prefix(prefix)
 
             if self._mutation_batcher_enable:
@@ -447,7 +451,9 @@ class BigTableStore(base.SerializedStore):
         if self._mutation_batcher_enable:
             self._mutation_batcher.flush()
         row = self.bt_table.read_row(offset_key, filter_=self.row_filter)
-        offset = self.bigtable_exrtact_row_data(row) if row is not None else None
+        offset = (
+            self.bigtable_exrtact_row_data(row) if row is not None else None
+        )
         return int(offset) if offset is not None else None
 
     def set_persisted_offset(self, tp: TP, offset: int) -> None:
