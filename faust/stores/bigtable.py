@@ -246,7 +246,7 @@ class BigTableStore(base.SerializedStore):
             self.log.info(
                 f"Invalidated startup cache for table {self.table_name}"
             )
-        self._invalidation_timer.start()
+        self._invalidation_timer.cancel()
         del self._invalidation_timer
         self._invalidation_timer = None
 
