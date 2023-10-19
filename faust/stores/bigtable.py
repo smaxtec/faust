@@ -587,3 +587,8 @@ class BigTableStore(base.SerializedStore):
             generation_id: the metadata generation identifier for the re-balance
         """
         await self.assign_partitions(self.table, newly_assigned, generation_id)
+
+    async def stop(self) -> None:
+        if self._mutation_batcher_enable:
+            self.log.info("Flushing to bigtable on stop")
+            self._mutation_batcher.flush()
