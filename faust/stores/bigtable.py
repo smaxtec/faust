@@ -539,6 +539,7 @@ class BigTableStore(base.SerializedStore):
         if self._startup_cache is not None:
             if self._invalidation_timer is not None:
                 self._invalidation_timer.cancel()
+                del self._invalidation_timer
             self._invalidation_timer = threading.Timer(
                 30 * 60, self._invalidate_startup_cache
             )
