@@ -409,9 +409,10 @@ class BigTableStore(base.SerializedStore):
                 partitions = set(partitions)
                 partitions = partitions.difference(self._startup_cache_partitions)
 
-        for key, val in self._bigtable_iteritems(partitions):
-            self._set_cache(key, val)
-            yield key, val
+        if partitions is None or len(partitions) > 0:
+            for key, val in self._bigtable_iteritems(partitions):
+                self._set_cache(key, val)
+                yield key, val
 
     def _iterkeys(self) -> Iterator[bytes]:
         for row in self._iteritems():
