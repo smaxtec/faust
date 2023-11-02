@@ -402,7 +402,7 @@ class BigTableStore(base.SerializedStore):
     ) -> Iterator[Tuple[bytes, bytes]]:
         if self._startup_cache is not None:
             if partitions is None:
-                partitions: Iterable[int] = self._active_partitions()
+                partitions = self._active_partitions()
                 for k, v in self._startup_cache.items():
                     if v is not None:
                         yield k, v
