@@ -40,7 +40,8 @@ try:  # pragma: no cover
         RowSet = RowSet
         Table = Table
 
-except ImportError:  # pragma: no cover
+except ImportError as e:  # pragma: no cover
+    logger = logging.getLogger(__name__).error(e)
     BT = None  # noqa
 
 from yarl import URL
@@ -125,8 +126,10 @@ class BigTableStore(base.SerializedStore):
         )
         if self._startup_cache_enable:
             self._startup_cache: Dict[bytes, bytes] = {}
+            self._startup_cache_partitions = set()
             self._invalidation_timer: Optional[threading.Timer] = None
         else:
+            self._startup_cache_partitions = None
             self._startup_cache = None
 
     def _set_options(self, options) -> None:
@@ -242,6 +245,7 @@ class BigTableStore(base.SerializedStore):
         if self._startup_cache is not None:
             self._startup_cache.clear()
             self._startup_cache = None
+            self._startup_cache_partitions = None
             gc.collect()
             self.log.info(
                 f"Invalidated startup cache for table {self.table_name}"
@@ -396,7 +400,18 @@ class BigTableStore(base.SerializedStore):
     def _iteritems(
         self, partitions: Optional[List[int]] = None
     ) -> Iterator[Tuple[bytes, bytes]]:
-        yield from self._bigtable_iteritems(partitions)
+        if self._startup_cache is not None:
+            if partitions is None:
+                partitions: List[int] = self._active_partitions()
+                for k, v in self._startup_cache.items():
+                    if v is not None:
+                        yield k, v
+                partitions = set(partitions)
+                partitions = partitions.difference(self._startup_cache_partitions)
+
+        for key, val in self._bigtable_iteritems(partitions):
+            self._set_cache(key, val)
+            yield key, val
 
     def _iterkeys(self) -> Iterator[bytes]:
         for row in self._iteritems():
@@ -537,6 +552,10 @@ class BigTableStore(base.SerializedStore):
         for k, v in self._bigtable_iteritems(partitions=partitions):
             self._set_cache(k, v)
 
+        if self._startup_cache_partitions is not None:
+            self._startup_cache_partitions = self._startup_cache_partitions.union(
+                partitions
+            )
         # Invalidate startup cache after 30 minutes
         # or reset the timer if already running
         if self._startup_cache is not None:
