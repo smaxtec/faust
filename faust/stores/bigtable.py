@@ -402,7 +402,7 @@ class BigTableStore(base.SerializedStore):
     ) -> Iterator[Tuple[bytes, bytes]]:
         if self._startup_cache is not None:
             if partitions is None:
-                partitions: List[int] = self._active_partitions()
+                partitions: Iterable[int] = self._active_partitions()
                 for k, v in self._startup_cache.items():
                     if v is not None:
                         yield k, v
@@ -410,9 +410,7 @@ class BigTableStore(base.SerializedStore):
                 partitions = partitions.difference(self._startup_cache_partitions)
 
         if partitions is None or len(partitions) > 0:
-            for key, val in self._bigtable_iteritems(partitions):
-                self._set_cache(key, val)
-                yield key, val
+            yield from self._bigtable_iteritems(partitions):
 
     def _iterkeys(self) -> Iterator[bytes]:
         for row in self._iteritems():
