@@ -1,14 +1,15 @@
 import asyncio
 from copy import copy
+from unittest.mock import Mock, patch
 
 import pytest
 from mode import label
 from mode.utils.aiter import aiter, anext
-from mode.utils.mocks import AsyncMock, Mock
 
 import faust
 from faust.exceptions import ImproperlyConfigured
 from faust.streams import maybe_forward
+from tests.helpers import AsyncMock
 
 from .helpers import channel_empty, message, put
 
@@ -220,6 +221,43 @@ async def test_stream_filter__async(app):
             assert value > 1000
 
     assert i == 3
+
+
+@pytest.mark.asyncio
+async def test_stream_filter_acks_filtered_out_messages(app, event_loop):
+    """
+    Test the filter function acknowledges the filtered out
+     messages regardless of the ack setting.
+    """
+    values = [1000, 3000, 99, 5000, 3, 9999]
+    async with app.stream(values).filter(lambda x: x > 1000) as stream:
+        async for event in stream.events():
+            assert event.value > 1000
+    assert len(app.consumer.unacked) == 0
+
+
+@pytest.mark.asyncio
+async def test_acks_filtered_out_messages_when_using_take(app, event_loop):
+    """
+    Test the filter function acknowledges the filtered out messages when using take().
+    """
+    initial_values = [1000, 999, 3000, 99, 5000, 3, 9999]
+    expected_values = [v for v in initial_values if v > 1000]
+    original_function = app.create_event
+    # using patch to intercept message objects, to check if they are acked later
+    with patch("faust.app.base.App.create_event") as create_event_mock:
+        create_event_mock.side_effect = original_function
+        async with new_stream(app) as stream:
+            for value in initial_values:
+                await stream.channel.send(value=value)
+            async for values in stream.filter(lambda x: x > 1000).take(
+                len(expected_values), within=5
+            ):
+                assert values == expected_values
+                break
+    messages = [call[0][3] for call in create_event_mock.call_args_list]
+    acked = [m.acked for m in messages if m.acked]
+    assert len(acked) == len(initial_values)
 
 
 @pytest.mark.asyncio

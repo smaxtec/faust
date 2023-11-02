@@ -1,7 +1,7 @@
 import datetime
+from unittest.mock import Mock, patch
 
 import pytest
-from mode.utils.mocks import Mock, patch
 
 import faust
 from faust.events import Event
@@ -55,7 +55,13 @@ class Test_Table:
         return self.create_table(app, name="strict")
 
     def create_table(
-        self, app, *, name="foo", key_type=TableKey, value_type=TableValue, **kwargs
+        self,
+        app,
+        *,
+        name="foo",
+        key_type=TableKey,
+        value_type=TableValue,
+        **kwargs,
     ):
         return app.Table(name, key_type=key_type, value_type=value_type, **kwargs)
 

@@ -21,11 +21,17 @@ import os
 import re
 import sys
 import typing
+
+if sys.version_info < (3, 8):
+    from importlib_metadata import version
+else:
+    from importlib.metadata import version
+
 from typing import Any, Mapping, NamedTuple, Optional, Sequence, Tuple
 
-__version__ = "0.8.5"
+__version__ = version("faust-streaming")
 __author__ = "Robinhood Markets, Inc."
-__contact__ = "schrohm@gmail.com, vpatki@wayfair.com"
+__contact__ = "schrohm@gmail.com, vpatki@wayfair.com, williambbarnhart@gmail.com"
 __homepage__ = "https://github.com/faust-streaming/faust"
 __docformat__ = "markdown"
 
@@ -36,8 +42,8 @@ class VersionInfo(NamedTuple):
     major: int
     minor: int
     micro: int
-    releaselevel: str
-    serial: str
+    releaselevel: Optional[str] = None
+    serial: Optional[str] = None
 
 
 version_info_t = VersionInfo  # XXX compat
@@ -45,13 +51,11 @@ version_info_t = VersionInfo  # XXX compat
 
 # bumpversion can only search for {current_version}
 # so we have to parse the version here.
-_match = re.match(r"(\d+)\.(\d+).(\d+)(.+)?", __version__)
+_match = re.match(r"^(?P<prefix>v)?(?P<version>[^\+]+)(?P<suffix>.*)?$", __version__)
 if _match is None:  # pragma: no cover
     raise RuntimeError("THIS IS A BROKEN RELEASE!")
 _temp = _match.groups()
-VERSION = version_info = VersionInfo(
-    int(_temp[0]), int(_temp[1]), int(_temp[2]), _temp[3] or "", ""
-)
+VERSION = version_info = VersionInfo(*_temp)
 del _match
 del _temp
 del re
@@ -129,7 +133,12 @@ if typing.TYPE_CHECKING:  # pragma: no cover
 
     from .agents import Agent  # noqa: E402
     from .app import App  # noqa: E402
-    from .auth import GSSAPICredentials, SASLCredentials, SSLCredentials  # noqa: E402
+    from .auth import (  # noqa: E402
+        GSSAPICredentials,
+        OAuthCredentials,
+        SASLCredentials,
+        SSLCredentials,
+    )
     from .channels import Channel, ChannelT  # noqa: E402
     from .events import Event, EventT  # noqa: E402
     from .models import Model, ModelOptions, Record  # noqa: E402
@@ -180,6 +189,7 @@ __all__ = [
     "TopicT",
     "GSSAPICredentials",
     "SASLCredentials",
+    "OAuthCredentials",
     "SSLCredentials",
     "Settings",
     "HoppingWindow",
@@ -215,6 +225,7 @@ all_by_module: Mapping[str, Sequence[str]] = {
         "GSSAPICredentials",
         "SASLCredentials",
         "SSLCredentials",
+        "OAuthCredentials",
     ],
     "faust.types.settings": ["Settings"],
     "faust.windows": [

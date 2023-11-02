@@ -96,7 +96,6 @@ class ResourceOptions(NamedTuple):
 
 
 class CacheBackendT(ServiceT):
-
     Unavailable: Type[BaseException]
 
     @abc.abstractmethod
@@ -121,7 +120,6 @@ class CacheBackendT(ServiceT):
 
 
 class CacheT(abc.ABC):
-
     timeout: Optional[Seconds]
     include_headers: bool
     key_prefix: str
@@ -133,7 +131,7 @@ class CacheT(abc.ABC):
         timeout: Optional[Seconds] = None,
         key_prefix: Optional[str] = None,
         backend: Union[Type[CacheBackendT], str] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         ...
 
@@ -143,7 +141,7 @@ class CacheT(abc.ABC):
         timeout: Optional[Seconds] = None,
         include_headers: bool = False,
         key_prefix: Optional[str] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> Callable[[Callable], Callable]:
         ...
 
@@ -174,7 +172,7 @@ class BlueprintT(abc.ABC):
         uri: str,
         file_or_directory: Union[str, Path],
         *,
-        name: Optional[str] = None
+        name: Optional[str] = None,
     ) -> None:
         ...
 
