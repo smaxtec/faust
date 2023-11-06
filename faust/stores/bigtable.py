@@ -68,7 +68,7 @@ class BigTableStore(base.SerializedStore):
     BT_PROJECT_KEY = "bt_project_key"
     BT_TABLE_NAME_GENERATOR_KEY = "bt_table_name_generator_key"
     BT_STARTUP_CACHE_ENABLE_KEY = "bt_startup_cache_enable_key"
-    BT_KEY_CACHE_ENABLE_KEY = "bt_key_cache_enable_key"
+    BT_STARTUP_CACHE_TTL_KEY = "bt_startup_cache_ttl_key"
     BT_MUTATION_BATCHER_ENABLE_KEY = "bt_mutation_batcher_enable_key"
     BT_MUTATION_BATCHER_FLUSH_COUNT_KEY = "bt_mutation_batcher_flush_count_key"
     BT_MUTATION_BATCHER_FLUSH_INTERVAL_KEY = (
@@ -125,6 +125,12 @@ class BigTableStore(base.SerializedStore):
             BigTableStore.BT_STARTUP_CACHE_ENABLE_KEY, False
         )
         if self._startup_cache_enable:
+            self._startup_cache_ttl = options.get(
+                BigTableStore.BT_STARTUP_CACHE_TTL_KEY, 30 * 60
+            )
+            if self._startup_cache_ttl == 0:
+                raise ValueError(f"Invalid {self._startup_cache_ttl=}")
+
             self._startup_cache: Dict[bytes, bytes] = {}
             self._startup_cache_partitions = set()
             self._invalidation_timer: Optional[threading.Timer] = None
@@ -563,7 +569,7 @@ class BigTableStore(base.SerializedStore):
                 del self._invalidation_timer
                 self._invalidation_timer = None
             self._invalidation_timer = threading.Timer(
-                30 * 60, self._invalidate_startup_cache
+                self._startup_cache_ttl, self._invalidate_startup_cache
             )
             self._invalidation_timer.start()
 
