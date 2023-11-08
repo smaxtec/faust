@@ -120,3 +120,14 @@ class TestBigTableStore:
     TEST_KEY4 = b"\x00\x00\x00\x00\x01\x0eNoGroup\x00063d76e3ebd7e634de234c67d"
     TEST_KEY5 = b"\x00\x00\x00\x00\x02062a99788df917508d1891ed2\x00062a99788df917508d1891ed2"
     TEST_KEY6 = b"\x00\x00\x00\x00\x02062a99788df917508d1891ed2\x02"
+
+    @pytest.fixture()
+    def bt_imports(self):
+        with patch("faust.stores.bigtable.BT") as bt:
+            bt.CellsColumnLimitFilter = MagicMock(return_value="a_filter")
+            bt.column_family.MaxVersionsGCRule = MagicMock(
+                return_value="a_rule"
+            )
+            bt.RowSet = MagicMock(return_value=RowSetMock())
+            yield bt
+
