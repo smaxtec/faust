@@ -88,8 +88,7 @@ class BigTableStore(base.SerializedStore):
             self._setup_bigtable(table, options)
             self._setup_caches(options)
             self._setup_mutation_batcher(options)
-            key_index_size = app.conf.table_key_index_size
-            self.key_index_size = key_index_size
+            self.key_index_size = app.conf.table_key_index_size
             self._key_index = LRUCache(limit=self.key_index_size)
         except Exception as ex:
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
@@ -128,8 +127,10 @@ class BigTableStore(base.SerializedStore):
             self._startup_cache_ttl = options.get(
                 BigTableStore.BT_STARTUP_CACHE_TTL_KEY, 30 * 60
             )
-            if self._startup_cache_ttl == 0:
-                raise ValueError(f"Invalid {self._startup_cache_ttl=}")
+            if self._startup_cache_ttl <= 0:
+                self._startup_cache = None
+                self._startup_cache_partitions = None
+                return
 
             self._startup_cache: Dict[bytes, bytes] = {}
             self._startup_cache_partitions = set()
@@ -266,7 +267,7 @@ class BigTableStore(base.SerializedStore):
     def _bigtable_get(
         self, keys: List[bytes]
     ) -> Tuple[Optional[bytes], Optional[int]]:
-        rowset = RowSet()
+        rowset = BT.RowSet()
         for key in keys:
             rowset.add_row_key(key)
         if self._mutation_batcher_enable:
