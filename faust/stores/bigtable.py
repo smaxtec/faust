@@ -249,8 +249,7 @@ class BigTableStore(base.SerializedStore):
     def _invalidate_startup_cache(self):
         if self._startup_cache is not None:
             self._startup_cache.clear()
-            self._startup_cache = None
-            self._startup_cache_partitions = None
+            self._startup_cache_partitions = set()
             gc.collect()
             self.log.info(f"Invalidated startup cache for table {self.table_name}")
         self._invalidation_timer.cancel()
@@ -543,28 +542,23 @@ class BigTableStore(base.SerializedStore):
         for k, v in self._bigtable_iteritems(partitions=partitions):
             self._set_cache(k, v)
 
-        if self._startup_cache_partitions is not None:
-            self._startup_cache_partitions = self._startup_cache_partitions.union(
-                partitions
-            )
+        self._startup_cache_partitions = self._startup_cache_partitions.union(
+            partitions
+        )
         # Invalidate startup cache after 30 minutes
         # or reset the timer if already running
-        if self._startup_cache is not None:
-            if self._invalidation_timer is not None:
-                self._invalidation_timer.cancel()
-                del self._invalidation_timer
-                self._invalidation_timer = None
-            self._invalidation_timer = threading.Timer(
-                self._startup_cache_ttl, self._invalidate_startup_cache
-            )
-            self._invalidation_timer.start()
+        if self._invalidation_timer is not None:
+            self._invalidation_timer.cancel()
+            del self._invalidation_timer
+            self._invalidation_timer = None
+        self._invalidation_timer = threading.Timer(
+            self._startup_cache_ttl, self._invalidate_startup_cache
+        )
+        self._invalidation_timer.start()
 
     def _get_active_changelogtopic_partitions(
         self, table: CollectionT, tps: Set[TP]
     ) -> Set[int]:
-        if self._startup_cache is None:
-            return set()
-
         partitions = set()
         standby_tps = self.app.assignor.assigned_standbys()
         my_topics = table.changelog_topic.topics
@@ -577,6 +571,9 @@ class BigTableStore(base.SerializedStore):
         self, table: CollectionT, tps: Set[TP], generation_id: int = 0
     ) -> None:
         # Fill cache with all keys for the partitions we are assigned
+        if self._startup_cache_enable is False:
+            return
+
         partitions = self._get_active_changelogtopic_partitions(table, tps)
         if len(partitions) == 0:
             return

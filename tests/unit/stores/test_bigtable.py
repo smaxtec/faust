@@ -540,3 +540,146 @@ class TestBigTableStore:
         assert store._bigtable_set.call_count == 4
         assert store._bigtable_del.call_count == 1
         assert store.set_persisted_offset.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_fill_caches(self, store, bt_imports):
+        store._bigtable_iteritems = MagicMock(
+            return_value=[(b"key1", b"value1"), (b"key2", b"value2")]
+        )
+        store._set_cache = MagicMock()
+        store._startup_cache_ttl = 1800
+        store._invalidation_timer = None
+        store._startup_cache_partitions = set()
+        store._startup_cache = {}
+
+        partitions = {TP("topic", 0), TP("topic", 1)}
+        partitions2 = {TP("topic", 0), TP("topic", 2)}
+
+        store._fill_caches(partitions)
+
+        assert store._bigtable_iteritems.call_args == call(partitions=partitions)
+        assert store._set_cache.call_args_list == [
+            call(b"key1", b"value1"),
+            call(b"key2", b"value2"),
+        ]
+        assert store._startup_cache_partitions == partitions
+        assert store._invalidation_timer is not None
+        assert store._invalidation_timer.is_alive()
+
+        # Test with different partitions
+        # This should reset the _invalidation_timer
+        old_invalid_timer = store._invalidation_timer.__hash__()
+
+        store._bigtable_iteritems = MagicMock(
+            return_value=[(b"key3", b"value3"), (b"key4", b"value4")]
+        )
+        store._set_cache = MagicMock()
+        store._fill_caches(partitions2)
+        new_invalid_timer = store._invalidation_timer.__hash__()
+        # Check if old invalidation timer is different from new one
+        assert old_invalid_timer != new_invalid_timer
+        assert store._invalidation_timer is not None
+        assert store._invalidation_timer.is_alive()
+
+        assert store._bigtable_iteritems.call_args == call(partitions=partitions2)
+        assert store._set_cache.call_args_list == [
+            call(b"key3", b"value3"),
+            call(b"key4", b"value4"),
+        ]
+        assert store._startup_cache_partitions == partitions | partitions2
+        assert store._invalidation_timer is not None
+        assert store._invalidation_timer.is_alive()
+
+        # Wait for the invalidation timer to expire
+        store._invalidation_timer.cancel()
+        store._invalidate_startup_cache()
+
+        assert store._startup_cache == {}
+        assert store._startup_cache_partitions == set()
+        assert store._invalidation_timer is None
+
+    @pytest.mark.asyncio
+    async def test__get_active_changelogtopic_partitions(self, store):
+        tps_table = {
+            "changelog_topic",
+            "other_topic",
+            "other_topic2",
+        }
+        store.table = MagicMock(changelog_topic=MagicMock(topics=tps_table))
+
+        tps = {TP("changelog_topic", 0), TP("other_topic", 1)}
+        active_partitions = store._get_active_changelogtopic_partitions(
+            store.table, tps
+        )
+        assert active_partitions == {0, 1}
+
+    @pytest.mark.asyncio
+    async def test_bigtable_on_rebalance(self, store, bt_imports):
+        store.assign_partitions = MagicMock(wraps=store.assign_partitions)
+        tps_table = {
+            "topic1",
+            "topic2",
+            "topic3",
+            "topic4",
+            "topic5",
+        }
+        store.table = MagicMock(changelog_topic=MagicMock(topics=tps_table))
+
+        store._fill_caches = MagicMock()
+        assigned = {TP("topic1", 0), TP("topic2", 1)}
+        revoked = {TP("topic3", 2)}
+        newly_assigned = {TP("topic4", 3), TP("topic5", 4)}
+        store._startup_cache_enable = False
+        await store.on_rebalance(assigned, revoked, newly_assigned, generation_id=1)
+        store.assign_partitions.assert_called_once_with(store.table, newly_assigned, 1)
+        store._fill_caches.assert_not_called()
+        newly_assigned = set()
+
+        # Test with empty newly_assigned
+        store._startup_cache_enable = True
+        await store.on_rebalance(assigned, revoked, newly_assigned, generation_id=2)
+        store.assign_partitions.assert_called_with(store.table, newly_assigned, 2)
+        store._fill_caches.assert_not_called()
+
+        store._startup_cache_enable = True
+        newly_assigned = {TP("topic4", 3), TP("topic5", 4)}
+        await store.on_rebalance(assigned, revoked, newly_assigned, generation_id=3)
+        store.assign_partitions.assert_called_with(store.table, newly_assigned, 3)
+        store._fill_caches.assert_called_once_with({3, 4})
+
+    def test_contains(self, store, bt_imports):
+        store._get = MagicMock(return_value=b"test_value")
+
+        # Test that _contains returns True when store_check_exists is False
+        store.app.conf.store_check_exists = False
+        assert store._contains(b"test_key") is True
+
+        # Test that _contains returns True when _get returns a value
+        store.app.conf.store_check_exists = True
+        assert store._contains(b"test_key") is True
+
+        # Test that _contains returns False when _get returns None
+        store._get = MagicMock(return_value=None)
+        assert store._contains(b"test_key") is False
+
+    def test_setup_caches_startup_cache_enable(self, store):
+        options = {
+            BigTableStore.BT_STARTUP_CACHE_ENABLE_KEY: True,
+            BigTableStore.BT_STARTUP_CACHE_TTL_KEY: 60,
+        }
+        store._setup_caches(options=options)
+        assert store._startup_cache_enable is True
+        assert store._startup_cache_ttl == 60
+        assert isinstance(store._startup_cache, dict)
+        assert isinstance(store._startup_cache_partitions, set)
+        assert store._invalidation_timer is None
+
+    def test_setup_caches_startup_cache_disable(self, store):
+        options = {
+            BigTableStore.BT_STARTUP_CACHE_ENABLE_KEY: False,
+        }
+        store._setup_caches(options=options)
+        assert store._startup_cache_enable is False
+        assert not hasattr(store, "_startup_cache_ttl")
+        assert store._startup_cache is None
+        assert store._startup_cache_partitions is None
