@@ -56,6 +56,23 @@ COLUMN_NAME = "DATA"
 
 
 class BigTableStore(base.SerializedStore):
+    """Bigtable table storage.
+
+    This class provides a storage implementation for Faust using Google Cloud Bigtable.
+    It extends the SerializedStore class and overrides its methods to provide Bigtable-specific
+    implementations. It also provides methods for setting up the Bigtable client and table, as well
+    as caching and mutation batching.
+
+    Args:
+        url (Union[str, URL]): The URL of the Bigtable instance.
+        app (AppT): The Faust application instance.
+        table (CollectionT): The name of the table to use.
+        options (Dict[str, Any]): The options to use for the Bigtable client.
+        **kwargs (Any): Additional keyword arguments to pass to the parent constructor.
+    """
+
+
+class BigTableStore(base.SerializedStore):
     """Bigtable table storage."""
 
     client: BT.Client
@@ -81,6 +98,16 @@ class BigTableStore(base.SerializedStore):
         options: Dict[str, Any],
         **kwargs: Any,
     ) -> None:
+        """
+        Initializes a new instance of the Bigtable class.
+
+        Args:
+            url (Union[str, URL]): The URL of the Bigtable instance.
+            app (AppT): The Faust application instance.
+            table (CollectionT): The name of the table to use.
+            options (Dict[str, Any]): The options to use for the Bigtable client.
+            **kwargs (Any): Additional keyword arguments to pass to the parent constructor.
+        """
         self._set_options(options)
         try:
             self._setup_bigtable(table, options)
@@ -98,6 +125,11 @@ class BigTableStore(base.SerializedStore):
         return user_key
 
     def _setup_mutation_batcher(self, options):
+        """
+        Sets up the mutation batcher for the BigTableStore.
+
+        :param options: A dictionary of options to configure the mutation batcher.
+        """
         self._mutation_batcher_enable = options.get(
             BigTableStore.BT_MUTATION_BATCHER_ENABLE_KEY, False
         )
@@ -118,6 +150,12 @@ class BigTableStore(base.SerializedStore):
         self,
         options: Dict[str, Any] = None,
     ):
+        """
+        Sets up the caches for the BigTableStore instance.
+
+        Args:
+            options (Dict[str, Any], optional): A dictionary of options to configure the caches. Defaults to None.
+        """
         self._startup_cache_enable = options.get(
             BigTableStore.BT_STARTUP_CACHE_ENABLE_KEY, False
         )
@@ -257,6 +295,15 @@ class BigTableStore(base.SerializedStore):
         self._mutation_batcher.mutate(mutated_row)
 
     def _bigtable_get(self, keys: List[bytes]) -> Tuple[Optional[bytes], Optional[int]]:
+        """
+        Retrieve data from Bigtable for the given keys.
+
+        Args:
+            keys (List[bytes]): List of keys to retrieve data for.
+
+        Returns:
+            Tuple[Optional[bytes], Optional[int]]: A tuple containing the retrieved data and the partition it belongs to.
+        """
         rowset = BT.RowSet()
         for key in keys:
             rowset.add_row_key(key)
@@ -283,9 +330,11 @@ class BigTableStore(base.SerializedStore):
             if len(partitions) == 0:
                 return None
 
-            keys = [self._add_partition_prefix_to_key(key, p) for p in partitions]
-            if len(keys) == 0:
+            if len(partitions) == 0:
                 return None
+
+            keys = [self._add_partition_prefix_to_key(key, p) for p in partitions]
+
             value, partition = self._bigtable_get(keys)
             if value is not None:
                 self._key_index[key] = partition
@@ -297,6 +346,13 @@ class BigTableStore(base.SerializedStore):
             raise ex
 
     def _bigtable_set(self, key: bytes, value: bytes):
+        """
+        Sets the value for a given key in the Bigtable table.
+
+        Args:
+            key (bytes): The key to set the value for.
+            value (bytes): The value to set for the key.
+        """
         row = self.bt_table.direct_row(key)
         row.set_cell(
             COLUMN_FAMILY_ID,
@@ -329,6 +385,12 @@ class BigTableStore(base.SerializedStore):
             raise ex
 
     def _bigtable_del(self, key: bytes):
+        """
+        Deletes a row from the Bigtable table.
+
+        Args:
+            key (bytes): The key of the row to delete.
+        """
         row = self.bt_table.direct_row(key)
         row.delete()
         if self._mutation_batcher_enable:
@@ -352,6 +414,18 @@ class BigTableStore(base.SerializedStore):
             raise ex
 
     def _bigtable_iteritems(self, partitions):
+        """
+        Iterates over the specified partitions in the BigtableStore and yields the key-value pairs.
+
+        Args:
+            partitions (list): A list of partitions to iterate over. If None, all active partitions are used.
+
+        Yields:
+            tuple: A tuple containing the key-value pair.
+
+        Raises:
+            Exception: If an error occurs while iterating over the partitions.
+        """
         try:
             start = time.time()
             if partitions is None:
