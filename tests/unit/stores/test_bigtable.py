@@ -357,14 +357,22 @@ class TestBigTableStore:
 
         # Scenario: Cache hit on value
         store._get_cache = MagicMock(return_value=(b"a_value_from_cache", True))
-        store._bigtable_get = MagicMock(return_value=None)
+        store._bigtable_get = MagicMock(return_value=(None, None))
         res = store._get(self.TEST_KEY1)
         store._bigtable_get.assert_not_called()
         assert res == b"a_value_from_cache"
 
         # Scenario: Cache hit on None value
         store._get_cache = MagicMock(return_value=(None, True))
-        store._bigtable_get = MagicMock(return_value=None)
+        store._bigtable_get = MagicMock(return_value=(None, None))
+        res = store._get(self.TEST_KEY2)
+        store._bigtable_get.assert_not_called()
+        assert res is None
+
+        # Scenario: Cache miss, but partition should be in startup cache
+        store._startup_cache_partitions = {19, 20}
+        store._get_cache = MagicMock(return_value=(None, False))
+        store._bigtable_get = MagicMock(return_value=(None, None))
         res = store._get(self.TEST_KEY2)
         store._bigtable_get.assert_not_called()
         assert res is None
@@ -680,6 +688,7 @@ class TestBigTableStore:
         }
         store._setup_caches(options=options)
         assert store._startup_cache_enable is False
-        assert not hasattr(store, "_startup_cache_ttl")
+        assert store._startup_cache_ttl == 30 * 60  # Default value
         assert store._startup_cache is None
-        assert store._startup_cache_partitions is None
+        assert store._startup_cache_partitions == set()
+        assert store._startup_cache_enable is False

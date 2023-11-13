@@ -121,21 +121,18 @@ class BigTableStore(base.SerializedStore):
         self._startup_cache_enable = options.get(
             BigTableStore.BT_STARTUP_CACHE_ENABLE_KEY, False
         )
+
+        self._startup_cache = None
+        self._startup_cache_partitions: Set[int] = set()
+        self._startup_cache_ttl = options.get(
+            BigTableStore.BT_STARTUP_CACHE_TTL_KEY, 30 * 60
+        )
         if self._startup_cache_enable:
-            self._startup_cache_ttl = options.get(
-                BigTableStore.BT_STARTUP_CACHE_TTL_KEY, 30 * 60
-            )
             if self._startup_cache_ttl <= 0:
-                self._startup_cache = None
-                self._startup_cache_partitions = None
                 return
 
             self._startup_cache: Dict[bytes, bytes] = {}
-            self._startup_cache_partitions = set()
             self._invalidation_timer: Optional[threading.Timer] = None
-        else:
-            self._startup_cache_partitions = None
-            self._startup_cache = None
 
     def _set_options(self, options) -> None:
         self._all_options = options
@@ -241,7 +238,7 @@ class BigTableStore(base.SerializedStore):
             self._startup_cache[key] = value
 
     def _get_cache(self, key: bytes):
-        if self._startup_cache is not None:
+        if self._startup_cache_enable and self._startup_cache is not None:
             if key in self._startup_cache:
                 return self._startup_cache[key], True
         return None, False
@@ -279,9 +276,16 @@ class BigTableStore(base.SerializedStore):
             if found:
                 return value
 
-            partitions = self._get_partitions_for_key(key)
+            partitions = set(self._get_partitions_for_key(key))
+            # Remove partitions that we already have in cache
+            partitions.difference_update(self._startup_cache_partitions)
+            # Nothing todo
+            if len(partitions) == 0:
+                return None
 
             keys = [self._add_partition_prefix_to_key(key, p) for p in partitions]
+            if len(keys) == 0:
+                return None
             value, partition = self._bigtable_get(keys)
             if value is not None:
                 self._key_index[key] = partition
@@ -396,12 +400,11 @@ class BigTableStore(base.SerializedStore):
     ) -> Iterator[Tuple[bytes, bytes]]:
         if self._startup_cache is not None:
             if partitions is None:
-                partitions = self._active_partitions()
+                partitions = set(self._active_partitions())
                 for k, v in self._startup_cache.items():
                     if v is not None:
                         yield k, v
-                partitions = set(partitions)
-                partitions = partitions.difference(self._startup_cache_partitions)
+                partitions.difference_update(self._startup_cache_partitions)
 
         if partitions is None or len(partitions) > 0:
             yield from self._bigtable_iteritems(partitions)
@@ -542,9 +545,7 @@ class BigTableStore(base.SerializedStore):
         for k, v in self._bigtable_iteritems(partitions=partitions):
             self._set_cache(k, v)
 
-        self._startup_cache_partitions = self._startup_cache_partitions.union(
-            partitions
-        )
+        self._startup_cache_partitions |= set(partitions)
         # Invalidate startup cache after 30 minutes
         # or reset the timer if already running
         if self._invalidation_timer is not None:
