@@ -235,8 +235,18 @@ class TestBigTableStore:
             store.bt_table = BigTableMock()
             return store
 
-    def test_bigtable_bigtable_get_on_empty(self, store, bt_imports):
-        return_value = store._bigtable_get([self.TEST_KEY1])
+    def test_bigtable_get(self, store, bt_imports):
+        keys = [self.TEST_KEY1, self.TEST_KEY2]
+        for idx, k in enumerate(keys):
+            keys[idx] = store._add_partition_prefix_to_key(k, 0)
+        store.bt_table.add_test_data(keys)
+        value, partition = store._bigtable_get([keys[1]])
+        store.bt_table.read_rows.assert_called_once()
+        assert partition == 0
+        assert value == keys[1]
+
+    def test_bigtable_get_on_empty(self, store, bt_imports):
+        return_value = store._bigtable_get([self.TEST_KEY1, self.TEST_KEY2])
         store.bt_table.read_rows.assert_called_once()
         assert return_value == (None, None)
 
@@ -692,3 +702,45 @@ class TestBigTableStore:
         assert store._startup_cache is None
         assert store._startup_cache_partitions == set()
         assert store._startup_cache_enable is False
+
+    def test_set_del_get_cache(self, store):
+        store._startup_cache_enable = False
+        store._startup_cache = None
+        store._startup_cache_partitions = set()
+
+        key = self.TEST_KEY1
+
+        store._set_cache(key, b"123")
+        res = store._get_cache(key)
+        assert store._startup_cache is None
+        assert store._startup_cache_partitions == set()
+        assert res == (None, False)
+
+        store._del_cache(key)
+        res = store._get_cache(key)
+        assert res == (None, False)
+        assert store._startup_cache is None
+        assert store._startup_cache_partitions == set()
+
+        # Now with enabled startup cache
+        store._startup_cache_enable = True
+        store._startup_cache = {}
+        store._startup_cache_partitions = {1, 2}
+
+        store._set_cache(key, b"123")
+        res = store._get_cache(key)
+        assert store._startup_cache == {key: b"123"}
+        assert store._startup_cache_partitions == {1, 2}
+        assert res == (b"123", True)
+        store._del_cache(key)
+        res = store._get_cache(key)
+        assert store._startup_cache == {key: None}
+        assert store._startup_cache_partitions == {1, 2}
+        assert res == (None, True)
+
+    def test_persisted_offset(self, store):
+        tp = TP("topic", 0)
+        offset_key = store.get_offset_key(tp).encode()
+        store.bt_table.data = {offset_key: b"1"}
+        print(store.persisted_offset(tp))
+        assert store.persisted_offset(tp) == 1
