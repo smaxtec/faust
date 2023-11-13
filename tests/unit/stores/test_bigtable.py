@@ -742,5 +742,22 @@ class TestBigTableStore:
         tp = TP("topic", 0)
         offset_key = store.get_offset_key(tp).encode()
         store.bt_table.data = {offset_key: b"1"}
-        print(store.persisted_offset(tp))
+        store._mutation_batcher = MagicMock(flush=MagicMock())
+
         assert store.persisted_offset(tp) == 1
+        store._mutation_batcher.flush.assert_not_called()
+
+        store._mutation_batcher_enable = True
+        assert store.persisted_offset(tp) == 1
+        store._mutation_batcher.flush.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_stop(self, store):
+        store._mutation_batcher = MagicMock(flush=MagicMock())
+        store._mutation_batcher_enable = False
+        await store.stop()
+        store._mutation_batcher.flush.assert_not_called()
+
+        store._mutation_batcher_enable = True
+        await store.stop()
+        store._mutation_batcher.flush.assert_called_once()
