@@ -85,7 +85,10 @@ class BigTableMock:
         return row
 
     def _read_rows(self, row_set, **kwargs):
-        for k in row_set.keys:
+        iterator = row_set.keys
+        if len(iterator) == 0:
+            iterator = self.data.keys()
+        for k in iterator:
             res = None
             if b"_*_" in k:
                 for key in self.data.keys():
@@ -265,7 +268,7 @@ class TestBigTableStore:
         # Test with mutation buffer
         store._mutation_batcher_enable = True
         store._bigtable_del(self.TEST_KEY1)
-        store._set_mutation.assert_called_once_with(row_mock)
+        store._set_mutation.assert_called_once_with(self.TEST_KEY1, None, row_mock)
         assert row_mock.delete.call_count == 2
         assert row_mock.commit.call_count == 1
 
@@ -284,7 +287,7 @@ class TestBigTableStore:
         # Test with mutation buffer
         store._mutation_batcher_enable = True
         store._bigtable_set(self.TEST_KEY1, "a_value")
-        store._set_mutation.assert_called_once_with(row_mock)
+        store._set_mutation.assert_called_once_with(self.TEST_KEY1, "a_value", row_mock)
         assert row_mock.set_cell.call_count == 2
         assert row_mock.commit.call_count == 1
 
@@ -761,3 +764,24 @@ class TestBigTableStore:
         store._mutation_batcher_enable = True
         await store.stop()
         store._mutation_batcher.flush.assert_called_once()
+
+    def test_set_mutation(self, store):
+        store._mutation_batcher = MagicMock(flush=MagicMock())
+        store._set_mutation(self.TEST_KEY1, b"123", MagicMock())
+        store._mutation_batcher.flush.assert_not_called()
+        assert store._mutation_batcher_cache[self.TEST_KEY1] == b"123"
+
+    def test_bigtable_iteritems_with_global_table(self, store, bt_imports):
+        store.table.is_global = True
+        store._active_partitions = MagicMock(return_value=[1, 3])
+        # Add table to data fro partition 1 to 5 with corresponding offset keys
+        store.bt_table.data = {}
+        for i in range(1, 5):
+            key = store.get_offset_key(TP("topic", i)).encode()
+            store.bt_table.data[key] = str(i).encode()
+            tp_key = store._add_partition_prefix_to_key(f"key{i}".encode(), i)
+            store.bt_table.data[tp_key] = str(i).encode()
+
+        res = sorted(store._iteritems())
+        assert res == [(f"key{i}".encode(), str(i).encode()) for i in range(1, 5)]
+        store.bt_table.read_rows.assert_called_once()

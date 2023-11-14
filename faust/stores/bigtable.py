@@ -359,7 +359,7 @@ class BigTableStore(base.SerializedStore):
             start = time.time()
             if partitions is None:
                 partitions = self._active_partitions()
-            row_set = RowSet()
+            row_set = BT.RowSet()
             self.log.info(
                 f"BigtableStore: Iterating over {len(partitions)} partitions "
                 f"for table {self.table_name}"
