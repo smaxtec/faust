@@ -101,6 +101,7 @@ class BigTableStore(base.SerializedStore):
         self._mutation_batcher_enable = options.get(
             BigTableStore.BT_MUTATION_BATCHER_ENABLE_KEY, False
         )
+        self._mutation_batcher_cache = {}
         if self._mutation_batcher_enable:
             flush_count = options.get(
                 BigTableStore.BT_MUTATION_BATCHER_FLUSH_COUNT_KEY, 10_000
@@ -112,6 +113,7 @@ class BigTableStore(base.SerializedStore):
                 self.bt_table,
                 flush_count=flush_count,
                 flush_interval=flush_interval,
+                batch_completed_callback=lambda x: self._mutation_batcher_cache.clear(),
             )
 
     def _setup_caches(
@@ -253,15 +255,16 @@ class BigTableStore(base.SerializedStore):
         del self._invalidation_timer
         self._invalidation_timer = None
 
-    def _set_mutation(self, mutated_row: DirectRow):
+    def _set_mutation(self, key: bytes, value: Optional[bytes], mutated_row: DirectRow):
         self._mutation_batcher.mutate(mutated_row)
+        self._mutation_batcher_cache[key] = value
 
     def _bigtable_get(self, keys: List[bytes]) -> Tuple[Optional[bytes], Optional[int]]:
         rowset = BT.RowSet()
         for key in keys:
+            if self._mutation_batcher_enable and key in self._mutation_batcher_cache:
+                return self._mutation_batcher_cache[key]
             rowset.add_row_key(key)
-        if self._mutation_batcher_enable:
-            self._mutation_batcher.flush()
 
         rows = self.bt_table.read_rows(row_set=rowset, filter_=self.row_filter)
         for row in rows:
@@ -305,7 +308,7 @@ class BigTableStore(base.SerializedStore):
         )
 
         if self._mutation_batcher_enable:
-            self._set_mutation(row)
+            self._set_mutation(key, value, row)
         else:
             row.commit()
 
@@ -332,7 +335,7 @@ class BigTableStore(base.SerializedStore):
         row = self.bt_table.direct_row(key)
         row.delete()
         if self._mutation_batcher_enable:
-            self._set_mutation(row)
+            self._set_mutation(key, None, row)
         else:
             row.commit()
 
