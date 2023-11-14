@@ -88,7 +88,7 @@ class BigTableStore(base.SerializedStore):
             self._setup_mutation_batcher(options)
             self.key_index_size = app.conf.table_key_index_size
             self._key_index = LRUCache(limit=self.key_index_size)
-        except Exception as ex:
+        except Exception as ex:  # pragma: no cover
             logging.getLogger(__name__).error(f"Error in Bigtable init {ex}")
             raise ex
         super().__init__(url, app, table, **kwargs)
@@ -293,7 +293,7 @@ class BigTableStore(base.SerializedStore):
             if value is not None:
                 self._key_index[key] = partition
             return value
-        except Exception as ex:
+        except Exception as ex:  # pragma: no cover
             self.log.error(
                 f"Error in get for table {self.table_name} exception {ex} key {key}"
             )
@@ -323,7 +323,7 @@ class BigTableStore(base.SerializedStore):
 
             self._bigtable_set(key, value)
             self._key_index[key] = partition
-        except Exception as ex:
+        except Exception as ex:  # pragma: no cover
             self.log.error(
                 f"FaustBigtableException Error in set for "
                 f"table {self.table_name} exception {ex} key {key=} "
@@ -346,7 +346,7 @@ class BigTableStore(base.SerializedStore):
             for partition in partitions:
                 key_with_partition = self._add_partition_prefix_to_key(key, partition)
                 self._bigtable_del(key_with_partition)
-        except Exception as ex:
+        except Exception as ex:  # pragma: no cover
             self.log.error(
                 f"FaustBigtableException Error in del for "
                 f"table {self.table_name} exception {ex} key {key=} "
@@ -390,7 +390,7 @@ class BigTableStore(base.SerializedStore):
                 f"{self.table_name} _bigtable_iteritems took {end - start}s "
                 f"for partitions {partitions}"
             )
-        except Exception as ex:
+        except Exception as ex:  # pragma: no cover
             self.log.error(
                 f"FaustBigtableException Error "
                 f"in _iteritems for table {self.table_name}"
@@ -429,7 +429,7 @@ class BigTableStore(base.SerializedStore):
             if not self.app.conf.store_check_exists:
                 return True
             return self._get(key) is not None
-        except Exception as ex:
+        except Exception as ex:  # pragma: no cover
             self.log.error(
                 f"FaustBigtableException Error in _contains for table "
                 f"{self.table_name} exception "
@@ -479,7 +479,7 @@ class BigTableStore(base.SerializedStore):
         try:
             offset_key = self.get_offset_key(tp).encode()
             self._bigtable_set(offset_key, str(offset).encode())
-        except Exception:
+        except Exception:  # pragma: no cover
             self.log.error(
                 f"Failed to commit offset for {self.table.name}"
                 " -> will cause additional changelogs if restart happens"

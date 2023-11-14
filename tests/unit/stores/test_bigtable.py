@@ -48,9 +48,17 @@ class RowSetMock:
         self.keys = set()
         self.add_row_key = MagicMock(wraps=self._add_row_key)
         self.add_row_range_from_keys = MagicMock(wraps=self._add_row_range_from_keys)
+        self.add_row_range_with_prefix = MagicMock(
+            wraps=self._add_row_range_with_prefix
+        )
 
     def _add_row_key(self, key):
         self.keys.add(key)
+
+    def _add_row_range_with_prefix(self, prefix):
+        if isinstance(prefix, str):
+            prefix = prefix.encode()
+        self._add_row_range_from_keys(prefix, prefix, end_inclusive=True)
 
     def _add_row_range_from_keys(
         self, start_key: bytes, end_key: bytes, end_inclusive=False
@@ -785,3 +793,22 @@ class TestBigTableStore:
         res = sorted(store._iteritems())
         assert res == [(f"key{i}".encode(), str(i).encode()) for i in range(1, 5)]
         store.bt_table.read_rows.assert_called_once()
+
+    def test_bigtable_iteritems_with_global_table2(self, store, bt_imports):
+        store.table.is_global = False
+        store.table.use_partitioner = False
+        store._mutation_batcher_enable = True
+        store._mutation_batcher = MagicMock(flush=MagicMock())
+        store._active_partitions = MagicMock(return_value={1, 3})
+        # Add table to data fro partition 1 to 5 with corresponding offset keys
+        store.bt_table.data = {}
+        for i in range(1, 5):
+            key = store.get_offset_key(TP("topic", i)).encode()
+            store.bt_table.data[key] = str(i).encode()
+            tp_key = store._add_partition_prefix_to_key(f"key{i}".encode(), i)
+            store.bt_table.data[tp_key] = str(i).encode()
+
+        res = sorted(store._iteritems())
+        assert res == [(f"key{i}".encode(), str(i).encode()) for i in [1, 3]]
+        store.bt_table.read_rows.assert_called_once()
+        store._mutation_batcher.flush.assert_called_once()
