@@ -1,5 +1,4 @@
 from unittest.mock import MagicMock, call, patch
-import time
 
 import pytest
 
