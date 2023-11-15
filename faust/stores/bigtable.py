@@ -575,13 +575,13 @@ class BigTableStore(base.SerializedStore):
         self, table: CollectionT, tps: Set[TP], generation_id: int = 0
     ) -> None:
         # Fill cache with all keys for the partitions we are assigned
+        partitions = self._get_active_changelogtopic_partitions(table, tps)
+        self.log.info(f"Assigning partitions {partitions} for {table.name}")
         if self._startup_cache_enable is False:
             return
 
-        partitions = self._get_active_changelogtopic_partitions(table, tps)
         if len(partitions) == 0:
             return
-        self.log.info(f"Assigning partitions {partitions} for {table.name}")
         self._fill_caches(partitions)
 
     async def on_rebalance(
