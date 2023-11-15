@@ -287,8 +287,6 @@ class BigTableStore(base.SerializedStore):
                 return None
 
             keys = [self._add_partition_prefix_to_key(key, p) for p in partitions]
-            if len(keys) == 0:
-                return None
             value, partition = self._bigtable_get(keys)
             if value is not None:
                 self._key_index[key] = partition
