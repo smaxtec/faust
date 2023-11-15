@@ -228,7 +228,7 @@ class BigTableStore(base.SerializedStore):
         return self._get_current_partitions()
 
     @staticmethod
-    def bigtable_exrtact_row_data(row_data):
+    def bigtable_extract_row_data(row_data):
         return list(row_data.to_dict().values())[0][0].value
 
     def _del_cache(self, key: bytes):
@@ -270,7 +270,7 @@ class BigTableStore(base.SerializedStore):
         for row in rows:
             if row is not None:
                 partition = self._get_partition_from_bigtable_key(row.row_key)
-                return self.bigtable_exrtact_row_data(row), partition
+                return self.bigtable_extract_row_data(row), partition
         return None, None
 
     def _get(self, key: bytes) -> Optional[bytes]:
@@ -380,7 +380,7 @@ class BigTableStore(base.SerializedStore):
                 if need_all_keys and offset_key_prefix in row.row_key:
                     continue
 
-                value = self.bigtable_exrtact_row_data(row)
+                value = self.bigtable_extract_row_data(row)
                 key = self._remove_partition_prefix_from_bigtable_key(row.row_key)
                 yield key, value
             end = time.time()
@@ -463,7 +463,7 @@ class BigTableStore(base.SerializedStore):
         if self._mutation_batcher_enable:
             self._mutation_batcher.flush()
         row = self.bt_table.read_row(offset_key, filter_=self.row_filter)
-        offset = self.bigtable_exrtact_row_data(row) if row is not None else None
+        offset = self.bigtable_extract_row_data(row) if row is not None else None
         return int(offset) if offset is not None else None
 
     def set_persisted_offset(self, tp: TP, offset: int) -> None:
