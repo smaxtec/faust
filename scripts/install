@@ -4,7 +4,7 @@
 [ "$1" = "-p" ] && PYTHON=$2 || PYTHON="python3"
 
 REQUIREMENTS="requirements/test.txt"
-VENV="env-faust"
+VENV="venv"
 
 set -x
 
