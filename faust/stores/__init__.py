@@ -11,6 +11,7 @@ STORES: FactoryMapping[Type[StoreT]] = FactoryMapping(
     memory="faust.stores.memory:Store",
     rocksdb="faust.stores.rocksdb:Store",
     aerospike="faust.stores.aerospike:AeroSpikeStore",
+    bigtable="faust.stores.bigtable:BigTableStore",
 )
 STORES.include_setuptools_namespace("faust.stores")
 by_name = STORES.by_name
