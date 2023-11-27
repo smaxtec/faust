@@ -250,10 +250,20 @@ class TestBigTableStore:
         for idx, k in enumerate(keys):
             keys[idx] = store._add_partition_prefix_to_key(k, 0)
         store.bt_table.add_test_data(keys)
+
+        # Test get from bigtable
         value, partition = store._bigtable_get([keys[1]])
         store.bt_table.read_rows.assert_called_once()
         assert partition == 0
         assert value == keys[1]
+
+        # Test get from mutation buffer
+        store._mutation_batcher_enable = True
+        store._mutation_batcher_cache = {keys[1]: b"123"}
+        value, partition = store._bigtable_get([keys[1]])
+        store.bt_table.read_rows.assert_called_once()
+        assert value == b"123"
+        assert partition == 0
 
     def test_bigtable_get_on_empty(self, store, bt_imports):
         return_value = store._bigtable_get([self.TEST_KEY1, self.TEST_KEY2])
