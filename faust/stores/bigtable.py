@@ -263,7 +263,8 @@ class BigTableStore(base.SerializedStore):
         rowset = BT.RowSet()
         for key in keys:
             if self._mutation_batcher_enable and key in self._mutation_batcher_cache:
-                return self._mutation_batcher_cache[key]
+                partition = self._get_partition_from_bigtable_key(key)
+                return self._mutation_batcher_cache[key], partition
             rowset.add_row_key(key)
 
         rows = self.bt_table.read_rows(row_set=rowset, filter_=self.row_filter)
