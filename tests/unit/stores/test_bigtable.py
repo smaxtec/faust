@@ -248,13 +248,13 @@ class TestBigTableStore:
     def test_bigtable_get(self, store, bt_imports):
         keys = [self.TEST_KEY1, self.TEST_KEY2]
         for idx, k in enumerate(keys):
-            keys[idx] = store._add_partition_prefix_to_key(k, 0)
+            keys[idx] = store._add_partition_prefix_to_key(k, 2)
         store.bt_table.add_test_data(keys)
 
         # Test get from bigtable
         value, partition = store._bigtable_get([keys[1]])
         store.bt_table.read_rows.assert_called_once()
-        assert partition == 0
+        assert partition == 2
         assert value == keys[1]
 
         # Test get from mutation buffer
@@ -263,7 +263,7 @@ class TestBigTableStore:
         value, partition = store._bigtable_get([keys[1]])
         store.bt_table.read_rows.assert_called_once()
         assert value == b"123"
-        assert partition == 0
+        assert partition == 2
 
     def test_bigtable_get_on_empty(self, store, bt_imports):
         return_value = store._bigtable_get([self.TEST_KEY1, self.TEST_KEY2])
@@ -821,3 +821,25 @@ class TestBigTableStore:
         assert res == [(f"key{i}".encode(), str(i).encode()) for i in [1, 3]]
         store.bt_table.read_rows.assert_called_once()
         store._mutation_batcher.flush.assert_called_once()
+
+    def test_get_after_delete(self, store, bt_imports):
+        partitions = [19, 20]
+        store._get_cache = MagicMock(return_value=(b"this is ignored", False))
+        store._key_index = {}
+        store._get_current_partitions = MagicMock(return_value=partitions)
+        row_mock = MagicMock()
+        row_mock.commit = MagicMock()
+        row_mock.delete = MagicMock()
+        store.bt_table.direct_row = MagicMock(return_value=row_mock)
+        store.bt_table.direct_row = MagicMock(return_value=row_mock)
+        store._mutation_batcher_enable = True
+
+        key_right = b"20_..._" + self.TEST_KEY1
+        key_wrong = b"19_..._" + self.TEST_KEY1
+
+        # This is the case if a delete happened before
+        store._mutation_batcher_cache = {key_right: b"123", key_wrong: None}
+        store.bt_table.add_test_data(key_right)
+
+        res = store._get(self.TEST_KEY1)
+        assert res is not None

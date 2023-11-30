@@ -264,7 +264,12 @@ class BigTableStore(base.SerializedStore):
         for key in keys:
             if self._mutation_batcher_enable and key in self._mutation_batcher_cache:
                 partition = self._get_partition_from_bigtable_key(key)
-                return self._mutation_batcher_cache[key], partition
+                value = self._mutation_batcher_cache[key]
+                if value is not None:
+                    # Since deletes can happen async we need to make sure
+                    # that we don't return a value for a delete that happened on
+                    # another partition
+                    return value, partition
             rowset.add_row_key(key)
 
         rows = self.bt_table.read_rows(row_set=rowset, filter_=self.row_filter)
