@@ -654,6 +654,8 @@ class TestBigTableStore:
     @pytest.mark.asyncio
     async def test_bigtable_on_rebalance(self, store, bt_imports):
         store.assign_partitions = MagicMock(wraps=store.assign_partitions)
+        store.revoke_partitions = MagicMock(wraps=store.revoke_partitions)
+
         tps_table = {
             "topic1",
             "topic2",
@@ -670,6 +672,7 @@ class TestBigTableStore:
         store._startup_cache_enable = False
         await store.on_rebalance(assigned, revoked, newly_assigned, generation_id=1)
         store.assign_partitions.assert_called_once_with(store.table, newly_assigned, 1)
+        store.revoke_partitions.assert_called_once_with(store.table, revoked)
         store._fill_caches.assert_not_called()
         newly_assigned = set()
 
@@ -684,6 +687,14 @@ class TestBigTableStore:
         await store.on_rebalance(assigned, revoked, newly_assigned, generation_id=3)
         store.assign_partitions.assert_called_with(store.table, newly_assigned, 3)
         store._fill_caches.assert_called_once_with({3, 4})
+
+    def test_revoke_partitions(self, store):
+        store._startup_cache_partitions = {1, 2, 3}
+        store._startup_cache = {b"key1": b"value1", b"key2": b"value2"}
+        revoked = {TP("topic", 1), TP("topic", 2)}
+        store.table = MagicMock(changelog_topic=MagicMock(topics={"topic"}))
+        store.revoke_partitions(store.table, revoked)
+        assert store._startup_cache_partitions == {3}
 
     def test_contains(self, store, bt_imports):
         store._get = MagicMock(return_value=b"test_value")
