@@ -588,6 +588,12 @@ class BigTableStore(base.SerializedStore):
             return
         self._fill_caches(partitions)
 
+    def revoke_partitions(self, table: CollectionT, tps: Set[TP]) -> None:
+        partitions = self._get_active_changelogtopic_partitions(table, tps)
+        self._startup_cache_partitions.difference_update(partitions)
+        # The memory of the startup cache will be freed after the ttl is over
+        self.log.info(f"Revoking partitions {partitions} for {table.name}")
+
     async def on_rebalance(
         self,
         assigned: Set[TP],
@@ -604,6 +610,7 @@ class BigTableStore(base.SerializedStore):
                 for which we were not assigned the last time.
             generation_id: the metadata generation identifier for the re-balance
         """
+        self.revoke_partitions(self.table, revoked)
         await self.assign_partitions(self.table, newly_assigned, generation_id)
 
     async def stop(self) -> None:
