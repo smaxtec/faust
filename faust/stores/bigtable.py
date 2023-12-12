@@ -589,7 +589,10 @@ class BigTableStore(base.SerializedStore):
         self._fill_caches(partitions)
 
     def revoke_partitions(self, table: CollectionT, tps: Set[TP]) -> None:
-        partitions = self._get_active_changelogtopic_partitions(table, tps)
+        partitions = set()
+        for tp in tps:
+            if tp.topic in table.changelog_topic.topics:
+                partitions.add(tp.partition)
         self._startup_cache_partitions.difference_update(partitions)
         # The memory of the startup cache will be freed after the ttl is over
         self.log.info(f"Revoking partitions {partitions} for {table.name}")
