@@ -580,12 +580,12 @@ class BigTableStore(base.SerializedStore):
     ) -> None:
         # Fill cache with all keys for the partitions we are assigned
         partitions = self._get_active_changelogtopic_partitions(table, tps)
-        self.log.info(f"Assigning partitions {partitions} for {table.name}")
         if self._startup_cache_enable is False:
             return
 
         if len(partitions) == 0:
             return
+        self.log.info(f"Assigning partitions {partitions} for {table.name}")
         self._fill_caches(partitions)
 
     def revoke_partitions(self, table: CollectionT, tps: Set[TP]) -> None:
@@ -593,8 +593,13 @@ class BigTableStore(base.SerializedStore):
         for tp in tps:
             if tp.topic in table.changelog_topic.topics:
                 partitions.add(tp.partition)
+
+        if len(partitions) == 0:
+            return
+
         self._startup_cache_partitions.difference_update(partitions)
         # The memory of the startup cache will be freed after the ttl is over
+        # TODO: Free memory that is not needed instantly
         self.log.info(f"Revoking partitions {partitions} for {table.name}")
 
     async def on_rebalance(
