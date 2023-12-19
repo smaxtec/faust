@@ -711,6 +711,7 @@ class TestBigTableStore:
         revoked = {TP("topic3", 2)}
         newly_assigned = {TP("topic4", 3), TP("topic5", 4)}
         store._startup_cache_enable = False
+        store._startup_cache = None
         await store.on_rebalance(assigned, revoked, newly_assigned, generation_id=1)
         store.assign_partitions.assert_called_once_with(store.table, newly_assigned, 1)
         store.revoke_partitions.assert_called_once_with(store.table, revoked)
@@ -719,15 +720,18 @@ class TestBigTableStore:
 
         # Test with empty newly_assigned
         store._startup_cache_enable = True
+        store._startup_cache = {}
+        store.assign_partitions.reset_mock()
         await store.on_rebalance(assigned, revoked, newly_assigned, generation_id=2)
-        store.assign_partitions.assert_called_with(store.table, newly_assigned, 2)
+        store.assign_partitions.assert_not_called()
         store._fill_caches.assert_not_called()
 
         store._startup_cache_enable = True
+        store._startup_cache = {}
         newly_assigned = {TP("topic4", 3), TP("topic5", 4)}
         await store.on_rebalance(assigned, revoked, newly_assigned, generation_id=3)
         store.assign_partitions.assert_called_with(store.table, newly_assigned, 3)
-        store._fill_caches.assert_has_calls([call(3), call(4)])
+        assert set(store._startup_cache.keys()) == {3, 4}
 
     def test_revoke_partitions(self, store):
         store._startup_cache = {b"key1": b"value1", b"key2": b"value2"}
@@ -888,3 +892,18 @@ class TestBigTableStore:
 
         res = store._get(self.TEST_KEY1)
         assert res is not None
+
+    @pytest.mark.asyncio
+    async def test_on_recovery_completed(self, store, bt_imports):
+        store._mutation_batcher_enable = True
+        store._mutation_batcher = MagicMock(flush=MagicMock())
+
+        store._startup_cache_enable = True
+        store._invalidation_timer = None
+        store._startup_cache = {}
+
+        active_tps = {TP("topic4", 3), TP("topic5", 4)}
+        standby_tps = {}
+        await store.on_recovery_completed(active_tps, standby_tps)
+        assert store._mutation_batcher.flush.call_count == 2  # once for every partition
+        assert set(store._startup_cache.keys()) == {3, 4}

@@ -519,10 +519,8 @@ class BigTableStore(base.SerializedStore):
             bt_key = self._add_partition_prefix_to_key(msg.key, msg.partition)
 
             if msg.value is None:
-                self._del_cache(msg.key)
                 self._bigtable_del(bt_key)
             else:
-                self._set_cache(msg.partition, msg.key, msg.value)
                 self._bigtable_set(bt_key, msg.value)
 
         for tp, offset in tp_offsets.items():
@@ -593,9 +591,9 @@ class BigTableStore(base.SerializedStore):
         self.log.info(f"Assigning partitions {partitions} for {table.name}")
         if len(partitions) == 0 or self._startup_cache_enable is False:
             return
+
         for partition in partitions:
-            self._fill_caches(partition)
-            await asyncio.sleep(0)
+            self._startup_cache[partition] = {}
 
     def revoke_partitions(self, table: CollectionT, tps: Set[TP]) -> None:
         partitions = set()
@@ -603,6 +601,7 @@ class BigTableStore(base.SerializedStore):
             if tp.topic in table.changelog_topic.topics:
                 partitions.add(tp.partition)
 
+        self.log.info(f"Revoking partitions {partitions} for {table.name}")
         if len(partitions) == 0 or self._startup_cache_enable is False:
             return
 
@@ -611,7 +610,6 @@ class BigTableStore(base.SerializedStore):
                 self._startup_cache[partition].clear()
                 del self._startup_cache[partition]
         gc.collect()
-        self.log.info(f"Revoking partitions {partitions} for {table.name}")
 
     async def on_rebalance(
         self,
@@ -633,8 +631,18 @@ class BigTableStore(base.SerializedStore):
         async with self.db_lock:
             if len(revoked) > 0:
                 self.revoke_partitions(self.table, revoked)
-            if len(assigned) > 0:
+            if len(newly_assigned) > 0:
                 await self.assign_partitions(self.table, newly_assigned, generation_id)
+
+    async def on_recovery_completed(
+        self, active_tps: Set[TP], standby_tps: Set[TP]
+    ) -> None:
+        """Signal that table recovery completed."""
+        partitions = {tp.partition for tp in active_tps}
+        for p in partitions:
+            # This also flushes to bigtable
+            self._fill_caches(p)
+            await asyncio.sleep(0)
 
     async def stop(self) -> None:
         if self._mutation_batcher_enable:
