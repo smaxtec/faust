@@ -591,7 +591,8 @@ class TestBigTableStore:
         partitions = {0, 1}
         partitions2 = {0, 2}
 
-        store._fill_caches(partitions)
+        for partition in partitions:
+            store._fill_caches(partition)
         calls = [call(partitions={p}) for p in partitions]
         store._bigtable_iteritems.assert_has_calls(calls)
 
@@ -612,7 +613,8 @@ class TestBigTableStore:
             side_effect=[[(b"key3", b"value3")], [(b"key4", b"value4")]]
         )
         store._set_cache = MagicMock()
-        store._fill_caches(partitions2)
+        for p in partitions2:
+            store._fill_caches(p)
         new_invalid_timer = store._invalidation_timer.__hash__()
         # Check if old invalidation timer is different from new one
         assert old_invalid_timer != new_invalid_timer
@@ -651,7 +653,8 @@ class TestBigTableStore:
 
         partitions = {0, 1}
 
-        store._fill_caches(partitions)
+        for p in partitions:
+            store._fill_caches(p)
 
         store._set_cache.assert_has_calls(
             [
@@ -675,6 +678,15 @@ class TestBigTableStore:
         store.table = MagicMock(changelog_topic=MagicMock(topics=tps_table))
 
         tps = {TP("changelog_topic", 0), TP("other_topic", 1)}
+        # Scenario 1: With no rebalance_ack
+        store.rebalance_ack = False
+        active_partitions = store._get_active_changelogtopic_partitions(
+            store.table, tps
+        )
+        assert active_partitions == set()
+
+        # Scenario 2: With no rebalance_ack
+        store.rebalance_ack = True
         active_partitions = store._get_active_changelogtopic_partitions(
             store.table, tps
         )
@@ -715,7 +727,7 @@ class TestBigTableStore:
         newly_assigned = {TP("topic4", 3), TP("topic5", 4)}
         await store.on_rebalance(assigned, revoked, newly_assigned, generation_id=3)
         store.assign_partitions.assert_called_with(store.table, newly_assigned, 3)
-        store._fill_caches.assert_called_once_with({3, 4})
+        store._fill_caches.assert_has_calls([call(3), call(4)])
 
     def test_revoke_partitions(self, store):
         store._startup_cache = {b"key1": b"value1", b"key2": b"value2"}

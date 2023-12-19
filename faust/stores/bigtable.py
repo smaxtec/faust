@@ -1,4 +1,5 @@
 """BigTable storage."""
+import asyncio
 import gc
 import logging
 import time
@@ -82,6 +83,8 @@ class BigTableStore(base.SerializedStore):
         **kwargs: Any,
     ) -> None:
         self._set_options(options)
+        self.db_lock = asyncio.Lock()
+        self.rebalance_ack = False
         try:
             self._setup_bigtable(table, options)
             self._setup_caches(options)
@@ -549,13 +552,12 @@ class BigTableStore(base.SerializedStore):
         """
         raise NotImplementedError("Not yet implemented for Bigtable.")
 
-    def _fill_caches(self, partitions):
-        partitions.difference_update(self._startup_cache)
-        for partition in partitions:
-            if partition not in self._startup_cache:
-                self._startup_cache[partition] = {}
-            for k, v in self._bigtable_iteritems(partitions={partition}):
-                self._set_cache(partition, k, v)
+    def _fill_caches(self, partition):
+        if partition in self._startup_cache:
+            return
+        self._startup_cache[partition] = {}
+        for k, v in self._bigtable_iteritems(partitions={partition}):
+            self._set_cache(partition, k, v)
 
         # Invalidate startup cache after self._startup_cache_ttl
         # or reset the timer if already running
@@ -578,19 +580,22 @@ class BigTableStore(base.SerializedStore):
         standby_tps = self.app.assignor.assigned_standbys()
         my_topics = table.changelog_topic.topics
         for tp in tps:
-            if tp.topic in my_topics and tp not in standby_tps:
+            if tp.topic in my_topics and tp not in standby_tps and self.rebalance_ack:
                 partitions.add(tp.partition)
         return partitions
 
     async def assign_partitions(
         self, table: CollectionT, tps: Set[TP], generation_id: int = 0
     ) -> None:
+        self.rebalance_ack = True
         # Fill cache with all keys for the partitions we are assigned
         partitions = self._get_active_changelogtopic_partitions(table, tps)
         self.log.info(f"Assigning partitions {partitions} for {table.name}")
         if len(partitions) == 0 or self._startup_cache_enable is False:
             return
-        self._fill_caches(partitions)
+        for partition in partitions:
+            self._fill_caches(partition)
+            await asyncio.sleep(0)
 
     def revoke_partitions(self, table: CollectionT, tps: Set[TP]) -> None:
         partitions = set()
@@ -624,10 +629,12 @@ class BigTableStore(base.SerializedStore):
                 for which we were not assigned the last time.
             generation_id: the metadata generation identifier for the re-balance
         """
-        if len(revoked) > 0:
-            self.revoke_partitions(self.table, revoked)
-        if len(assigned) > 0:
-            await self.assign_partitions(self.table, newly_assigned, generation_id)
+        self.rebalance_ack = False
+        async with self.db_lock:
+            if len(revoked) > 0:
+                self.revoke_partitions(self.table, revoked)
+            if len(assigned) > 0:
+                await self.assign_partitions(self.table, newly_assigned, generation_id)
 
     async def stop(self) -> None:
         if self._mutation_batcher_enable:
