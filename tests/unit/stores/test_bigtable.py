@@ -478,6 +478,8 @@ class TestBigTableStore:
     def test_iteritems_with_startup_cache(self, store, bt_imports):
         store._active_partitions = MagicMock(return_value=[1, 3])
         store._startup_cache = {}
+        store._startup_cache_enable = True
+        store._startup_cache_partitions = {1}
         store._startup_cache[1] = {
             self.TEST_KEY1: b"this is a value",
             self.TEST_KEY2: b"this is another value",
@@ -720,6 +722,7 @@ class TestBigTableStore:
 
         # Test with empty newly_assigned
         store._startup_cache_enable = True
+        store._startup_cache_partitions = {}
         store._startup_cache = {}
         store.assign_partitions.reset_mock()
         await store.on_rebalance(assigned, revoked, newly_assigned, generation_id=2)
@@ -731,7 +734,8 @@ class TestBigTableStore:
         newly_assigned = {TP("topic4", 3), TP("topic5", 4)}
         await store.on_rebalance(assigned, revoked, newly_assigned, generation_id=3)
         store.assign_partitions.assert_called_with(store.table, newly_assigned, 3)
-        assert set(store._startup_cache.keys()) == {3, 4}
+        assert set(store._startup_cache.keys()) == set()
+        assert store._startup_cache_partitions == {3, 4}
 
     def test_revoke_partitions(self, store):
         store._startup_cache = {b"key1": b"value1", b"key2": b"value2"}
@@ -772,7 +776,7 @@ class TestBigTableStore:
         store._setup_caches(options=options)
         assert store._startup_cache_enable is False
         assert store._startup_cache_ttl == -1  # Default value
-        assert store._startup_cache is None
+        assert hasattr(store, "_startup_cache") is False
         assert store._startup_cache_enable is False
 
     def test_set_del_get_cache(self, store):
@@ -794,6 +798,7 @@ class TestBigTableStore:
 
         # Now with enabled startup cache
         store._startup_cache_enable = True
+        store._startup_cache_partitions = {partition}
         store._startup_cache = {}
         store._startup_cache[partition] = {}
 

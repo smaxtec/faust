@@ -127,11 +127,11 @@ class BigTableStore(base.SerializedStore):
             BigTableStore.BT_STARTUP_CACHE_ENABLE_KEY, False
         )
 
-        self._startup_cache = None
         self._startup_cache_ttl = options.get(
             BigTableStore.BT_STARTUP_CACHE_TTL_KEY, -1
         )
         if self._startup_cache_enable:
+            self._startup_cache_partitions = set()
             self._startup_cache: Dict[int, Dict[bytes, bytes]] = {}
             self._invalidation_timer: Optional[threading.Timer] = None
 
@@ -231,20 +231,25 @@ class BigTableStore(base.SerializedStore):
         return list(row_data.to_dict().values())[0][0].value
 
     def _del_cache(self, key: bytes):
-        if self._startup_cache is not None:
-            for partition in self._startup_cache:
-                self._startup_cache[partition][key] = None
+        if not self._startup_cache_enable:
+            return
+
+        for partition in self._startup_cache_partitions:
+            self._startup_cache[partition][key] = None
 
     def _set_cache(self, partition: int, key: bytes, value):
-        if self._startup_cache is not None:
-            self._startup_cache[partition][key] = value
+        if not self._startup_cache_enable:
+            return
+        self._startup_cache[partition][key] = value
 
     def _get_cache(self, partition: int, key: bytes):
-        if self._startup_cache_enable and self._startup_cache is not None:
-            if partition not in self._startup_cache:
-                return None, False
-            if key in self._startup_cache[partition]:
-                return self._startup_cache[partition][key], True
+        if not self._startup_cache_enable:
+            return None, False
+
+        if partition not in self._startup_cache_partitions:
+            return None, False
+        if key in self._startup_cache[partition]:
+            return self._startup_cache[partition][key], True
         return None, False
 
     def _invalidate_startup_cache(self):
@@ -252,6 +257,7 @@ class BigTableStore(base.SerializedStore):
             for partition in self._startup_cache:
                 self._startup_cache[partition].clear()
             self._startup_cache.clear()
+            self._startup_cache_partitions = set()
             gc.collect()
             self.log.info(f"Invalidated startup cache for table {self.table_name}")
         self._invalidation_timer.cancel()
@@ -288,10 +294,10 @@ class BigTableStore(base.SerializedStore):
             for partition in partitions:
                 value, found = self._get_cache(partition, key)
                 if found:
+                    # We only trust the value cache if we
+                    # find something
                     return value
-            # Remove partitions that we already have in cache
-            partitions.difference_update(self._startup_cache or {})
-            # Nothing todo
+
             if len(partitions) == 0:
                 return None
 
@@ -407,15 +413,16 @@ class BigTableStore(base.SerializedStore):
     def _iteritems(
         self, partitions: Optional[List[int]] = None
     ) -> Iterator[Tuple[bytes, bytes]]:
-        if self._startup_cache is not None:
-            if partitions is None:
-                active_partitions = set(self._active_partitions())
-                cache_partitions = active_partitions.intersection(self._startup_cache)
-                for p in cache_partitions:
-                    for k, v in self._startup_cache[p].items():
-                        if v is not None:
-                            yield k, v
-                partitions = list(active_partitions.difference(cache_partitions))
+        if self._startup_cache_enable and partitions is None:
+            active_partitions = set(self._active_partitions())
+            cache_partitions = active_partitions.intersection(
+                self._startup_cache_partitions
+            )
+            for p in cache_partitions:
+                for k, v in self._startup_cache[p].items():
+                    if v is not None:
+                        yield k, v
+            partitions = list(active_partitions.difference(cache_partitions))
 
         if partitions is None or len(partitions) > 0:
             yield from self._bigtable_iteritems(partitions)
@@ -553,6 +560,7 @@ class BigTableStore(base.SerializedStore):
     def _fill_caches(self, partition):
         if partition in self._startup_cache:
             return
+
         self._startup_cache[partition] = {}
         for k, v in self._bigtable_iteritems(partitions={partition}):
             self._set_cache(partition, k, v)
@@ -592,8 +600,7 @@ class BigTableStore(base.SerializedStore):
         if len(partitions) == 0 or self._startup_cache_enable is False:
             return
 
-        for partition in partitions:
-            self._startup_cache[partition] = {}
+        self._startup_cache_partitions |= partitions
 
     def revoke_partitions(self, table: CollectionT, tps: Set[TP]) -> None:
         partitions = set()
@@ -605,10 +612,11 @@ class BigTableStore(base.SerializedStore):
         if len(partitions) == 0 or self._startup_cache_enable is False:
             return
 
-        for partition in partitions.intersection(self._startup_cache or {}):
+        for partition in partitions.intersection(self._startup_cache_partitions):
             if partition in self._startup_cache:
                 self._startup_cache[partition].clear()
                 del self._startup_cache[partition]
+        self._startup_cache_partitions = set(self._startup_cache.keys())
         gc.collect()
 
     async def on_rebalance(
