@@ -637,6 +637,30 @@ class TestBigTableStore:
         assert store._invalidation_timer is None
 
     @pytest.mark.asyncio
+    async def test_fill_caches_no_ttl(self, store, bt_imports):
+        store._bigtable_iteritems = MagicMock(
+            return_value=[(b"key1", b"value1"), (b"key2", b"value2")]
+        )
+        store._set_cache = MagicMock()
+        store._startup_cache_ttl = 0
+        store._invalidation_timer = None
+        store._startup_cache_partitions = set()
+        store._startup_cache = {}
+
+        partitions = {TP("topic", 0), TP("topic", 1)}
+        partitions2 = {TP("topic", 0), TP("topic", 2)}
+
+        store._fill_caches(partitions)
+
+        assert store._bigtable_iteritems.call_args == call(partitions=partitions)
+        assert store._set_cache.call_args_list == [
+            call(b"key1", b"value1"),
+            call(b"key2", b"value2"),
+        ]
+        assert store._startup_cache_partitions == partitions
+        assert store._invalidation_timer is None
+
+    @pytest.mark.asyncio
     async def test__get_active_changelogtopic_partitions(self, store):
         tps_table = {
             "changelog_topic",
@@ -729,7 +753,7 @@ class TestBigTableStore:
         }
         store._setup_caches(options=options)
         assert store._startup_cache_enable is False
-        assert store._startup_cache_ttl == 30 * 60  # Default value
+        assert store._startup_cache_ttl == -1  # Default value
         assert store._startup_cache is None
         assert store._startup_cache_partitions == set()
         assert store._startup_cache_enable is False
