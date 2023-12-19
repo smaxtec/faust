@@ -1,3 +1,4 @@
+from functools import wraps
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -623,14 +624,15 @@ class TestBigTableStore:
         assert store._invalidation_timer is not None
         assert store._invalidation_timer.is_alive()
 
-        store._bigtable_iteritems.assert_called_with(partitions={2})
-        assert store._bigtable_iteritems.call_count == 1
+        store._bigtable_iteritems.assert_has_calls(
+            [call(partitions={2}), call(partitions={0})], any_order=True
+        )
         store._set_cache.assert_has_calls(
             [
                 # Key 4 is ignored because it should already be loaded.
                 # Because in our scenario the second key is never returned
-                # call(0, b"key4", b"value4"),
-                call(2, b"key3", b"value3"),
+                call(0, b"key3", b"value3"),
+                call(2, b"key4", b"value4"),
             ]
         )
         assert store._invalidation_timer is not None
@@ -722,20 +724,11 @@ class TestBigTableStore:
 
         # Test with empty newly_assigned
         store._startup_cache_enable = True
-        store._startup_cache_partitions = {}
         store._startup_cache = {}
         store.assign_partitions.reset_mock()
         await store.on_rebalance(assigned, revoked, newly_assigned, generation_id=2)
         store.assign_partitions.assert_not_called()
         store._fill_caches.assert_not_called()
-
-        store._startup_cache_enable = True
-        store._startup_cache = {}
-        newly_assigned = {TP("topic4", 3), TP("topic5", 4)}
-        await store.on_rebalance(assigned, revoked, newly_assigned, generation_id=3)
-        store.assign_partitions.assert_called_with(store.table, newly_assigned, 3)
-        assert set(store._startup_cache.keys()) == set()
-        assert store._startup_cache_partitions == {3, 4}
 
     def test_revoke_partitions(self, store):
         store._startup_cache = {b"key1": b"value1", b"key2": b"value2"}
@@ -900,8 +893,9 @@ class TestBigTableStore:
 
     @pytest.mark.asyncio
     async def test_on_recovery_completed(self, store, bt_imports):
-        store._mutation_batcher_enable = True
-        store._mutation_batcher = MagicMock(flush=MagicMock())
+        store._bigtable_iteritems = MagicMock(
+            side_effect=[[(b"key1", b"value1")], [(b"key2", b"value2")]]
+        )
 
         store._startup_cache_enable = True
         store._invalidation_timer = None
@@ -910,5 +904,7 @@ class TestBigTableStore:
         active_tps = {TP("topic4", 3), TP("topic5", 4)}
         standby_tps = {}
         await store.on_recovery_completed(active_tps, standby_tps)
-        assert store._mutation_batcher.flush.call_count == 2  # once for every partition
+        store._bigtable_iteritems.assert_has_calls(
+            [call(partitions={3}), call(partitions={4})]
+        )
         assert set(store._startup_cache.keys()) == {3, 4}
