@@ -400,11 +400,10 @@ class TestBigTableStore:
         assert res is None
 
         # Scenario: Cache miss, but partition should be in startup cache
-        store._startup_cache_partitions = {19, 20}
         store._get_cache = MagicMock(return_value=(None, False))
         store._bigtable_get = MagicMock(return_value=(None, None))
         res = store._get(self.TEST_KEY2)
-        store._bigtable_get.assert_not_called()
+        store._bigtable_get.assert_called_once()
         assert res is None
 
     def test_set(self, store):
@@ -427,7 +426,7 @@ class TestBigTableStore:
             store._set(self.TEST_KEY1, b"a_value")
 
             key = store._add_partition_prefix_to_key(self.TEST_KEY1, 69)
-            store._set_cache.assert_called_with(self.TEST_KEY1, b"a_value")
+            store._set_cache.assert_called_with(69, self.TEST_KEY1, b"a_value")
             store._bigtable_set.assert_called_once_with(key, b"a_value")
 
     def test_del(self, store):
@@ -478,12 +477,12 @@ class TestBigTableStore:
 
     def test_iteritems_with_startup_cache(self, store, bt_imports):
         store._active_partitions = MagicMock(return_value=[1, 3])
-        store._startup_cache = {
+        store._startup_cache = {}
+        store._startup_cache[1] = {
             self.TEST_KEY1: b"this is a value",
             self.TEST_KEY2: b"this is another value",
-            b"Dont return this": None,
+            b"Dont return this, because this is a offset key": None,
         }
-        store._startup_cache_partitions = [1]
 
         store._bigtable_iteritems = MagicMock(wraps=store._bigtable_iteritems)
         store.bt_table.read_rows = MagicMock(
@@ -501,7 +500,7 @@ class TestBigTableStore:
             ]
         )
         res = sorted(store._iteritems())
-        store._bigtable_iteritems.assert_called_once_with({3})
+        store._bigtable_iteritems.assert_called_once_with([3])
         all_entries = {
             self.TEST_KEY1: b"this is a value",
             self.TEST_KEY2: b"this is another value",
@@ -582,25 +581,26 @@ class TestBigTableStore:
     @pytest.mark.asyncio
     async def test_fill_caches(self, store, bt_imports):
         store._bigtable_iteritems = MagicMock(
-            return_value=[(b"key1", b"value1"), (b"key2", b"value2")]
+            side_effect=[[(b"key1", b"value1")], [(b"key2", b"value2")]]
         )
         store._set_cache = MagicMock()
         store._startup_cache_ttl = 1800
         store._invalidation_timer = None
-        store._startup_cache_partitions = set()
         store._startup_cache = {}
 
-        partitions = {TP("topic", 0), TP("topic", 1)}
-        partitions2 = {TP("topic", 0), TP("topic", 2)}
+        partitions = {0, 1}
+        partitions2 = {0, 2}
 
         store._fill_caches(partitions)
+        calls = [call(partitions={p}) for p in partitions]
+        store._bigtable_iteritems.assert_has_calls(calls)
 
-        assert store._bigtable_iteritems.call_args == call(partitions=partitions)
-        assert store._set_cache.call_args_list == [
-            call(b"key1", b"value1"),
-            call(b"key2", b"value2"),
-        ]
-        assert store._startup_cache_partitions == partitions
+        store._set_cache.assert_has_calls(
+            [
+                call(0, b"key1", b"value1"),
+                call(1, b"key2", b"value2"),
+            ]
+        )
         assert store._invalidation_timer is not None
         assert store._invalidation_timer.is_alive()
 
@@ -609,7 +609,7 @@ class TestBigTableStore:
         old_invalid_timer = store._invalidation_timer.__hash__()
 
         store._bigtable_iteritems = MagicMock(
-            return_value=[(b"key3", b"value3"), (b"key4", b"value4")]
+            side_effect=[[(b"key3", b"value3")], [(b"key4", b"value4")]]
         )
         store._set_cache = MagicMock()
         store._fill_caches(partitions2)
@@ -619,12 +619,16 @@ class TestBigTableStore:
         assert store._invalidation_timer is not None
         assert store._invalidation_timer.is_alive()
 
-        assert store._bigtable_iteritems.call_args == call(partitions=partitions2)
-        assert store._set_cache.call_args_list == [
-            call(b"key3", b"value3"),
-            call(b"key4", b"value4"),
-        ]
-        assert store._startup_cache_partitions == partitions | partitions2
+        store._bigtable_iteritems.assert_called_with(partitions={2})
+        assert store._bigtable_iteritems.call_count == 1
+        store._set_cache.assert_has_calls(
+            [
+                # Key 4 is ignored because it should already be loaded.
+                # Because in our scenario the second key is never returned
+                # call(0, b"key4", b"value4"),
+                call(2, b"key3", b"value3"),
+            ]
+        )
         assert store._invalidation_timer is not None
         assert store._invalidation_timer.is_alive()
 
@@ -633,31 +637,32 @@ class TestBigTableStore:
         store._invalidate_startup_cache()
 
         assert store._startup_cache == {}
-        assert store._startup_cache_partitions == set()
         assert store._invalidation_timer is None
 
     @pytest.mark.asyncio
     async def test_fill_caches_no_ttl(self, store, bt_imports):
         store._bigtable_iteritems = MagicMock(
-            return_value=[(b"key1", b"value1"), (b"key2", b"value2")]
+            side_effect=[[(b"key1", b"value1")], [(b"key2", b"value2")]]
         )
         store._set_cache = MagicMock()
         store._startup_cache_ttl = 0
         store._invalidation_timer = None
-        store._startup_cache_partitions = set()
         store._startup_cache = {}
 
-        partitions = {TP("topic", 0), TP("topic", 1)}
-        partitions2 = {TP("topic", 0), TP("topic", 2)}
+        partitions = {0, 1}
 
         store._fill_caches(partitions)
 
-        assert store._bigtable_iteritems.call_args == call(partitions=partitions)
+        store._set_cache.assert_has_calls(
+            [
+                call(0, b"key1", b"value1"),
+                call(1, b"key2", b"value2"),
+            ]
+        )
         assert store._set_cache.call_args_list == [
-            call(b"key1", b"value1"),
-            call(b"key2", b"value2"),
+            call(0, b"key1", b"value1"),
+            call(1, b"key2", b"value2"),
         ]
-        assert store._startup_cache_partitions == partitions
         assert store._invalidation_timer is None
 
     @pytest.mark.asyncio
@@ -713,12 +718,10 @@ class TestBigTableStore:
         store._fill_caches.assert_called_once_with({3, 4})
 
     def test_revoke_partitions(self, store):
-        store._startup_cache_partitions = {1, 2, 3}
         store._startup_cache = {b"key1": b"value1", b"key2": b"value2"}
         revoked = {TP("topic", 1), TP("topic", 2)}
         store.table = MagicMock(changelog_topic=MagicMock(topics={"topic"}))
         store.revoke_partitions(store.table, revoked)
-        assert store._startup_cache_partitions == {3}
 
     def test_contains(self, store, bt_imports):
         store._get = MagicMock(return_value=b"test_value")
@@ -744,7 +747,6 @@ class TestBigTableStore:
         assert store._startup_cache_enable is True
         assert store._startup_cache_ttl == 60
         assert isinstance(store._startup_cache, dict)
-        assert isinstance(store._startup_cache_partitions, set)
         assert store._invalidation_timer is None
 
     def test_setup_caches_startup_cache_disable(self, store):
@@ -755,42 +757,38 @@ class TestBigTableStore:
         assert store._startup_cache_enable is False
         assert store._startup_cache_ttl == -1  # Default value
         assert store._startup_cache is None
-        assert store._startup_cache_partitions == set()
         assert store._startup_cache_enable is False
 
     def test_set_del_get_cache(self, store):
         store._startup_cache_enable = False
         store._startup_cache = None
-        store._startup_cache_partitions = set()
+        partition = 1
 
         key = self.TEST_KEY1
 
-        store._set_cache(key, b"123")
-        res = store._get_cache(key)
+        store._set_cache(partition, key, b"123")
+        res = store._get_cache(partition, key)
         assert store._startup_cache is None
-        assert store._startup_cache_partitions == set()
         assert res == (None, False)
 
         store._del_cache(key)
-        res = store._get_cache(key)
+        res = store._get_cache(partition, key)
         assert res == (None, False)
         assert store._startup_cache is None
-        assert store._startup_cache_partitions == set()
 
         # Now with enabled startup cache
         store._startup_cache_enable = True
         store._startup_cache = {}
-        store._startup_cache_partitions = {1, 2}
+        store._startup_cache[partition] = {}
 
-        store._set_cache(key, b"123")
-        res = store._get_cache(key)
-        assert store._startup_cache == {key: b"123"}
-        assert store._startup_cache_partitions == {1, 2}
+        store._set_cache(partition, key, b"123")
+        res = store._get_cache(partition, key)
+        assert partition in store._startup_cache
+        assert store._startup_cache[partition] == {key: b"123"}
         assert res == (b"123", True)
         store._del_cache(key)
-        res = store._get_cache(key)
-        assert store._startup_cache == {key: None}
-        assert store._startup_cache_partitions == {1, 2}
+        res = store._get_cache(partition, key)
+        assert store._startup_cache[partition] == {key: None}
         assert res == (None, True)
 
     def test_persisted_offset(self, store):
