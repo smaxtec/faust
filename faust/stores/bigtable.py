@@ -587,12 +587,9 @@ class BigTableStore(base.SerializedStore):
     ) -> None:
         # Fill cache with all keys for the partitions we are assigned
         partitions = self._get_active_changelogtopic_partitions(table, tps)
-        if self._startup_cache_enable is False:
-            return
-
-        if len(partitions) == 0:
-            return
         self.log.info(f"Assigning partitions {partitions} for {table.name}")
+        if len(partitions) == 0 or self._startup_cache_enable is False:
+            return
         self._fill_caches(partitions)
 
     def revoke_partitions(self, table: CollectionT, tps: Set[TP]) -> None:
@@ -601,7 +598,7 @@ class BigTableStore(base.SerializedStore):
             if tp.topic in table.changelog_topic.topics:
                 partitions.add(tp.partition)
 
-        if len(partitions) == 0:
+        if len(partitions) == 0 or self._startup_cache_enable is False:
             return
 
         for partition in partitions.intersection(self._startup_cache or {}):
@@ -626,8 +623,10 @@ class BigTableStore(base.SerializedStore):
                 for which we were not assigned the last time.
             generation_id: the metadata generation identifier for the re-balance
         """
-        self.revoke_partitions(self.table, revoked)
-        await self.assign_partitions(self.table, newly_assigned, generation_id)
+        if len(revoked) > 0:
+            self.revoke_partitions(self.table, revoked)
+        if len(assigned) > 0:
+            await self.assign_partitions(self.table, newly_assigned, generation_id)
 
     async def stop(self) -> None:
         if self._mutation_batcher_enable:
