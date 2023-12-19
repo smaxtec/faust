@@ -127,12 +127,9 @@ class BigTableStore(base.SerializedStore):
         self._startup_cache = None
         self._startup_cache_partitions: Set[int] = set()
         self._startup_cache_ttl = options.get(
-            BigTableStore.BT_STARTUP_CACHE_TTL_KEY, 30 * 60
+            BigTableStore.BT_STARTUP_CACHE_TTL_KEY, -1
         )
         if self._startup_cache_enable:
-            if self._startup_cache_ttl <= 0:
-                return
-
             self._startup_cache: Dict[bytes, bytes] = {}
             self._invalidation_timer: Optional[threading.Timer] = None
 
@@ -553,16 +550,19 @@ class BigTableStore(base.SerializedStore):
             self._set_cache(k, v)
 
         self._startup_cache_partitions |= set(partitions)
-        # Invalidate startup cache after 30 minutes
+        # Invalidate startup cache after self._startup_cache_ttl
         # or reset the timer if already running
         if self._invalidation_timer is not None:
             self._invalidation_timer.cancel()
             del self._invalidation_timer
             self._invalidation_timer = None
-        self._invalidation_timer = threading.Timer(
-            self._startup_cache_ttl, self._invalidate_startup_cache
-        )
-        self._invalidation_timer.start()
+
+        if self._startup_cache_ttl > 0:
+            # if _startup_cache_ttl < 0 keep cache forever
+            self._invalidation_timer = threading.Timer(
+                self._startup_cache_ttl, self._invalidate_startup_cache
+            )
+            self._invalidation_timer.start()
 
     def _get_active_changelogtopic_partitions(
         self, table: CollectionT, tps: Set[TP]
