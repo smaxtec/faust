@@ -605,6 +605,7 @@ class BigTableStore(base.SerializedStore):
             if partition in self._startup_cache:
                 self._startup_cache[partition].clear()
                 del self._startup_cache[partition]
+        gc.collect()
         self.log.info(f"Revoking partitions {partitions} for {table.name}")
 
     async def on_rebalance(
