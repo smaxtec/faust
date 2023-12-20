@@ -585,6 +585,10 @@ class BigTableStore(base.SerializedStore):
         # Fill cache with all keys for the partitions we are assigned
         partitions = self._get_active_changelogtopic_partitions(table, tps)
         self.log.info(f"Assigning partitions {partitions} for {table.name}")
+        if self._startup_cache_enable:
+            for p in partitions:
+                if p not in self._startup_cache:
+                    self._startup_cache[p] = {}
 
     def revoke_partitions(self, table: CollectionT, tps: Set[TP]) -> None:
         partitions = set()
