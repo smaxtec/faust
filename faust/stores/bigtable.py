@@ -239,6 +239,12 @@ class BigTableStore(base.SerializedStore):
     def _set_cache(self, partition: int, key: bytes, value):
         if not self._startup_cache_enable:
             return
+        if partition not in self._startup_cache:
+            self.log.warning(
+                f"Had to manually create partition {partition} for "
+                f"_startup_cache in table {self.table.name}"
+            )
+            self._startup_cache[partition] = {}
         self._startup_cache[partition][key] = value
 
     def _get_cache(self, partition: int, key: bytes):
