@@ -240,11 +240,9 @@ class BigTableStore(base.SerializedStore):
         if not self._startup_cache_enable:
             return
         if partition not in self._startup_cache:
-            self.log.warning(
-                f"Had to manually create partition {partition} for "
-                f"_startup_cache in table {self.table.name}"
-            )
-            self._startup_cache[partition] = {}
+            # This means, that the startup cache is not activated
+            # for this partition
+            return
         self._startup_cache[partition][key] = value
 
     def _get_cache(self, partition: int, key: bytes):
@@ -591,10 +589,6 @@ class BigTableStore(base.SerializedStore):
         # Fill cache with all keys for the partitions we are assigned
         partitions = self._get_active_changelogtopic_partitions(table, tps)
         self.log.info(f"Assigning partitions {partitions} for {table.name}")
-        if self._startup_cache_enable:
-            for p in partitions:
-                if p not in self._startup_cache:
-                    self._startup_cache[p] = {}
 
     def revoke_partitions(self, table: CollectionT, tps: Set[TP]) -> None:
         partitions = set()
