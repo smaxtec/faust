@@ -373,10 +373,6 @@ class BigTableStore(base.SerializedStore):
             if partitions is None:
                 partitions = self._active_partitions()
             row_set = BT.RowSet()
-            self.log.info(
-                f"BigtableStore: Iterating over {len(partitions)} partitions "
-                f"for table {self.table_name}"
-            )
 
             need_all_keys = self.table.is_global or self.table.use_partitioner
             if not need_all_keys:
