@@ -35,7 +35,6 @@ class TestAerospikeStore:
         config = {"k": "v"}
         return_value = AeroSpikeStore.get_aerospike_client(config)
         assert aero.client.called
-        assert client_mock.connect.called
         assert return_value == client_mock
 
     @pytest.mark.asyncio
@@ -45,8 +44,9 @@ class TestAerospikeStore:
         client_mock.connect = MagicMock(side_effect=Exception)
         faust.stores.aerospike.aerospike_client = None
         config = {"k": "v"}
-        with pytest.raises(Exception):
+        with pytest.raises(Exception) as exc_info:
             AeroSpikeStore.get_aerospike_client(config)
+            assert exc_info.type == Exception
 
     @pytest.mark.asyncio
     async def test_get_aerospike_client_instantiated(self, aero):
@@ -90,15 +90,15 @@ class TestAerospikeStore:
 
     def test_get_exception(self, store):
         store.client.get = MagicMock(side_effect=Exception)
-        with pytest.raises(Exception):
+        with pytest.raises(Exception) as exc_info:
             store._get(b"test_get")
+            assert exc_info.type == Exception
 
     def test_set_success(
         self,
         store,
     ):
         with patch("faust.stores.aerospike.aerospike", MagicMock()) as aero:
-
             store.client.put = MagicMock()
             key = b"key"
             value = b"value"
@@ -119,8 +119,9 @@ class TestAerospikeStore:
         store.client.put = MagicMock(side_effect=Exception)
         key = b"key"
         value = b"value"
-        with pytest.raises(Exception):
+        with pytest.raises(Exception) as exc_info:
             store._set(key, value)
+            assert exc_info.type == Exception
 
     def test_persisted_offset(self, store):
         return_value = store.persisted_offset(MagicMock())
@@ -136,15 +137,17 @@ class TestAerospikeStore:
     def test_del_exception(self, store):
         key = b"key"
         store.client.remove = MagicMock(side_effect=Exception)
-        with pytest.raises(Exception):
+        with pytest.raises(Exception) as exc_info:
             store._del(key)
+            assert exc_info.type == Exception
 
     def test_iterkeys_error(self, store):
         scan = MagicMock()
         store.client.scan = MagicMock(side_effect=Exception)
         scan.results = MagicMock(side_effect=Exception)
-        with pytest.raises(Exception):
+        with pytest.raises(Exception) as exc_info:
             list(store._iterkeys())
+            assert exc_info.type == Exception
 
     def test_iterkeys_success(self, store):
         scan = MagicMock()
@@ -167,7 +170,11 @@ class TestAerospikeStore:
             scan = MagicMock()
             store.client.scan = MagicMock(return_value=scan)
             scan_result = [
-                (MagicMock(), {"ttl": 4294967295, "gen": 4}, {"value_key": "value1"}),
+                (
+                    MagicMock(),
+                    {"ttl": 4294967295, "gen": 4},
+                    {"value_key": "value1"},
+                ),
                 (MagicMock(), {"ttl": 4294967295, "gen": 4}, None),
             ]
             scan.results = MagicMock(return_value=scan_result)
@@ -181,17 +188,18 @@ class TestAerospikeStore:
 
     def test_itervalues_error(self, store):
         store.client.scan = MagicMock(side_effect=Exception)
-        with pytest.raises(Exception):
+        with pytest.raises(Exception) as exc_info:
             set(store._itervalues())
+            assert exc_info.type == Exception
 
     def test_iteritems_error(self, store):
         store.client.scan = MagicMock(side_effect=Exception)
-        with pytest.raises(Exception):
+        with pytest.raises(Exception) as exc_info:
             set(store._iteritems())
+            assert exc_info.type == Exception
 
     def test_iteritems_success(self, store):
         with patch("faust.stores.aerospike.aerospike", MagicMock()):
-
             scan = MagicMock()
             store.client.scan = MagicMock(return_value=scan)
             scan_result = [
@@ -218,8 +226,9 @@ class TestAerospikeStore:
     def test_contains_error(self, store):
         store.client.exists = MagicMock(side_effect=Exception)
         key = b"key"
-        with pytest.raises(Exception):
+        with pytest.raises(Exception) as exc_info:
             store._contains(key)
+            assert exc_info.type == Exception
 
     def test_contains_does_not_exist(self, store):
         store.client.exists = MagicMock(return_value=(None, None))

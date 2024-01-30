@@ -78,7 +78,6 @@ PartitionerT = Callable[
 
 
 class ProducerBufferT(ServiceT):
-
     max_messages: int
 
     pending: asyncio.Queue
@@ -106,7 +105,6 @@ class ProducerBufferT(ServiceT):
 
 
 class ProducerT(ServiceT):
-
     #: The transport that created this Producer.
     transport: "TransportT"
 
@@ -127,7 +125,7 @@ class ProducerT(ServiceT):
         self,
         transport: "TransportT",
         loop: Optional[asyncio.AbstractEventLoop] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         ...
 
@@ -141,7 +139,7 @@ class ProducerT(ServiceT):
         timestamp: Optional[float],
         headers: Optional[HeadersArg],
         *,
-        transactional_id: Optional[str] = None
+        transactional_id: Optional[str] = None,
     ) -> Awaitable[RecordMetadata]:
         ...
 
@@ -159,7 +157,7 @@ class ProducerT(ServiceT):
         timestamp: Optional[float],
         headers: Optional[HeadersArg],
         *,
-        transactional_id: Optional[str] = None
+        transactional_id: Optional[str] = None,
     ) -> RecordMetadata:
         ...
 
@@ -175,7 +173,7 @@ class ProducerT(ServiceT):
         retention: Optional[Seconds] = None,
         compacting: Optional[bool] = None,
         deleting: Optional[bool] = None,
-        ensure_created: bool = False
+        ensure_created: bool = False,
     ) -> None:
         ...
 
@@ -234,7 +232,7 @@ class TransactionManagerT(ProducerT):
         *,
         consumer: "ConsumerT",
         producer: "ProducerT",
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         ...
 
@@ -289,7 +287,6 @@ class SchedulingStrategyT:
 
 
 class ConsumerT(ServiceT):
-
     #: The transport that created this Consumer.
     transport: "TransportT"
 
@@ -318,7 +315,7 @@ class ConsumerT(ServiceT):
         *,
         commit_interval: Optional[float] = None,
         loop: Optional[asyncio.AbstractEventLoop] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         self._on_partitions_revoked: PartitionsRevokedCallback
         self._on_partitions_assigned: PartitionsAssignedCallback
@@ -335,7 +332,7 @@ class ConsumerT(ServiceT):
         retention: Optional[Seconds] = None,
         compacting: Optional[bool] = None,
         deleting: Optional[bool] = None,
-        ensure_created: bool = False
+        ensure_created: bool = False,
     ) -> None:
         ...
 
@@ -451,7 +448,6 @@ class ConsumerT(ServiceT):
 
 
 class ConductorT(ServiceT, MutableSet[TopicT]):
-
     # The topic conductor delegates messages from the Consumer
     # to the various Topic instances subscribed to a topic.
 
@@ -492,7 +488,6 @@ class ConductorT(ServiceT, MutableSet[TopicT]):
 
 
 class TransportT(abc.ABC):
-
     #: The Consumer class used for this type of transport.
     Consumer: ClassVar[Type[ConsumerT]]
 

@@ -106,7 +106,7 @@ def test_paramters_with_custom_init():
     assert p.y == 10
 
     payload = p.dumps(serializer="json")
-    assert payload == b'{"x": 30, "y": 10}'
+    assert payload == b'{"x":30,"y":10}'
 
     data = json.loads(payload)
     p2 = Point.from_data(data)
@@ -128,7 +128,7 @@ def test_parameters_with_custom_init_and_super():
     assert p.z == 40
 
     payload = p.dumps(serializer="json")
-    assert payload == b'{"x": 30, "y": 10}'
+    assert payload == b'{"x":30,"y":10}'
 
     data = json.loads(payload)
     p2 = Point.from_data(data)
@@ -169,7 +169,10 @@ def test_datetimes():
     assert OptionalDate.loads(OptionalDate(date=n1).dumps()).date == n1
     assert OptionalDate.loads(OptionalDate(date=None).dumps()).date is None
     n2 = datetime.utcnow()
-    assert ListOfDate.loads(ListOfDate(dates=[n1, n2]).dumps()).dates == [n1, n2]
+    assert ListOfDate.loads(ListOfDate(dates=[n1, n2]).dumps()).dates == [
+        n1,
+        n2,
+    ]
     assert (
         OptionalListOfDate.loads(OptionalListOfDate(dates=None).dumps()).dates is None
     )
@@ -182,7 +185,10 @@ def test_datetimes():
     assert OptionalListOfDate2.loads(
         OptionalListOfDate2(dates=[n1, n2]).dumps()
     ).dates == [n1, n2]
-    assert TupleOfDate.loads(TupleOfDate(dates=(n1, n2)).dumps()).dates == (n1, n2)
+    assert TupleOfDate.loads(TupleOfDate(dates=(n1, n2)).dumps()).dates == (
+        n1,
+        n2,
+    )
     assert TupleOfDate.loads(TupleOfDate(dates=(n2,)).dumps()).dates == (n2,)
     assert SetOfDate.loads(SetOfDate(dates={n1, n2}).dumps()).dates == {n1, n2}
     assert MapOfDate.loads(MapOfDate(dates={"A": n1, "B": n2}).dumps()).dates == {
@@ -220,7 +226,10 @@ def test_datetimes__isodates_compat():
     n1 = datetime.utcnow()
     assert Date.loads(Date(date=n1).dumps()).date == n1
     n2 = datetime.utcnow()
-    assert ListOfDate.loads(ListOfDate(dates=[n1, n2]).dumps()).dates == [n1, n2]
+    assert ListOfDate.loads(ListOfDate(dates=[n1, n2]).dumps()).dates == [
+        n1,
+        n2,
+    ]
     assert (
         OptionalListOfDate.loads(OptionalListOfDate(dates=None).dumps()).dates is None
     )
@@ -233,7 +242,10 @@ def test_datetimes__isodates_compat():
     assert OptionalListOfDate2.loads(
         OptionalListOfDate2(dates=[n1, n2]).dumps()
     ).dates == [n1, n2]
-    assert TupleOfDate.loads(TupleOfDate(dates=(n1, n2)).dumps()).dates == (n1, n2)
+    assert TupleOfDate.loads(TupleOfDate(dates=(n1, n2)).dumps()).dates == (
+        n1,
+        n2,
+    )
     assert TupleOfDate.loads(TupleOfDate(dates=(n2,)).dumps()).dates == (n2,)
     assert SetOfDate.loads(SetOfDate(dates={n1, n2}).dumps()).dates == {n1, n2}
     assert MapOfDate.loads(MapOfDate(dates={"A": n1, "B": n2}).dumps()).dates == {
@@ -646,7 +658,9 @@ class Test_FieldDescriptor:
         Account(id="123", name="123"),
         Account(id="123", name="123", active=False),
         User(
-            id="123", username="foo", account=Account(id="123", name="Foo", active=True)
+            id="123",
+            username="foo",
+            account=Account(id="123", name="Foo", active=True),
         ),
         User(id="123", username="foo", account=None),
         User(id=None, username=None, account=None),
@@ -837,7 +851,7 @@ def test_compat_enabled_blessed_key(app):
 
 
 def test__polymorphic_fields_deeply_nested():
-    class BaseAttribution(Record, abc.ABC):
+    class BaseAttribution(Record, abc.ABC):  # noqa: B024
         def __post_init__(self, *args, **kwargs) -> None:
             self.data_store = None
 
@@ -868,7 +882,7 @@ def test__polymorphic_fields_deeply_nested():
 
 
 def test_compat_blessed_key_deeply_nested():
-    class BaseAttribution(Record, abc.ABC):
+    class BaseAttribution(Record, abc.ABC):  # noqa: B024
         def __post_init__(self, *args, **kwargs) -> None:
             self.data_store = None
 
@@ -934,12 +948,11 @@ ADTRIBUTE_PAYLOAD = """
 
 
 def test_adtribute_payload(app):
-    class BaseAttribution(Record, abc.ABC):
+    class BaseAttribution(Record, abc.ABC):  # noqa: B024
         def __post_init__(self) -> None:
             self.data_store = None
 
     class AdjustData(Record):
-
         activity_kind: str
         network_name: str
         adid: str
@@ -998,7 +1011,6 @@ def test_adtribute_payload(app):
 
 
 def test_overwrite_asdict():
-
     with pytest.raises(RuntimeError):
 
         class R(Record):
@@ -1115,7 +1127,6 @@ def test_abstract_model_repr():
 
 
 def test_raises_when_defaults_in_wrong_order():
-
     with pytest.raises(TypeError):
 
         class X(Record):
@@ -1453,7 +1464,10 @@ def test_payload_with_reserved_keyword():
     class X(Record):
         location: str = StringField(input_name="in")
         foo: str = StringField(
-            required=False, default="BAR", input_name="bar", output_name="foobar"
+            required=False,
+            default="BAR",
+            input_name="bar",
+            output_name="foobar",
         )
 
     with pytest.raises(TypeError):

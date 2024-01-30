@@ -1,5 +1,6 @@
+from unittest.mock import Mock, call
+
 import pytest
-from mode.utils.mocks import Mock, call
 
 from faust import web
 from faust.exceptions import ImproperlyConfigured
@@ -152,7 +153,9 @@ class TestStatsdMonitor:
         mon.client.timing.assert_has_calls(
             [
                 call(
-                    "send_latency_for_error", mon.ms_since(float(state)), rate=mon.rate
+                    "send_latency_for_error",
+                    mon.ms_since(float(state)),
+                    rate=mon.rate,
                 ),
             ]
         )
