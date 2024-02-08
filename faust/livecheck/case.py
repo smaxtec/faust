@@ -176,7 +176,7 @@ class Case(Service):
         # signal attributes have the correct signal instance.
         self.__dict__.update(self.signals)
 
-        Service.__init__(self, **kwargs)
+        Service.__init__(self, loop=app.loop, **kwargs)
 
     @Service.timer(10.0)
     async def _sampler(self) -> None:
@@ -204,7 +204,7 @@ class Case(Service):
         """Schedule test execution, or not, based on probability setting."""
         execution: Optional[TestExecution] = None
         with ExitStack() as exit_stack:
-            if uniform(0, 1) < self.probability:
+            if uniform(0, 1) < self.probability:  # nosec B311
                 execution = await self.trigger(id, *args, **kwargs)
                 exit_stack.enter_context(current_test_stack.push(execution))
             yield execution

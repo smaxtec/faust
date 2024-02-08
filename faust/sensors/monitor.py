@@ -68,7 +68,7 @@ class TableState(KeywordReduce):
         *,
         keys_retrieved: int = 0,
         keys_updated: int = 0,
-        keys_deleted: int = 0
+        keys_deleted: int = 0,
     ) -> None:
         self.table: CollectionT = table
         self.keys_retrieved = keys_retrieved
@@ -252,7 +252,7 @@ class Monitor(Sensor, KeywordReduce):
         http_response_codes: Counter[HTTPStatus] = None,
         http_response_latency: Deque[float] = None,
         http_response_latency_avg: float = 0.0,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         if max_avg_history is not None:
             self.max_avg_history = max_avg_history
@@ -417,7 +417,7 @@ class Monitor(Sensor, KeywordReduce):
         return {label(topic): count for topic, count in self.topic_buffer_full.items()}
 
     def _metric_counts_dict(self) -> MutableMapping[str, int]:
-        return {key: count for key, count in self.metric_counts.items()}
+        return {key: count for key, count in self.metric_counts.items()}  # noqa: C416
 
     def _http_response_codes_dict(self) -> MutableMapping[int, int]:
         return {int(code): count for code, count in self.http_response_codes.items()}
@@ -636,7 +636,7 @@ class Monitor(Sensor, KeywordReduce):
         response: Optional[web.Response],
         state: Dict,
         *,
-        view: web.View = None
+        view: web.View = None,
     ) -> None:
         """Web server finished working on request."""
         status_code = HTTPStatus(response.status if response is not None else 500)
@@ -659,7 +659,7 @@ class Monitor(Sensor, KeywordReduce):
         name: str,
         *,
         pattern: Pattern = RE_NORMALIZE,
-        substitution: str = RE_NORMALIZE_SUBSTITUTION
+        substitution: str = RE_NORMALIZE_SUBSTITUTION,
     ) -> str:
         return pattern.sub(substitution, name)
 

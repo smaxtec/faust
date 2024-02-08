@@ -1,11 +1,11 @@
 import base64
 from typing import Mapping
+from unittest.mock import patch
 
 import pytest
 from hypothesis import given
 from hypothesis.strategies import binary, dictionaries, text
 from mode.utils.compat import want_str
-from mode.utils.mocks import patch
 
 from faust.exceptions import ImproperlyConfigured
 from faust.serializers.codecs import (
@@ -20,7 +20,7 @@ from faust.serializers.codecs import (
 )
 from faust.utils import json as _json
 
-DATA = {"a": 1, "b": "string"}
+DATA = {"a": 1, "b": "string", 1: 2}
 
 
 def test_interface():
@@ -34,7 +34,15 @@ def test_interface():
 
 @pytest.mark.parametrize("codec", ["json", "pickle", "yaml"])
 def test_json_subset(codec: str) -> None:
-    assert loads(codec, dumps(codec, DATA)) == DATA
+    if codec == "json":
+        # special exception for json since integers can be serialized
+        assert loads(codec, dumps(codec, DATA)) == {
+            "a": 1,
+            "b": "string",
+            "1": 2,
+        }
+    else:
+        assert loads(codec, dumps(codec, DATA)) == DATA
 
 
 def test_missing_yaml_library() -> None:

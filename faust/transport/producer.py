@@ -91,7 +91,7 @@ class ProducerBuffer(Service, ProducerBufferT):
             start_time = time.time()
             await self.flush_atmost(self.max_messages)
             end_time = time.time()
-            logger.info(f"producer flush took {end_time-start_time}")
+            logger.info(f"producer flush took {end_time - start_time}")
 
     @Service.task
     async def _handle_pending(self) -> None:
@@ -144,7 +144,7 @@ class Producer(Service, ProducerT):
         self.partitioner = conf.producer_partitioner
         api_version = self._api_version = conf.producer_api_version
         assert api_version is not None
-        super().__init__(loop=loop or self.transport.loop, **kwargs)
+        super().__init__(loop=loop, **kwargs)
         self.buffer = ProducerBuffer(loop=self.loop, beacon=self.beacon)
         if conf.producer_threaded:
             self.threaded_producer = self.create_threaded_producer()

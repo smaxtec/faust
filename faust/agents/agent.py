@@ -226,7 +226,7 @@ class Agent(AgentT, Service):
                 "Agent concurrency must be 1 when using isolated partitions"
             )
         self.use_reply_headers = use_reply_headers
-        Service.__init__(self)
+        Service.__init__(self, loop=app.loop)
 
     def on_init_dependencies(self) -> Iterable[ServiceT]:
         """Return list of services dependencies required to start agent."""
@@ -509,7 +509,7 @@ class Agent(AgentT, Service):
                 has_prefix=has_prefix,
                 **kwargs,
             )
-        raise TypeError(f"Channel must be channel, topic, or str; not {type(channel)}")
+        raise TypeError(f"Channel must be channel, topic, or str, not {type(channel)}")
 
     def __call__(
         self,
@@ -661,7 +661,9 @@ class Agent(AgentT, Service):
         else:
             # agent yields and is an AsyncIterator so we have to consume it.
             coro = self._slurp(aref, aiter(aref))
-        task = asyncio.Task(self._execute_actor(coro, aref), loop=self.loop)
+        # Calling asyncio.Task is not proper usage of asyncio,
+        # we need to create the task directly from the loop
+        task = self.loop.create_task(self._execute_actor(coro, aref))
         task._beacon = beacon  # type: ignore
         aref.actor_task = task
         self._actors.add(aref)
@@ -1090,7 +1092,6 @@ class Agent(AgentT, Service):
 
 
 class AgentTestWrapper(Agent, AgentTestWrapperT):  # pragma: no cover
-
     _stream: StreamT
 
     def __init__(

@@ -1,9 +1,9 @@
 import asyncio
 from typing import Union
+from unittest.mock import Mock, call
 
 import pytest
 from mode.utils.compat import want_bytes
-from mode.utils.mocks import AsyncMock, Mock, call
 
 from faust.livecheck import LiveCheck
 from faust.livecheck.app import LiveCheckSensor
@@ -11,6 +11,7 @@ from faust.livecheck.exceptions import LiveCheckTestFailed
 from faust.livecheck.locals import current_test_stack
 from faust.livecheck.models import SignalEvent, TestExecution, TestReport
 from faust.livecheck.signals import BaseSignal
+from tests.helpers import AsyncMock
 
 
 class TestLiveCheckSensor:
@@ -112,7 +113,6 @@ class Test_LiveCheck:
 
         @livecheck.case()
         class Test_foo:
-
             signal1: livecheck.Signal
             signal2: SignalWithNoneOrigin
             signal3: livecheck.Signal = livecheck.Signal()

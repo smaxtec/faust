@@ -43,8 +43,8 @@ T = TypeVar("T")
 # Workaround for https://bugs.python.org/issue29581
 try:
 
-    @typing.no_type_check  # type: ignore
-    class _InitSubclassCheck(metaclass=abc.ABCMeta):
+    @typing.no_type_check  # type: ignore  # noqa: B024
+    class _InitSubclassCheck(metaclass=abc.ABCMeta):  # noqa: B024
         ident: int
 
         def __init_subclass__(
@@ -54,7 +54,7 @@ try:
             super().__init__(*args, **kwargs)
 
     @typing.no_type_check  # type: ignore
-    class _UsingKwargsInNew(_InitSubclassCheck, ident=909):
+    class _UsingKwargsInNew(_InitSubclassCheck, ident=909):  # noqa: B024
         ...
 
 except TypeError:
@@ -68,7 +68,7 @@ CoercionHandler = Callable[[Any], Any]
 CoercionMapping = MutableMapping[IsInstanceArgT, CoercionHandler]
 
 
-class ModelOptions(abc.ABC):
+class ModelOptions(abc.ABC):  # noqa: B024
     serializer: Optional[CodecArg] = None
     namespace: str
     include_metadata: bool = True
@@ -155,7 +155,7 @@ class ModelT(base):  # type: ignore
         s: bytes,
         *,
         default_serializer: CodecArg = None,  # XXX use serializer
-        serializer: CodecArg = None
+        serializer: CodecArg = None,
     ) -> "ModelT":
         ...
 
@@ -194,7 +194,6 @@ class ModelT(base):  # type: ignore
 
 
 class FieldDescriptorT(Generic[T]):
-
     field: str
     input_name: str
     output_name: str
@@ -219,7 +218,7 @@ class FieldDescriptorT(Generic[T]):
         parent: "FieldDescriptorT" = None,
         exclude: Optional[bool] = None,
         date_parser: Callable[[Any], datetime] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         # we have to do this in __init__ or mypy will think
         # this is a method

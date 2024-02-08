@@ -28,7 +28,6 @@ VT = TypeVar("VT")
 
 
 class RegistryT(abc.ABC):
-
     key_serializer: CodecArg
     value_serializer: CodecArg
 
@@ -44,7 +43,7 @@ class RegistryT(abc.ABC):
         typ: Optional[_ModelArg],
         key: Optional[bytes],
         *,
-        serializer: CodecArg = None
+        serializer: CodecArg = None,
     ) -> K:
         ...
 
@@ -54,7 +53,7 @@ class RegistryT(abc.ABC):
         typ: Optional[_ModelArg],
         value: Optional[bytes],
         *,
-        serializer: CodecArg = None
+        serializer: CodecArg = None,
     ) -> Any:
         ...
 
@@ -72,7 +71,6 @@ class RegistryT(abc.ABC):
 
 
 class SchemaT(Generic[KT, VT]):
-
     key_type: Optional[_ModelArg] = None
     value_type: Optional[_ModelArg] = None
 
@@ -88,7 +86,7 @@ class SchemaT(Generic[KT, VT]):
         value_type: _ModelArg = None,
         key_serializer: CodecArg = None,
         value_serializer: CodecArg = None,
-        allow_empty: Optional[bool] = None
+        allow_empty: Optional[bool] = None,
     ) -> None:
         ...
 
@@ -100,7 +98,7 @@ class SchemaT(Generic[KT, VT]):
         value_type: _ModelArg = None,
         key_serializer: CodecArg = None,
         value_serializer: CodecArg = None,
-        allow_empty: Optional[bool] = None
+        allow_empty: Optional[bool] = None,
     ) -> None:
         ...
 
@@ -111,7 +109,7 @@ class SchemaT(Generic[KT, VT]):
         message: _Message,
         *,
         loads: Optional[Callable] = None,
-        serializer: CodecArg = None
+        serializer: CodecArg = None,
     ) -> KT:
         ...
 
@@ -122,7 +120,7 @@ class SchemaT(Generic[KT, VT]):
         message: _Message,
         *,
         loads: Optional[Callable] = None,
-        serializer: CodecArg = None
+        serializer: CodecArg = None,
     ) -> VT:
         ...
 
@@ -133,7 +131,7 @@ class SchemaT(Generic[KT, VT]):
         key: K,
         *,
         serializer: CodecArg = None,
-        headers: OpenHeadersArg
+        headers: OpenHeadersArg,
     ) -> Tuple[Any, OpenHeadersArg]:
         ...
 
@@ -144,7 +142,7 @@ class SchemaT(Generic[KT, VT]):
         value: V,
         *,
         serializer: CodecArg = None,
-        headers: OpenHeadersArg
+        headers: OpenHeadersArg,
     ) -> Tuple[Any, OpenHeadersArg]:
         ...
 
