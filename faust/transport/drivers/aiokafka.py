@@ -530,34 +530,37 @@ class AIOKafkaConsumerThread(ConsumerThread):
                 f"broker_request_timeout={request_timeout}"
             )
 
-        return aiokafka.AIOKafkaConsumer(
-            api_version=conf.consumer_api_version,
-            client_id=conf.broker_client_id,
-            group_id=conf.id,
-            group_instance_id=conf.consumer_group_instance_id,
-            bootstrap_servers=server_list(transport.url, transport.default_port),
-            partition_assignment_strategy=[self._assignor],
-            enable_auto_commit=False,
-            auto_offset_reset=conf.consumer_auto_offset_reset,
-            max_poll_records=conf.broker_max_poll_records,
-            max_poll_interval_ms=int(max_poll_interval * 1000.0),
-            max_partition_fetch_bytes=conf.consumer_max_fetch_size,
-            fetch_max_wait_ms=1500,
-            request_timeout_ms=int(request_timeout * 1000.0),
-            check_crcs=conf.broker_check_crcs,
-            session_timeout_ms=int(session_timeout * 1000.0),
-            rebalance_timeout_ms=int(rebalance_timeout * 1000.0),
-            heartbeat_interval_ms=int(conf.broker_heartbeat_interval * 1000.0),
-            isolation_level=isolation_level,
-            metadata_max_age_ms=conf.consumer_metadata_max_age_ms,
-            connections_max_idle_ms=conf.consumer_connections_max_idle_ms,
+        settings = {
+            "client_id": conf.broker_client_id,
+            "group_id": conf.id,
+            "group_instance_id": conf.consumer_group_instance_id,
+            "bootstrap_servers": server_list(transport.url, transport.default_port),
+            "partition_assignment_strategy": [self._assignor],
+            "enable_auto_commit": False,
+            "auto_offset_reset": conf.consumer_auto_offset_reset,
+            "max_poll_records": conf.broker_max_poll_records,
+            "max_poll_interval_ms": int(max_poll_interval * 1000.0),
+            "max_partition_fetch_bytes": conf.consumer_max_fetch_size,
+            "fetch_max_wait_ms": 1500,
+            "request_timeout_ms": int(request_timeout * 1000.0),
+            "check_crcs": conf.broker_check_crcs,
+            "session_timeout_ms": int(session_timeout * 1000.0),
+            "rebalance_timeout_ms": int(rebalance_timeout * 1000.0),
+            "heartbeat_interval_ms": int(conf.broker_heartbeat_interval * 1000.0),
+            "isolation_level": isolation_level,
+            "metadata_max_age_ms": conf.consumer_metadata_max_age_ms,
+            "connections_max_idle_ms": conf.consumer_connections_max_idle_ms,
             # traced_from_parent_span=self.traced_from_parent_span,
             # start_rebalancing_span=self.start_rebalancing_span,
             # start_coordinator_span=self.start_coordinator_span,
             # on_generation_id_known=self.on_generation_id_known,
             # flush_spans=self.flush_spans,
             **auth_settings,
-        )
+        }
+
+        if self._consumer_accepts_api_version():
+            settings["api_version"] = conf.consumer_api_version
+        return aiokafka.AIOKafkaConsumer(**settings)
 
     def _create_client_consumer(
         self, transport: "Transport"
@@ -577,6 +580,12 @@ class AIOKafkaConsumerThread(ConsumerThread):
             auto_offset_reset=conf.consumer_auto_offset_reset,
             check_crcs=conf.broker_check_crcs,
             **auth_settings,
+        )
+
+    def _consumer_accepts_api_version(self) -> bool:
+        return (
+            "api_version"
+            in inspect.signature(aiokafka.AIOKafkaConsumer.__init__).parameters
         )
 
     @cached_property
