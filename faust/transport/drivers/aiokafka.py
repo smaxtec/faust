@@ -1,4 +1,5 @@
 """Message transport using :pypi:`aiokafka`."""
+
 import asyncio
 import typing
 from asyncio import Lock, QueueEmpty
@@ -10,6 +11,7 @@ from typing import (
     Awaitable,
     Callable,
     ClassVar,
+    Deque,
     Iterable,
     List,
     Mapping,
@@ -25,36 +27,39 @@ from typing import (
 import aiokafka
 import aiokafka.abc
 import opentracing
+from aiokafka import TopicPartition
 from aiokafka.consumer.group_coordinator import OffsetCommitRequest
+from aiokafka.coordinator.assignors.roundrobin import RoundRobinPartitionAssignor
 from aiokafka.errors import (
     CommitFailedError,
     ConsumerStoppedError,
     IllegalStateError,
     KafkaError,
-    ProducerFenced,
-)
-from aiokafka.structs import OffsetAndMetadata, TopicPartition as _TopicPartition
-from aiokafka.util import parse_kafka_version
-from kafka import TopicPartition
-from kafka.errors import (
     NotControllerError,
+    ProducerFenced,
     TopicAlreadyExistsError as TopicExistsError,
     for_code,
 )
-from kafka.partitioner import murmur2
-from kafka.partitioner.default import DefaultPartitioner
-from kafka.protocol.metadata import MetadataRequest_v1
+from aiokafka.partitioner import DefaultPartitioner, murmur2
+from aiokafka.protocol.admin import CreateTopicsRequest
+from aiokafka.protocol.metadata import MetadataRequest_v1
+from aiokafka.structs import OffsetAndMetadata, TopicPartition as _TopicPartition
+from aiokafka.util import parse_kafka_version
 from mode import Service, get_logger
 from mode.threads import ServiceThread, WorkerThread
 from mode.utils import text
 from mode.utils.futures import StampedeWrapper
 from mode.utils.objects import cached_property
 from mode.utils.times import Seconds, humanize_seconds_ago, want_seconds
-from mode.utils.typing import Deque
 from opentracing.ext import tags
 from yarl import URL
 
-from faust.auth import GSSAPICredentials, SASLCredentials, SSLCredentials
+from faust.auth import (
+    GSSAPICredentials,
+    OAuthCredentials,
+    SASLCredentials,
+    SSLCredentials,
+)
 from faust.exceptions import (
     ConsumerNotStarted,
     ImproperlyConfigured,
@@ -78,7 +83,6 @@ from faust.types import (
 )
 from faust.types.auth import CredentialsT
 from faust.types.transports import ConsumerT, PartitionerT, ProducerT
-from faust.utils.kafka.protocol.admin import CreateTopicsRequest
 from faust.utils.tracing import noop_span, set_current_span, traced_from_parent_span
 
 __all__ = ["Consumer", "Producer", "Transport"]
@@ -234,17 +238,20 @@ class Consumer(ThreadDelegateConsumer):
         ensure_created: bool = False,
     ) -> None:
         """Create/declare topic on server."""
-        await self._thread.create_topic(
-            topic,
-            partitions,
-            replication,
-            config=config,
-            timeout=timeout,
-            retention=retention,
-            compacting=compacting,
-            deleting=deleting,
-            ensure_created=ensure_created,
-        )
+        if self.app.conf.topic_allow_declare:
+            await self._thread.create_topic(
+                topic,
+                partitions,
+                replication,
+                config=config,
+                timeout=timeout,
+                retention=retention,
+                compacting=compacting,
+                deleting=deleting,
+                ensure_created=ensure_created,
+            )
+        else:
+            logger.warning(f"Topic creation disabled! Can't create topic {topic}")
 
     def _new_topicpartition(self, topic: str, partition: int) -> TP:
         return cast(TP, _TopicPartition(topic, partition))
@@ -287,6 +294,7 @@ class ThreadedProducer(ServiceThread):
     _push_events_task: Optional[asyncio.Task] = None
     app: None
     stopped: bool
+    _shutdown_initiated: bool = False
 
     def __init__(
         self,
@@ -301,13 +309,17 @@ class ThreadedProducer(ServiceThread):
     ) -> None:
         super().__init__(
             executor=executor,
-            loop=loop,
             thread_loop=thread_loop,
             Worker=Worker,
             **kwargs,
         )
         self._default_producer = default_producer
         self.app = app
+
+    def _shutdown_thread(self) -> None:
+        # Ensure that the shutdown process is initiated only once
+        if not self._shutdown_initiated:
+            asyncio.run_coroutine_threadsafe(self.on_thread_stop(), self.thread_loop)
 
     async def flush(self) -> None:
         """Wait for producer to finish transmitting all buffered messages."""
@@ -343,6 +355,7 @@ class ThreadedProducer(ServiceThread):
 
     async def on_thread_stop(self) -> None:
         """Call when producer thread is stopping."""
+        self._shutdown_initiated = True
         logger.info("Stopping producer thread")
         await super().on_thread_stop()
         self.stopped = True
@@ -484,18 +497,22 @@ class AIOKafkaConsumerThread(ConsumerThread):
     ) -> aiokafka.AIOKafkaConsumer:
         transport = cast(Transport, self.transport)
         if self.app.client_only:
-            return self._create_client_consumer(transport, loop=loop)
+            return self._create_client_consumer(transport)
         else:
-            return self._create_worker_consumer(transport, loop=loop)
+            return self._create_worker_consumer(transport)
 
     def _create_worker_consumer(
-        self, transport: "Transport", loop: asyncio.AbstractEventLoop
+        self, transport: "Transport"
     ) -> aiokafka.AIOKafkaConsumer:
         isolation_level: str = "read_uncommitted"
         conf = self.app.conf
         if self.consumer.in_transaction:
             isolation_level = "read_committed"
-        self._assignor = self.app.assignor
+        self._assignor = (
+            self.app.assignor
+            if self.app.conf.table_standby_replicas > 0
+            else RoundRobinPartitionAssignor
+        )
         auth_settings = credentials_to_aiokafka_auth(
             conf.broker_credentials, conf.ssl_context
         )
@@ -513,7 +530,6 @@ class AIOKafkaConsumerThread(ConsumerThread):
             )
 
         return aiokafka.AIOKafkaConsumer(
-            loop=loop,
             api_version=conf.consumer_api_version,
             client_id=conf.broker_client_id,
             group_id=conf.id,
@@ -543,7 +559,7 @@ class AIOKafkaConsumerThread(ConsumerThread):
         )
 
     def _create_client_consumer(
-        self, transport: "Transport", loop: asyncio.AbstractEventLoop
+        self, transport: "Transport"
     ) -> aiokafka.AIOKafkaConsumer:
         conf = self.app.conf
         auth_settings = credentials_to_aiokafka_auth(
@@ -551,7 +567,6 @@ class AIOKafkaConsumerThread(ConsumerThread):
         )
         max_poll_interval = conf.broker_max_poll_interval or 0
         return aiokafka.AIOKafkaConsumer(
-            loop=loop,
             client_id=conf.broker_client_id,
             bootstrap_servers=server_list(transport.url, transport.default_port),
             request_timeout_ms=int(conf.broker_request_timeout * 1000.0),
@@ -701,13 +716,15 @@ class AIOKafkaConsumerThread(ConsumerThread):
     async def _commit(self, offsets: Mapping[TP, int]) -> bool:
         consumer = self._ensure_consumer()
         now = monotonic()
+        commitable_offsets = {
+            tp: offset for tp, offset in offsets.items() if tp in self.assignment()
+        }
         try:
             aiokafka_offsets = {
-                tp: OffsetAndMetadata(offset, "")
-                for tp, offset in offsets.items()
-                if tp in self.assignment()
+                ensure_aiokafka_TP(tp): OffsetAndMetadata(offset, "")
+                for tp, offset in commitable_offsets.items()
             }
-            self.tp_last_committed_at.update({tp: now for tp in aiokafka_offsets})
+            self.tp_last_committed_at.update({tp: now for tp in commitable_offsets})
             await consumer.commit(aiokafka_offsets)
         except CommitFailedError as exc:
             if "already rebalanced" in str(exc):
@@ -824,13 +841,13 @@ class AIOKafkaConsumerThread(ConsumerThread):
         secs_since_started = now - self.time_started
         aiotp = TopicPartition(tp.topic, tp.partition)
         assignment = consumer._fetcher._subscriptions.subscription.assignment
-        if not assignment and not assignment.active:
+        if not assignment or not assignment.active:
             self.log.error(f"No active partitions for {tp}")
             return True
         poll_at = None
         aiotp_state = assignment.state_value(aiotp)
         if aiotp_state and aiotp_state.timestamp:
-            poll_at = aiotp_state.timestamp / 1000
+            poll_at = aiotp_state.timestamp / 1000  # milliseconds
         if poll_at is None:
             if secs_since_started >= self.tp_fetch_request_timeout_secs:
                 # NO FETCH REQUEST SENT AT ALL SINCE WORKER START
@@ -1026,27 +1043,30 @@ class AIOKafkaConsumerThread(ConsumerThread):
         ensure_created: bool = False,
     ) -> None:
         """Create/declare topic on server."""
-        transport = cast(Transport, self.consumer.transport)
-        _consumer = self._ensure_consumer()
-        _retention = int(want_seconds(retention) * 1000.0) if retention else None
-        if len(topic) > TOPIC_LENGTH_MAX:
-            raise ValueError(
-                f"Topic name {topic!r} is too long (max={TOPIC_LENGTH_MAX})"
+        if self.app.conf.topic_allow_declare:
+            transport = cast(Transport, self.consumer.transport)
+            _consumer = self._ensure_consumer()
+            _retention = int(want_seconds(retention) * 1000.0) if retention else None
+            if len(topic) > TOPIC_LENGTH_MAX:
+                raise ValueError(
+                    f"Topic name {topic!r} is too long (max={TOPIC_LENGTH_MAX})"
+                )
+            await self.call_thread(
+                transport._create_topic,
+                self,
+                _consumer._client,
+                topic,
+                partitions,
+                replication,
+                config=config,
+                timeout=int(want_seconds(timeout) * 1000.0),
+                retention=_retention,
+                compacting=compacting,
+                deleting=deleting,
+                ensure_created=ensure_created,
             )
-        await self.call_thread(
-            transport._create_topic,
-            self,
-            _consumer._client,
-            topic,
-            partitions,
-            replication,
-            config=config,
-            timeout=int(want_seconds(timeout) * 1000.0),
-            retention=_retention,
-            compacting=compacting,
-            deleting=deleting,
-            ensure_created=ensure_created,
-        )
+        else:
+            logger.warning(f"Topic creation disabled! Can't create topic {topic}")
 
     def key_partition(
         self, topic: str, key: Optional[bytes], partition: Optional[int] = None
@@ -1138,7 +1158,6 @@ class Producer(base.Producer):
         """Commit transaction by id."""
         try:
             async with self._trn_locks[transactional_id]:
-
                 transaction_producer = self._transaction_producers.get(transactional_id)
                 if transaction_producer:
                     await transaction_producer.commit_transaction()
@@ -1162,7 +1181,6 @@ class Producer(base.Producer):
         """Abort and rollback transaction by id."""
         try:
             async with self._trn_locks[transactional_id]:
-
                 transaction_producer = self._transaction_producers.get(transactional_id)
                 if transaction_producer:
                     await transaction_producer.abort_transaction()
@@ -1202,7 +1220,6 @@ class Producer(base.Producer):
         for transactional_id, offsets in tid_to_offset_map.items():
             # get the producer
             async with self._trn_locks[transactional_id]:
-
                 transaction_producer = self._transaction_producers.get(transactional_id)
                 if transaction_producer:
                     logger.debug(
@@ -1232,7 +1249,6 @@ class Producer(base.Producer):
         self, transactional_id: Optional[str] = None
     ) -> aiokafka.AIOKafkaProducer:
         return self._producer_type(
-            loop=self.loop,
             **{
                 **self._settings_default(),
                 **self._settings_auth(),
@@ -1259,22 +1275,25 @@ class Producer(base.Producer):
         ensure_created: bool = False,
     ) -> None:
         """Create/declare topic on server."""
-        _retention = int(want_seconds(retention) * 1000.0) if retention else None
-        producer = self._ensure_producer()
-        await cast(Transport, self.transport)._create_topic(
-            self,
-            producer.client,
-            topic,
-            partitions,
-            replication,
-            config=config,
-            timeout=int(want_seconds(timeout) * 1000.0),
-            retention=_retention,
-            compacting=compacting,
-            deleting=deleting,
-            ensure_created=ensure_created,
-        )
-        await producer.client.force_metadata_update()  # Fixes #499
+        if self.app.conf.topic_allow_declare:
+            _retention = int(want_seconds(retention) * 1000.0) if retention else None
+            producer = self._ensure_producer()
+            await cast(Transport, self.transport)._create_topic(
+                self,
+                producer.client,
+                topic,
+                partitions,
+                replication,
+                config=config,
+                timeout=int(want_seconds(timeout) * 1000.0),
+                retention=_retention,
+                compacting=compacting,
+                deleting=deleting,
+                ensure_created=ensure_created,
+            )
+            await producer.client.force_metadata_update()  # Fixes #499
+        else:
+            logger.warning(f"Topic creation disabled! Can't create topic {topic}")
 
     def _ensure_producer(self) -> aiokafka.AIOKafkaProducer:
         if self._producer is None:
@@ -1335,7 +1354,6 @@ class Producer(base.Producer):
         try:
             if transactional_id:
                 async with self._trn_locks[transactional_id]:
-
                     return cast(
                         Awaitable[RecordMetadata],
                         await transaction_producer.send(
@@ -1471,7 +1489,7 @@ class Transport(base.Transport):
                 topic,
                 partitions,
                 replication,
-                loop=asyncio.get_event_loop(),
+                loop=self.loop,
                 **kwargs,
             )
         try:
@@ -1551,9 +1569,9 @@ class Transport(base.Transport):
             return
         response = wait_result.result
 
-        assert len(response.topic_error_codes), "single topic"
+        assert len(response.topic_errors), "single topic"
 
-        _, code, reason = response.topic_error_codes[0]
+        _, code, reason = response.topic_errors[0]
 
         if code != 0:
             if not ensure_created and code == TopicExistsError.errno:
@@ -1576,6 +1594,13 @@ def credentials_to_aiokafka_auth(
             return {
                 "security_protocol": credentials.protocol.value,
                 "ssl_context": credentials.context,
+            }
+        elif isinstance(credentials, OAuthCredentials):
+            return {
+                "security_protocol": credentials.protocol.value,
+                "sasl_mechanism": credentials.mechanism.value,
+                "sasl_oauth_token_provider": credentials.oauth_cb,
+                "ssl_context": credentials.ssl_context,
             }
         elif isinstance(credentials, SASLCredentials):
             return {
@@ -1602,3 +1627,17 @@ def credentials_to_aiokafka_auth(
         }
     else:
         return {"security_protocol": "PLAINTEXT"}
+
+
+def ensure_aiokafka_TP(tp: TP) -> _TopicPartition:
+    """Convert Faust ``TP`` to aiokafka ``TopicPartition``."""
+    return (
+        tp
+        if isinstance(tp, _TopicPartition)
+        else _TopicPartition(tp.topic, tp.partition)
+    )
+
+
+def ensure_aiokafka_TPset(tps: Iterable[TP]) -> Set[_TopicPartition]:
+    """Convert set of Faust ``TP`` to aiokafka ``TopicPartition``."""
+    return {ensure_aiokafka_TP(tp) for tp in tps}

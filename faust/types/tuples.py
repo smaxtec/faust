@@ -22,11 +22,9 @@ if typing.TYPE_CHECKING:
     from .transports import ConsumerT as _ConsumerT
 else:
 
-    class _ChannelT:
-        ...  # noqa
+    class _ChannelT: ...  # noqa
 
-    class _ConsumerT:
-        ...  # noqa
+    class _ConsumerT: ...  # noqa
 
 
 __all__ = [
@@ -113,7 +111,6 @@ def _get_len(s: Optional[bytes]) -> int:
 
 
 class Message:
-
     __slots__ = (
         "topic",
         "partition",
