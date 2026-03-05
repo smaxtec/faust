@@ -508,12 +508,12 @@ class TestBigTableStore:
             self.TEST_KEY3: b"1",
             self.TEST_KEY4: b"2",
         }
-        assert res == sorted(list(all_entries.items()))
-        keys = list(sorted(store._iterkeys()))
-        values = list(sorted(store._itervalues()))
+        assert res == sorted(all_entries.items())
+        keys = sorted(store._iterkeys())
+        values = sorted(store._itervalues())
 
-        assert keys == sorted(list(all_entries.keys()))
-        assert values == sorted(list(all_entries.values()))
+        assert keys == sorted(all_entries.keys())
+        assert values == sorted(all_entries.values())
 
     def test_iterkeys(self, store):
         values = [("K1", "V1"), ("K2", "V2")]
@@ -540,7 +540,7 @@ class TestBigTableStore:
         store._bigtable_set = MagicMock()
 
         store.set_persisted_offset(tp, 123)
-        store._bigtable_set.called_once_with(expected_offset_key, b"123")
+        store._bigtable_set.assert_called_once_with(expected_offset_key, b"123")
 
     def test_apply_changelog_batch(self, store):
         row_mock = MagicMock()
@@ -592,7 +592,6 @@ class TestBigTableStore:
 
         partitions = {TP("topic", 0), TP("topic", 1)}
         partitions2 = {TP("topic", 0), TP("topic", 2)}
-
         store._fill_caches(partitions)
 
         assert store._bigtable_iteritems.call_args == call(partitions=partitions)
@@ -648,7 +647,6 @@ class TestBigTableStore:
         store._startup_cache = {}
 
         partitions = {TP("topic", 0), TP("topic", 1)}
-        partitions2 = {TP("topic", 0), TP("topic", 2)}
 
         store._fill_caches(partitions)
 

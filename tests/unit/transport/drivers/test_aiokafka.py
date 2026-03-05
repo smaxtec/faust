@@ -1,3 +1,4 @@
+import inspect
 import random
 import string
 from contextlib import contextmanager
@@ -1379,26 +1380,32 @@ class ProducerBaseTest:
         security_protocol="PLAINTEXT",
         **kwargs,
     ):
+        expected_kwargs = dict(
+            bootstrap_servers=bootstrap_servers,
+            client_id=client_id,
+            acks=acks,
+            linger_ms=linger_ms,
+            max_batch_size=max_batch_size,
+            max_request_size=max_request_size,
+            compression_type=compression_type,
+            security_protocol=security_protocol,
+            partitioner=producer.partitioner,
+            transactional_id=None,
+            metadata_max_age_ms=metadata_max_age_ms,
+            connections_max_idle_ms=connections_max_idle_ms,
+            request_timeout_ms=request_timeout_ms,
+            **kwargs,
+        )
+        if (
+            "api_version"
+            in inspect.signature(aiokafka.AIOKafkaProducer.__init__).parameters
+        ):
+            expected_kwargs["api_version"] = api_version
+
         with patch("aiokafka.AIOKafkaProducer") as AIOKafkaProducer:
             p = producer._new_producer()
             assert p is AIOKafkaProducer.return_value
-            AIOKafkaProducer.assert_called_once_with(
-                bootstrap_servers=bootstrap_servers,
-                client_id=client_id,
-                acks=acks,
-                linger_ms=linger_ms,
-                max_batch_size=max_batch_size,
-                max_request_size=max_request_size,
-                compression_type=compression_type,
-                security_protocol=security_protocol,
-                partitioner=producer.partitioner,
-                transactional_id=None,
-                api_version=api_version,
-                metadata_max_age_ms=metadata_max_age_ms,
-                connections_max_idle_ms=connections_max_idle_ms,
-                request_timeout_ms=request_timeout_ms,
-                **kwargs,
-            )
+            AIOKafkaProducer.assert_called_once_with(**expected_kwargs)
 
 
 class TestProducer(ProducerBaseTest):

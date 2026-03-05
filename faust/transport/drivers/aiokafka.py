@@ -1,6 +1,7 @@
 """Message transport using :pypi:`aiokafka`."""
 
 import asyncio
+import inspect
 import typing
 from asyncio import Lock, QueueEmpty
 from collections import deque
@@ -1111,7 +1112,7 @@ class Producer(base.Producer):
 
     def _settings_default(self) -> Mapping[str, Any]:
         transport = cast(Transport, self.transport)
-        return {
+        settings = {
             "bootstrap_servers": server_list(transport.url, transport.default_port),
             "client_id": self.client_id,
             "acks": self.acks,
@@ -1122,10 +1123,18 @@ class Producer(base.Producer):
             "security_protocol": "SSL" if self.ssl_context else "PLAINTEXT",
             "partitioner": self.partitioner,
             "request_timeout_ms": int(self.request_timeout * 1000),
-            "api_version": self._api_version,
             "metadata_max_age_ms": self.app.conf.producer_metadata_max_age_ms,
             "connections_max_idle_ms": self.app.conf.producer_connections_max_idle_ms,
         }
+        if self._producer_accepts_api_version():
+            settings["api_version"] = self._api_version
+        return settings
+
+    def _producer_accepts_api_version(self) -> bool:
+        return (
+            "api_version"
+            in inspect.signature(aiokafka.AIOKafkaProducer.__init__).parameters
+        )
 
     def _settings_auth(self) -> Mapping[str, Any]:
         return credentials_to_aiokafka_auth(self.credentials, self.ssl_context)
