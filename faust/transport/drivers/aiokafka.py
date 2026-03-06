@@ -509,9 +509,13 @@ class AIOKafkaConsumerThread(ConsumerThread):
         conf = self.app.conf
         if self.consumer.in_transaction:
             isolation_level = "read_committed"
+        # Table recovery depends on app.assignor state to map changelog
+        # active/standby partitions. Keep Faust assignor enabled whenever
+        # this app has changelog tables configured.
+        has_changelog_tables = bool(self.app.tables.changelog_topics)
         self._assignor = (
             self.app.assignor
-            if self.app.conf.table_standby_replicas > 0
+            if self.app.conf.table_standby_replicas > 0 or has_changelog_tables
             else RoundRobinPartitionAssignor
         )
         auth_settings = credentials_to_aiokafka_auth(
