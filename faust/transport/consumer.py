@@ -43,6 +43,7 @@ The Consumer is responsible for:
         _new_offset).
 
 """
+
 import abc
 import asyncio
 import gc
@@ -72,6 +73,7 @@ from typing import (
 from weakref import WeakSet
 
 from aiokafka.errors import ProducerFenced
+from intervaltree import IntervalTree
 from mode import Service, ServiceT, flight_recorder, get_logger
 from mode.threads import MethodQueue, QueueServiceThread
 from mode.utils.futures import notify
@@ -100,8 +102,7 @@ if typing.TYPE_CHECKING:  # pragma: no cover
     from faust.app import App as _App
 else:
 
-    class _App:
-        ...  # noqa: E701
+    class _App: ...  # noqa: E701
 
 
 __all__ = ["Consumer", "Fetcher"]
@@ -363,17 +364,20 @@ class TransactionManager(Service, TransactionManagerT):
         ensure_created: bool = False,
     ) -> None:
         """Create/declare topic on server."""
-        return await self.producer.create_topic(
-            topic,
-            partitions,
-            replication,
-            config=config,
-            timeout=timeout,
-            retention=retention,
-            compacting=compacting,
-            deleting=deleting,
-            ensure_created=ensure_created,
-        )
+        if self.app.conf.topic_allow_declare:
+            return await self.producer.create_topic(
+                topic,
+                partitions,
+                replication,
+                config=config,
+                timeout=timeout,
+                retention=retention,
+                compacting=compacting,
+                deleting=deleting,
+                ensure_created=ensure_created,
+            )
+        else:
+            logger.warning(f"Topic creation disabled! Can't create topic {topic}")
 
     def supports_headers(self) -> bool:
         """Return :const:`True` if the Kafka server supports headers."""
@@ -392,7 +396,7 @@ class Consumer(Service, ConsumerT):
     consumer_stopped_errors: ClassVar[Tuple[Type[BaseException], ...]] = ()
 
     # Mapping of TP to list of gap in offsets.
-    _gap: MutableMapping[TP, List[int]]
+    _gap: MutableMapping[TP, IntervalTree]
 
     # Mapping of TP to list of acked offsets.
     _acked: MutableMapping[TP, List[int]]
@@ -465,7 +469,7 @@ class Consumer(Service, ConsumerT):
             commit_livelock_soft_timeout
             or self.app.conf.broker_commit_livelock_soft_timeout
         )
-        self._gap = defaultdict(list)
+        self._gap = defaultdict(IntervalTree)
         self._acked = defaultdict(list)
         self._acked_index = defaultdict(set)
         self._read_offset = defaultdict(lambda: None)
@@ -481,7 +485,7 @@ class Consumer(Service, ConsumerT):
         self.not_waiting_next_records = Event()
         self.not_waiting_next_records.set()
         self._reset_state()
-        super().__init__(loop=loop or self.transport.loop, **kwargs)
+        super().__init__(loop=loop, **kwargs)
         self.transactions = self.transport.create_transaction_manager(
             consumer=self,
             producer=self.app.producer,
@@ -576,8 +580,7 @@ class Consumer(Service, ConsumerT):
         self._read_offset[ensure_TP(partition)] = offset if offset else None
 
     @abc.abstractmethod
-    async def _seek(self, partition: TP, offset: int) -> None:
-        ...
+    async def _seek(self, partition: TP, offset: int) -> None: ...
 
     def stop_flow(self) -> None:
         """Block consumer from processing any more messages."""
@@ -672,8 +675,7 @@ class Consumer(Service, ConsumerT):
     @abc.abstractmethod
     async def _getmany(
         self, active_partitions: Optional[Set[TP]], timeout: float
-    ) -> RecordMap:
-        ...
+    ) -> RecordMap: ...
 
     async def getmany(self, timeout: float) -> AsyncIterator[Tuple[TP, Message]]:
         """Fetch batch of messages from server."""
@@ -793,8 +795,7 @@ class Consumer(Service, ConsumerT):
             self.not_waiting_next_records.set()
 
     @abc.abstractmethod
-    def _to_message(self, tp: TP, record: Any) -> ConsumerMessage:
-        ...
+    def _to_message(self, tp: TP, record: Any) -> ConsumerMessage: ...
 
     def track_message(self, message: Message) -> None:
         """Track message and mark it as pending ack."""
@@ -904,11 +905,9 @@ class Consumer(Service, ConsumerT):
             if not self.should_stop:
                 self.verify_event_path(now, tp)
 
-    def verify_event_path(self, now: float, tp: TP) -> None:
-        ...
+    def verify_event_path(self, now: float, tp: TP) -> None: ...
 
-    def verify_recovery_event_path(self, now: float, tp: TP) -> None:
-        ...
+    def verify_recovery_event_path(self, now: float, tp: TP) -> None: ...
 
     async def commit(
         self, topics: TPorTopicSet = None, start_new_transaction: bool = True
@@ -1087,16 +1086,35 @@ class Consumer(Service, ConsumerT):
         # the return value will be: 37
         if acked:
             max_offset = max(acked)
-            gap_for_tp = self._gap[tp]
+            gap_for_tp: IntervalTree = self._gap[tp]
             if gap_for_tp:
-                gap_index = next(
-                    (i for i, x in enumerate(gap_for_tp) if x > max_offset),
-                    len(gap_for_tp),
-                )
-                gaps = gap_for_tp[:gap_index]
-                acked.extend(gaps)
-                gap_for_tp[:gap_index] = []
+                # find all the ranges up to the max of acked, add them in to acked,
+                # and chop them off the gap.
+                candidates = gap_for_tp.overlap(0, max_offset)
+                # note: merge_overlaps will sort the intervaltree and will ensure that
+                # the intervals left over don't overlap each other. So can sort by their
+                # start without worrying about ends overlapping.
+                sorted_candidates = sorted(candidates, key=lambda x: x.begin)
+                if sorted_candidates:
+                    stuff_to_add = []
+                    for entry in sorted_candidates:
+                        stuff_to_add.extend(range(entry.begin, entry.end))
+                    new_max_offset = max(stuff_to_add[-1], max_offset + 1)
+                    acked.extend(stuff_to_add)
+                    gap_for_tp.chop(0, new_max_offset)
             acked.sort()
+
+            # We iterate over it until we handle gap in the head of acked queue
+            # then return the previous committed offset.
+            # For example if acked[tp] is:
+            #    34 35 36 37
+            #  ^-- gap
+            # self._committed_offset[tp] is 31
+            # the return value will be None (the same as 31)
+            if self._committed_offset[tp]:
+                if min(acked) - self._committed_offset[tp] > 1:
+                    return None
+
             # Note: acked is always kept sorted.
             # find first list of consecutive numbers
             batch = next(consecutive_numbers(acked))
@@ -1111,12 +1129,18 @@ class Consumer(Service, ConsumerT):
         """Call when processing a message failed."""
         await self.commit()
 
-    def _add_gap(self, tp: TP, offset_from: int, offset_to: int) -> None:
+    async def _add_gap(self, tp: TP, offset_from: int, offset_to: int) -> None:
         committed = self._committed_offset[tp]
         gap_for_tp = self._gap[tp]
-        for offset in range(offset_from, offset_to):
-            if committed is None or offset > committed:
-                gap_for_tp.append(offset)
+        if committed is not None:
+            offset_from = max(offset_from, committed + 1)
+        # intervaltree intervals exclude the end
+        if offset_from <= offset_to:
+            gap_for_tp.addi(offset_from, offset_to + 1)
+            # sleep 0 to allow other coroutines to get some loop time
+            # for example, to answer health checks while building the gap
+            await asyncio.sleep(0)
+            gap_for_tp.merge_overlaps()
 
     async def _drain_messages(self, fetcher: ServiceT) -> None:  # pragma: no cover
         # This is the background thread started by Fetcher, used to
@@ -1163,7 +1187,7 @@ class Consumer(Service, ConsumerT):
                             if gap > 1 and r_offset:
                                 acks_enabled = acks_enabled_for(message.topic)
                                 if acks_enabled:
-                                    self._add_gap(tp, r_offset + 1, offset)
+                                    await self._add_gap(tp, r_offset + 1, offset)
                             if commit_every is not None:
                                 if self._n_acked >= commit_every:
                                     self._n_acked = 0
@@ -1273,8 +1297,7 @@ class ConsumerThread(QueueServiceThread):
         ...
 
     @abc.abstractmethod
-    def close(self) -> None:
-        ...
+    def close(self) -> None: ...
 
     @abc.abstractmethod
     async def earliest_offsets(self, *partitions: TP) -> Mapping[TP, int]:
@@ -1329,12 +1352,10 @@ class ConsumerThread(QueueServiceThread):
         """Hash key to determine partition number."""
         ...
 
-    def verify_recovery_event_path(self, now: float, tp: TP) -> None:
-        ...
+    def verify_recovery_event_path(self, now: float, tp: TP) -> None: ...
 
 
 class ThreadDelegateConsumer(Consumer):
-
     _thread: ConsumerThread
 
     #: Main thread method queue.
@@ -1353,8 +1374,7 @@ class ThreadDelegateConsumer(Consumer):
         self.add_dependency(self._thread)
 
     @abc.abstractmethod
-    def _new_consumer_thread(self) -> ConsumerThread:
-        ...
+    def _new_consumer_thread(self) -> ConsumerThread: ...
 
     async def threadsafe_partitions_revoked(
         self, receiver_loop: asyncio.AbstractEventLoop, revoked: Set[TP]

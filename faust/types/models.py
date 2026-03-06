@@ -43,8 +43,8 @@ T = TypeVar("T")
 # Workaround for https://bugs.python.org/issue29581
 try:
 
-    @typing.no_type_check  # type: ignore
-    class _InitSubclassCheck(metaclass=abc.ABCMeta):
+    @typing.no_type_check  # type: ignore  # noqa: B024
+    class _InitSubclassCheck(metaclass=abc.ABCMeta):  # noqa: B024
         ident: int
 
         def __init_subclass__(
@@ -54,7 +54,7 @@ try:
             super().__init__(*args, **kwargs)
 
     @typing.no_type_check  # type: ignore
-    class _UsingKwargsInNew(_InitSubclassCheck, ident=909):
+    class _UsingKwargsInNew(_InitSubclassCheck, ident=909):  # noqa: B024
         ...
 
 except TypeError:
@@ -68,7 +68,7 @@ CoercionHandler = Callable[[Any], Any]
 CoercionMapping = MutableMapping[IsInstanceArgT, CoercionHandler]
 
 
-class ModelOptions(abc.ABC):
+class ModelOptions(abc.ABC):  # noqa: B024
     serializer: Optional[CodecArg] = None
     namespace: str
     include_metadata: bool = True
@@ -145,8 +145,9 @@ class ModelT(base):  # type: ignore
 
     @classmethod
     @abc.abstractmethod
-    def from_data(cls, data: Any, *, preferred_type: Type["ModelT"] = None) -> "ModelT":
-        ...
+    def from_data(
+        cls, data: Any, *, preferred_type: Type["ModelT"] = None
+    ) -> "ModelT": ...
 
     @classmethod
     @abc.abstractmethod
@@ -155,46 +156,36 @@ class ModelT(base):  # type: ignore
         s: bytes,
         *,
         default_serializer: CodecArg = None,  # XXX use serializer
-        serializer: CodecArg = None
-    ) -> "ModelT":
-        ...
+        serializer: CodecArg = None,
+    ) -> "ModelT": ...
 
     @abc.abstractmethod
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        ...
+    def __init__(self, *args: Any, **kwargs: Any) -> None: ...
 
     @abc.abstractmethod
-    def dumps(self, *, serializer: CodecArg = None) -> bytes:
-        ...
+    def dumps(self, *, serializer: CodecArg = None) -> bytes: ...
 
     @abc.abstractmethod
-    def derive(self, *objects: "ModelT", **fields: Any) -> "ModelT":
-        ...
+    def derive(self, *objects: "ModelT", **fields: Any) -> "ModelT": ...
 
     @abc.abstractmethod
-    def to_representation(self) -> Any:
-        ...
+    def to_representation(self) -> Any: ...
 
     @abc.abstractmethod
-    def is_valid(self) -> bool:
-        ...
+    def is_valid(self) -> bool: ...
 
     @abc.abstractmethod
-    def validate(self) -> List[ValidationError]:
-        ...
+    def validate(self) -> List[ValidationError]: ...
 
     @abc.abstractmethod
-    def validate_or_raise(self) -> None:
-        ...
+    def validate_or_raise(self) -> None: ...
 
     @property
     @abc.abstractmethod
-    def validation_errors(self) -> List[ValidationError]:
-        ...
+    def validation_errors(self) -> List[ValidationError]: ...
 
 
 class FieldDescriptorT(Generic[T]):
-
     field: str
     input_name: str
     output_name: str
@@ -219,7 +210,7 @@ class FieldDescriptorT(Generic[T]):
         parent: "FieldDescriptorT" = None,
         exclude: Optional[bool] = None,
         date_parser: Callable[[Any], datetime] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         # we have to do this in __init__ or mypy will think
         # this is a method
@@ -228,59 +219,46 @@ class FieldDescriptorT(Generic[T]):
         )
 
     @abc.abstractmethod
-    def on_model_attached(self) -> None:
-        ...
+    def on_model_attached(self) -> None: ...
 
     @abc.abstractmethod
-    def clone(self, **kwargs: Any) -> "FieldDescriptorT":
-        ...
+    def clone(self, **kwargs: Any) -> "FieldDescriptorT": ...
 
     @abc.abstractmethod
-    def as_dict(self) -> Mapping[str, Any]:
-        ...
+    def as_dict(self) -> Mapping[str, Any]: ...
 
     @abc.abstractmethod
-    def validate_all(self, value: Any) -> Iterable[ValidationError]:
-        ...
+    def validate_all(self, value: Any) -> Iterable[ValidationError]: ...
 
     @abc.abstractmethod
-    def validate(self, value: T) -> Iterable[ValidationError]:
-        ...
+    def validate(self, value: T) -> Iterable[ValidationError]: ...
 
     @abc.abstractmethod
-    def to_python(self, value: Any) -> Optional[T]:
-        ...
+    def to_python(self, value: Any) -> Optional[T]: ...
 
     @abc.abstractmethod
-    def prepare_value(self, value: Any) -> Optional[T]:
-        ...
+    def prepare_value(self, value: Any) -> Optional[T]: ...
 
     @abc.abstractmethod
-    def should_coerce(self, value: Any) -> bool:
-        ...
+    def should_coerce(self, value: Any) -> bool: ...
 
     @abc.abstractmethod
-    def getattr(self, obj: ModelT) -> T:
-        ...
+    def getattr(self, obj: ModelT) -> T: ...
 
     @abc.abstractmethod
-    def validation_error(self, reason: str) -> ValidationError:
-        ...
+    def validation_error(self, reason: str) -> ValidationError: ...
 
     @property
     @abc.abstractmethod
-    def ident(self) -> str:
-        ...
+    def ident(self) -> str: ...
 
     @cached_property
     @abc.abstractmethod
-    def related_models(self) -> Set[Type[ModelT]]:
-        ...
+    def related_models(self) -> Set[Type[ModelT]]: ...
 
     @cached_property
     @abc.abstractmethod
-    def lazy_coercion(self) -> bool:
-        ...
+    def lazy_coercion(self) -> bool: ...
 
 
 # XXX See top of module!  We redefine with actual ModelT for Sphinx,

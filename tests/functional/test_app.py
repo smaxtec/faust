@@ -2,12 +2,12 @@ import socket
 import sys
 from pathlib import Path
 from typing import Any, Mapping, NamedTuple
+from unittest.mock import patch
 
 import mode
 import pytest
 import pytz
 from mode.supervisors import OneForAllSupervisor
-from mode.utils.mocks import patch
 from yarl import URL
 
 import faust
@@ -35,8 +35,7 @@ else:
     TABLEDIR = Path("/var/faust/")
 
 
-class OtherSchedulingStrategy(DefaultSchedulingStrategy):
-    ...
+class OtherSchedulingStrategy(DefaultSchedulingStrategy): ...
 
 
 def _dummy_partitioner(a, b, c):

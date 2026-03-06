@@ -1,4 +1,5 @@
 """Class-based views."""
+
 from functools import wraps
 from typing import (
     Any,
@@ -299,9 +300,11 @@ class View:
         """
         return self.error(404, reason, **kwargs)
 
-    def error(self, status: int, reason: str, **kwargs: Any) -> Response:
+    def error(
+        self, status: int, reason: str, headers: MutableMapping = None, **kwargs: Any
+    ) -> Response:
         """Create error JSON response."""
-        return self.json({"error": reason, **kwargs}, status=status)
+        return self.json({"error": reason, **kwargs}, status=status, headers=headers)
 
 
 def takes_model(Model: Type[ModelT]) -> ViewDecorator:

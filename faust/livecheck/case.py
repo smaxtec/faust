@@ -1,20 +1,31 @@
 """LiveCheck - Test cases."""
+
 import traceback
 import typing
 from collections import deque
-from contextlib import ExitStack
+from contextlib import ExitStack, asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from itertools import count
 from random import uniform
 from statistics import median
 from time import monotonic
-from typing import Any, ClassVar, Dict, Iterable, Optional, Type, Union, cast
+from typing import (
+    Any,
+    AsyncGenerator,
+    ClassVar,
+    Counter,
+    Deque,
+    Dict,
+    Iterable,
+    Optional,
+    Type,
+    Union,
+    cast,
+)
 
 from aiohttp import ClientError, ClientTimeout
 from mode import Seconds, Service, want_seconds
-from mode.utils.contexts import asynccontextmanager
 from mode.utils.times import humanize_seconds
-from mode.utils.typing import AsyncGenerator, Counter, Deque
 from yarl import URL
 
 from faust.utils import uuid
@@ -29,8 +40,7 @@ if typing.TYPE_CHECKING:
     from .app import LiveCheck as _LiveCheck
 else:
 
-    class _LiveCheck:
-        ...  # noqa
+    class _LiveCheck: ...  # noqa
 
 
 __all__ = ["Case"]
@@ -176,7 +186,7 @@ class Case(Service):
         # signal attributes have the correct signal instance.
         self.__dict__.update(self.signals)
 
-        Service.__init__(self, **kwargs)
+        Service.__init__(self, loop=app.loop, **kwargs)
 
     @Service.timer(10.0)
     async def _sampler(self) -> None:
@@ -204,7 +214,7 @@ class Case(Service):
         """Schedule test execution, or not, based on probability setting."""
         execution: Optional[TestExecution] = None
         with ExitStack() as exit_stack:
-            if uniform(0, 1) < self.probability:
+            if uniform(0, 1) < self.probability:  # nosec B311
                 execution = await self.trigger(id, *args, **kwargs)
                 exit_stack.enter_context(current_test_stack.push(execution))
             yield execution
@@ -318,8 +328,7 @@ class Case(Service):
                 if self.app.is_leader():
                     await self.make_fake_request()
 
-    async def make_fake_request(self) -> None:
-        ...
+    async def make_fake_request(self) -> None: ...
 
     @Service.task
     async def _check_frequency(self) -> None:

@@ -1,8 +1,11 @@
 """BigTable storage."""
+
+from __future__ import annotations
+
 import gc
 import logging
-import time
 import threading
+import time
 import traceback
 from typing import (
     Any,
@@ -16,6 +19,7 @@ from typing import (
     Tuple,
     Union,
 )
+
 from mode.utils.collections import LRUCache
 
 try:  # pragma: no cover
@@ -49,7 +53,6 @@ from yarl import URL
 from faust.stores import base
 from faust.streams import current_event
 from faust.types import TP, AppT, CollectionT, EventT
-
 
 COLUMN_FAMILY_ID = "FaustColumnFamily"
 COLUMN_NAME = "DATA"

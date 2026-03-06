@@ -16,14 +16,11 @@ if typing.TYPE_CHECKING:
     from .tables import CollectionT as _CollectionT
 else:
 
-    class _AppT:
-        ...  # noqa
+    class _AppT: ...  # noqa
 
-    class _ModelArg:
-        ...  # noqa
+    class _ModelArg: ...  # noqa
 
-    class _CollectionT:
-        ...  # noqa
+    class _CollectionT: ...  # noqa
 
 
 __all__ = ["StoreT"]
@@ -33,7 +30,6 @@ VT = TypeVar("VT")
 
 
 class StoreT(ServiceT, FastUserDict[KT, VT]):
-
     url: URL
     app: _AppT
     table: _CollectionT
@@ -57,21 +53,17 @@ class StoreT(ServiceT, FastUserDict[KT, VT]):
         key_serializer: CodecArg = "",
         value_serializer: CodecArg = "",
         options: Optional[Mapping[str, Any]] = None,
-        **kwargs: Any
-    ) -> None:
-        ...
+        **kwargs: Any,
+    ) -> None: ...
 
     @abc.abstractmethod
-    def persisted_offset(self, tp: TP) -> Optional[int]:
-        ...
+    def persisted_offset(self, tp: TP) -> Optional[int]: ...
 
     @abc.abstractmethod
-    def set_persisted_offset(self, tp: TP, offset: int) -> None:
-        ...
+    def set_persisted_offset(self, tp: TP, offset: int) -> None: ...
 
     @abc.abstractmethod
-    async def need_active_standby_for(self, tp: TP) -> bool:
-        ...
+    async def need_active_standby_for(self, tp: TP) -> bool: ...
 
     @abc.abstractmethod
     def apply_changelog_batch(
@@ -79,12 +71,10 @@ class StoreT(ServiceT, FastUserDict[KT, VT]):
         batch: Iterable[EventT],
         to_key: Callable[[Any], KT],
         to_value: Callable[[Any], VT],
-    ) -> None:
-        ...
+    ) -> None: ...
 
     @abc.abstractmethod
-    def reset_state(self) -> None:
-        ...
+    def reset_state(self) -> None: ...
 
     @abc.abstractmethod
     async def on_rebalance(
@@ -93,11 +83,22 @@ class StoreT(ServiceT, FastUserDict[KT, VT]):
         revoked: Set[TP],
         newly_assigned: Set[TP],
         generation_id: int = 0,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     @abc.abstractmethod
     async def on_recovery_completed(
         self, active_tps: Set[TP], standby_tps: Set[TP]
-    ) -> None:
-        ...
+    ) -> None: ...
+
+    @abc.abstractmethod
+    async def backup_partition(
+        self, tp: Union[TP, int], flush: bool = True, purge: bool = False, keep: int = 1
+    ) -> None: ...
+
+    @abc.abstractmethod
+    def restore_backup(
+        self,
+        tp: Union[TP, int],
+        latest: bool = True,
+        backup_id: int = 0,
+    ) -> None: ...
