@@ -42,7 +42,7 @@ from aiokafka.errors import (
 )
 from aiokafka.partitioner import DefaultPartitioner, murmur2
 from aiokafka.protocol.admin import CreateTopicsRequest
-from aiokafka.protocol.metadata import MetadataRequest_v1
+from aiokafka.protocol.metadata import MetadataRequest
 from aiokafka.structs import OffsetAndMetadata, TopicPartition as _TopicPartition
 from aiokafka.util import parse_kafka_version
 from mode import Service, get_logger
@@ -52,6 +52,7 @@ from mode.utils.futures import StampedeWrapper
 from mode.utils.objects import cached_property
 from mode.utils.times import Seconds, humanize_seconds_ago, want_seconds
 from opentracing.ext import tags
+from packaging.version import Version
 from yarl import URL
 
 from faust.auth import (
@@ -92,6 +93,8 @@ __all__ = ["Consumer", "Producer", "Transport"]
 #         'Please install robinhood-aiokafka, not aiokafka')
 
 logger = get_logger(__name__)
+
+_AIOKAFKA_HAS_API_VERSION = Version(aiokafka.__version__) < Version("0.13.0")
 
 DEFAULT_GENERATION_ID = OffsetCommitRequest.DEFAULT_GENERATION_ID
 
@@ -511,6 +514,7 @@ class AIOKafkaConsumerThread(ConsumerThread):
         self._assignor = (
             self.app.assignor
             if self.app.conf.table_standby_replicas > 0
+            or bool(self.app.tables.changelog_topics)
             else RoundRobinPartitionAssignor
         )
         auth_settings = credentials_to_aiokafka_auth(
@@ -529,8 +533,11 @@ class AIOKafkaConsumerThread(ConsumerThread):
                 f"broker_request_timeout={request_timeout}"
             )
 
+        consumer_kwargs: dict[str, Any] = {}
+        if _AIOKAFKA_HAS_API_VERSION:
+            consumer_kwargs["api_version"] = conf.consumer_api_version
         return aiokafka.AIOKafkaConsumer(
-            api_version=conf.consumer_api_version,
+            **consumer_kwargs,
             client_id=conf.broker_client_id,
             group_id=conf.id,
             group_instance_id=conf.consumer_group_instance_id,
@@ -1111,7 +1118,7 @@ class Producer(base.Producer):
 
     def _settings_default(self) -> Mapping[str, Any]:
         transport = cast(Transport, self.transport)
-        return {
+        settings: dict[str, Any] = {
             "bootstrap_servers": server_list(transport.url, transport.default_port),
             "client_id": self.client_id,
             "acks": self.acks,
@@ -1122,10 +1129,12 @@ class Producer(base.Producer):
             "security_protocol": "SSL" if self.ssl_context else "PLAINTEXT",
             "partitioner": self.partitioner,
             "request_timeout_ms": int(self.request_timeout * 1000),
-            "api_version": self._api_version,
             "metadata_max_age_ms": self.app.conf.producer_metadata_max_age_ms,
             "connections_max_idle_ms": self.app.conf.producer_connections_max_idle_ms,
         }
+        if _AIOKAFKA_HAS_API_VERSION:
+            settings["api_version"] = self._api_version
+        return settings
 
     def _settings_auth(self) -> Mapping[str, Any]:
         return credentials_to_aiokafka_auth(self.credentials, self.ssl_context)
@@ -1505,7 +1514,7 @@ class Transport(base.Transport):
         for node_id in nodes:
             if node_id is None:
                 raise NotReady("Not connected to Kafka Broker")
-            request = MetadataRequest_v1([])
+            request = MetadataRequest([])
             wait_result = await owner.wait(
                 client.send(node_id, request),
                 timeout=timeout,
@@ -1538,7 +1547,6 @@ class Transport(base.Transport):
             owner.log.debug("Topic %r exists, skipping creation.", topic)
             return
 
-        protocol_version = 1
         extra_configs = config or {}
         config = self._topic_config(retention, compacting, deleting)
         config.update(extra_configs)
@@ -1555,7 +1563,7 @@ class Transport(base.Transport):
             else:
                 raise Exception("Controller node is None")
 
-        request = CreateTopicsRequest[protocol_version](
+        request = CreateTopicsRequest(
             [(topic, partitions, replication, [], list(config.items()))],
             timeout,
             False,

@@ -46,7 +46,7 @@ jobs:
         use-cython: ['true', 'false']
         experimental: [false]
         include:
-          - python-version: 'pypy3.9'
+          - python-version: 'pypy3.11'
             use-cython: false
             experimental: true
     env:
