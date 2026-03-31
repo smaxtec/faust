@@ -23,7 +23,6 @@ NAME = "faust"
 BUNDLES = {
     "aiodns",
     "aiomonitor",
-    "bigtable",
     "cchardet",
     "ciso8601",
     "cython",
