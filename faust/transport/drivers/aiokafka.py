@@ -27,9 +27,6 @@ from typing import (
 import aiokafka
 import aiokafka.abc
 import opentracing
-from packaging.version import Version
-
-_AIOKAFKA_HAS_API_VERSION = Version(aiokafka.__version__) < Version("0.13.0")
 from aiokafka import TopicPartition
 from aiokafka.consumer.group_coordinator import OffsetCommitRequest
 from aiokafka.coordinator.assignors.roundrobin import RoundRobinPartitionAssignor
