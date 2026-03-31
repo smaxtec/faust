@@ -4,11 +4,11 @@ import os
 import sys
 import types
 from pathlib import Path
+from unittest.mock import Mock, call, patch
 
 import click
 import pytest
 from mode import Worker
-from mode.utils.mocks import AsyncMock, Mock, call, patch
 
 from faust.cli import AppCommand, Command, call_command
 from faust.cli.base import (
@@ -21,6 +21,7 @@ from faust.cli.base import (
     option,
 )
 from faust.types._env import CONSOLE_PORT
+from tests.helpers import AsyncMock
 
 
 class Test_argument:
@@ -649,9 +650,7 @@ class Test_AppCommand:
 
     def test_from_handler_no_params(self, *, command):
         @command.from_handler()
-        async def takes_no_args():
-            ...
+        async def takes_no_args(): ...
 
         @command.from_handler()
-        async def takes_self_arg(self):
-            ...
+        async def takes_self_arg(self): ...

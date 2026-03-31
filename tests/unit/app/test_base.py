@@ -1,10 +1,10 @@
 import collections
 import re
+from unittest.mock import ANY, Mock, call, patch
 
 import pytest
 from mode import Service
 from mode.utils.compat import want_bytes
-from mode.utils.mocks import ANY, AsyncMock, Mock, call, patch
 from yarl import URL
 
 import faust
@@ -30,6 +30,7 @@ from faust.types.models import ModelT
 from faust.types.settings import Settings
 from faust.types.tables import GlobalTableT
 from faust.types.web import ResourceOptions
+from tests.helpers import AsyncMock
 
 TEST_TOPIC = "test"
 CONFIG_DICT = {
@@ -118,7 +119,7 @@ class Test_App:
             autospec=Transport,
         )
         assert app._new_producer() is transport.create_producer.return_value
-        transport.create_producer.assert_called_with(beacon=ANY)
+        transport.create_producer.assert_called_with(loop=app.loop, beacon=ANY)
         assert app.producer is transport.create_producer.return_value
 
     @pytest.mark.parametrize(
@@ -424,7 +425,7 @@ class Test_App:
         app.agents = Mock(
             on_rebalance=AsyncMock(),
         )
-        app.agents.on_rebalance.coro.side_effect = RuntimeError()
+        app.agents.on_rebalance.side_effect = RuntimeError()
         app.crash = AsyncMock()
 
         await app._on_partitions_assigned(set())
@@ -602,8 +603,7 @@ class Test_App:
         with patch("faust.app.base.venusian") as venusian:
 
             @app.agent()
-            async def foo(stream):
-                ...
+            async def foo(stream): ...
 
             assert foo.name
             assert app.agents[foo.name] is foo
@@ -638,8 +638,7 @@ class Test_App:
         with patch("faust.app.base.venusian") as venusian:
 
             @app.task
-            async def foo():
-                ...
+            async def foo(): ...
 
             venusian.attach.assert_called_once_with(foo, category=SCAN_TASK)
             assert foo in app._app_tasks
@@ -677,7 +676,7 @@ class Test_App:
         def on_sleep(seconds, **kwargs):
             app._stopped.set()
 
-        app.sleep.coro.side_effect = on_sleep
+        app.sleep.side_effect = on_sleep
 
         @app.timer(0.1)
         async def foo():
@@ -697,7 +696,7 @@ class Test_App:
 
         # cannot use list side_effect arg as it causes
         # StopIteration to be raised.
-        app.sleep.coro.side_effect = on_sleep
+        app.sleep.side_effect = on_sleep
 
         @app.timer(300.0, on_leader=True)
         async def foo():
@@ -720,7 +719,7 @@ class Test_App:
 
         # cannot use list side_effect arg as it causes
         # StopIteration to be raised.
-        app.sleep.coro.side_effect = on_sleep
+        app.sleep.side_effect = on_sleep
 
         @app.timer(300.0, on_leader=True)
         async def foo(app):
@@ -764,7 +763,7 @@ class Test_App:
             if app.sleep.call_count >= 3:
                 app._stopped.set()
 
-        app.sleep.coro.side_effect = on_sleep
+        app.sleep.side_effect = on_sleep
 
         await foo()
         assert app.sleep.call_count == 3
@@ -787,7 +786,7 @@ class Test_App:
             if app.sleep.call_count >= 3:
                 app._stopped.set()
 
-        app.sleep.coro.side_effect = on_sleep
+        app.sleep.side_effect = on_sleep
 
         await foo()
         assert app.sleep.call_count == 3
@@ -795,8 +794,7 @@ class Test_App:
 
     def test_service(self, *, app):
         @app.service
-        class Foo(Service):
-            ...
+        class Foo(Service): ...
 
         assert Foo in app._extra_services
 
@@ -827,19 +825,16 @@ class Test_App:
         assert isinstance(app.tables.data["name"], GlobalTableT)
 
     def test_page(self, *, app):
-
         with patch("faust.app.base.venusian") as venusian:
 
             @app.page("/foo")
-            async def view(self, request):
-                ...
+            async def view(self, request): ...
 
             assert "/foo" in app.web.views
 
             venusian.attach.assert_called_once_with(view, category=SCAN_PAGE)
 
     def test_page__with_cors_options(self, *, app):
-
         with patch("faust.app.base.venusian") as venusian:
 
             @app.page(
@@ -854,8 +849,7 @@ class Test_App:
                     ),
                 },
             )
-            async def view(self, request):
-                ...
+            async def view(self, request): ...
 
             assert "/foo" in app.web.views
 
@@ -865,8 +859,7 @@ class Test_App:
         with pytest.raises(TypeError):
 
             @app.page("/foo")
-            class Foo:
-                ...
+            class Foo: ...
 
     @pytest.mark.asyncio
     async def test_table_route__query_param(self, *, app):
@@ -882,9 +875,9 @@ class Test_App:
         request.query = {"q": "KEY"}
 
         ret = await routed(view, request)
-        assert ret is app.router.route_req.coro.return_value
+        assert ret is app.router.route_req.return_value
 
-        app.router.route_req.coro.side_effect = SameNode()
+        app.router.route_req.side_effect = SameNode()
         ret = await routed(view, request)
         assert ret == 42
 
@@ -902,9 +895,9 @@ class Test_App:
         request.match_info = {"q": "KEY"}
 
         ret = await routed(view, request)
-        assert ret is app.router.route_req.coro.return_value
+        assert ret is app.router.route_req.return_value
 
-        app.router.route_req.coro.side_effect = SameNode()
+        app.router.route_req.side_effect = SameNode()
         ret = await routed(view, request)
         assert ret == 42
 
@@ -920,9 +913,9 @@ class Test_App:
             return 42
 
         ret = await routed(view, request)
-        assert ret is app.router.route_req.coro.return_value
+        assert ret is app.router.route_req.return_value
 
-        app.router.route_req.coro.side_effect = SameNode()
+        app.router.route_req.side_effect = SameNode()
         ret = await routed(view, request)
         assert ret == 42
 
@@ -931,8 +924,7 @@ class Test_App:
         with pytest.warns(DeprecationWarning):
 
             @app.table_route(table, shard_param="x")
-            async def view(self, request):
-                ...
+            async def view(self, request): ...
 
     def test_table_route__query_param_and_shard_param(self, *, app):
         table = app.Table("foo")
@@ -940,16 +932,14 @@ class Test_App:
             with pytest.raises(TypeError):
 
                 @app.table_route(table, query_param="q", shard_param="x")
-                async def view(self, request):
-                    ...
+                async def view(self, request): ...
 
     def test_table_route__missing_param(self, *, app):
         table = app.Table("foo")
         with pytest.raises(TypeError):
 
             @app.table_route(table)
-            async def view(self, request):
-                ...
+            async def view(self, request): ...
 
     @pytest.mark.asyncio
     async def test_topic_route__query_param(self, *, app):
@@ -965,9 +955,9 @@ class Test_App:
         request.query = {"q": "KEY"}
 
         ret = await routed(view, request)
-        assert ret is app.router.route_topic_req.coro.return_value
+        assert ret is app.router.route_topic_req.return_value
 
-        app.router.route_topic_req.coro.side_effect = SameNode()
+        app.router.route_topic_req.side_effect = SameNode()
         ret = await routed(view, request)
         assert ret == 42
 
@@ -985,9 +975,9 @@ class Test_App:
         request.match_info = {"q": "KEY"}
 
         ret = await routed(view, request)
-        assert ret is app.router.route_topic_req.coro.return_value
+        assert ret is app.router.route_topic_req.return_value
 
-        app.router.route_topic_req.coro.side_effect = SameNode()
+        app.router.route_topic_req.side_effect = SameNode()
         ret = await routed(view, request)
         assert ret == 42
 
@@ -1003,9 +993,9 @@ class Test_App:
             return 42
 
         ret = await routed(view, request)
-        assert ret is app.router.route_topic_req.coro.return_value
+        assert ret is app.router.route_topic_req.return_value
 
-        app.router.route_topic_req.coro.side_effect = SameNode()
+        app.router.route_topic_req.side_effect = SameNode()
         ret = await routed(view, request)
         assert ret == 42
 
@@ -1014,8 +1004,7 @@ class Test_App:
         with pytest.warns(DeprecationWarning):
 
             @app.topic_route(topic, shard_param="x")
-            async def view(self, request):
-                ...
+            async def view(self, request): ...
 
     def test_topic_route__query_param_and_shard_param(self, *, app):
         topic = app.topic("foo")
@@ -1023,29 +1012,24 @@ class Test_App:
             with pytest.raises(TypeError):
 
                 @app.topic_route(topic, query_param="q", shard_param="x")
-                async def view(self, request):
-                    ...
+                async def view(self, request): ...
 
     def test_topic_route__missing_param(self, *, app):
         topic = app.topic("foo")
         with pytest.raises(TypeError):
 
             @app.topic_route(topic)
-            async def view(self, request):
-                ...
+            async def view(self, request): ...
 
     def test_command(self, *, app):
         @app.command()
-        async def foo():
-            ...
+        async def foo(): ...
 
     def test_command__with_base(self, *, app):
-        class MyBase(AppCommand):
-            ...
+        class MyBase(AppCommand): ...
 
         @app.command(base=MyBase)
-        async def foo():
-            ...
+        async def foo(): ...
 
         assert issubclass(foo, MyBase)
 
@@ -1101,7 +1085,7 @@ class Test_App:
         app.in_transaction = False
         app.producer = Mock(maybe_start=AsyncMock())
         assert await app.maybe_start_producer() is app.producer
-        app.producer.maybe_start.coro.assert_called_once_with()
+        app.producer.maybe_start.assert_called_once_with()
 
     def test_repr(self, *, app):
         assert repr(app)

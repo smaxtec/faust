@@ -34,6 +34,7 @@ BUNDLES = {
     "prometheus",
     "redis",
     "rocksdb",
+    "rocksdict",
     "sentry",
     "setproctitle",
     "statsd",
@@ -46,12 +47,12 @@ LDFLAGS = []
 LIBRARIES = []
 E_UNSUPPORTED_PYTHON = NAME + " 1.0 requires Python %%s or later!"
 
-if sys.version_info < (3, 6):
-    raise Exception(E_UNSUPPORTED_PYTHON % ("3.6",))  # NOQA
+if sys.version_info < (3, 8):
+    raise Exception(E_UNSUPPORTED_PYTHON % ("3.8",))  # NOQA
 
 from pathlib import Path  # noqa
 
-README = Path("README.rst")
+README = Path("README.md")
 
 # -*- Compiler Flags -*-
 
@@ -110,7 +111,12 @@ class ve_build_ext(build_ext):
     def build_extension(self, ext):
         try:
             build_ext.build_extension(self, ext)
-        except (CCompilerError, DistutilsExecError, DistutilsPlatformError, ValueError):
+        except (
+            CCompilerError,
+            DistutilsExecError,
+            DistutilsPlatformError,
+            ValueError,
+        ):
             raise BuildFailed()
 
 
@@ -183,20 +189,16 @@ with open("README.md") as readme_file:
 def do_setup(**kwargs):
     setup(
         name="faust-streaming",
-        version=meta["version"],
+        use_scm_version=True,
+        setup_requires=["setuptools_scm"],
         description=meta["doc"],
         long_description=long_description,
         long_description_content_type="text/markdown",
-        author=meta["author"],
-        author_email=meta["contact"],
-        url=meta["homepage"],
-        platforms=["any"],
-        license="BSD 3-Clause",
         packages=find_packages(exclude=["examples", "ez_setup", "tests", "tests.*"]),
         # PEP-561: https://www.python.org/dev/peps/pep-0561/
         package_data={"faust": ["py.typed"]},
         include_package_data=True,
-        python_requires=">=3.6.0",
+        python_requires=">=3.8.0",
         zip_safe=False,
         install_requires=reqs("requirements.txt"),
         tests_require=reqs("test.txt"),
@@ -206,40 +208,7 @@ def do_setup(**kwargs):
                 "faust = faust.cli.faust:cli",
             ],
         },
-        project_urls={
-            "Bug Reports": "https://github.com/faust-streaming/faust/issues",
-            "Source": "https://github.com/faust-streaming/faust",
-            "Documentation": "https://fauststream.com/en/latest",
-        },
-        keywords=[
-            "stream",
-            "processing",
-            "asyncio",
-            "distributed",
-            "queue",
-            "kafka",
-        ],
-        classifiers=[
-            "Framework :: AsyncIO",
-            "Development Status :: 5 - Production/Stable",
-            "Intended Audience :: Developers",
-            "Natural Language :: English",
-            "License :: OSI Approved :: BSD License",
-            "Programming Language :: Python",
-            "Programming Language :: Python :: 3 :: Only",
-            "Programming Language :: Python :: 3.6",
-            "Programming Language :: Python :: 3.7",
-            "Programming Language :: Python :: Implementation :: CPython",
-            "Programming Language :: Python :: Implementation :: PyPy",
-            "Operating System :: POSIX",
-            "Operating System :: POSIX :: Linux",
-            "Operating System :: MacOS :: MacOS X",
-            "Operating System :: POSIX :: BSD",
-            "Operating System :: Microsoft :: Windows",
-            "Topic :: System :: Networking",
-            "Topic :: System :: Distributed Computing",
-        ],
-        **kwargs
+        **kwargs,
     )
 
 

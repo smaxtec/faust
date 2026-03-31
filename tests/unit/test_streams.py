@@ -1,14 +1,15 @@
 import asyncio
+import platform
 from collections import defaultdict
+from contextlib import ExitStack
+from unittest.mock import Mock, patch
 
 import pytest
-from mode.utils.contexts import ExitStack
-from mode.utils.mocks import AsyncMock, Mock, patch
 
 import faust
 from faust import joins
 from faust.exceptions import Skip
-from tests.helpers import new_event
+from tests.helpers import AsyncMock, new_event
 
 
 class Model(faust.Record):
@@ -51,7 +52,7 @@ class Test_Stream:
     @pytest.mark.asyncio
     async def test_on_merge__with_join_strategy(self, *, stream):
         join = stream.join_strategy = Mock(process=AsyncMock())
-        assert (await stream.on_merge("v")) is join.process.coro.return_value
+        assert (await stream.on_merge("v")) is join.process.return_value
 
     def test_combine__finalized(self, *, stream):
         stream._finalized = True
@@ -122,6 +123,9 @@ class Test_Stream:
         await echoing("val")
         channel.send.assert_called_once_with(value="val")
 
+    @pytest.mark.skipif(
+        platform.python_implementation() == "PyPy", reason="Not yet supported on PyPy"
+    )
     @pytest.mark.asyncio
     @pytest.mark.allow_lingering_tasks(count=1)
     async def test_aiter_tracked(self, *, stream, app):
@@ -137,6 +141,9 @@ class Test_Stream:
         else:
             event.ack.assert_called_once_with()
 
+    @pytest.mark.skipif(
+        platform.python_implementation() == "PyPy", reason="Not yet supported on PyPy"
+    )
     @pytest.mark.asyncio
     @pytest.mark.allow_lingering_tasks(count=1)
     async def test_aiter_tracked__CancelledError(self, *, stream, app):

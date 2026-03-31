@@ -4,6 +4,7 @@ An app is an instance of the Faust library.
 Everything starts here.
 
 """
+
 import asyncio
 import importlib
 import inspect
@@ -11,6 +12,7 @@ import re
 import sys
 import typing
 import warnings
+from contextlib import nullcontext
 from datetime import tzinfo
 from functools import wraps
 from itertools import chain
@@ -28,6 +30,7 @@ from typing import (
     Mapping,
     MutableMapping,
     MutableSequence,
+    NoReturn,
     Optional,
     Pattern,
     Set,
@@ -43,14 +46,12 @@ import opentracing
 from mode import Seconds, Service, ServiceT, SupervisorStrategyT, want_seconds
 from mode.utils.aiter import aiter
 from mode.utils.collections import force_mapping
-from mode.utils.contexts import nullcontext
 from mode.utils.futures import stampede
 from mode.utils.imports import import_from_cwd, smart_import
 from mode.utils.logging import flight_recorder, get_logger
 from mode.utils.objects import cached_property, qualname, shortlabel
 from mode.utils.queues import FlowControlEvent, ThrowableQueue
 from mode.utils.types.trees import NodeT
-from mode.utils.typing import NoReturn
 
 from faust import transport
 from faust.agents import AgentFun, AgentManager, AgentT, ReplyConsumer, SinkT
@@ -113,17 +114,13 @@ if typing.TYPE_CHECKING:  # pragma: no cover
     from faust.worker import Worker as _Worker
 else:
 
-    class _AppCommand:
-        ...  # noqa
+    class _AppCommand: ...  # noqa
 
-    class _LiveCheck:
-        ...  # noqa
+    class _LiveCheck: ...  # noqa
 
-    class _Fetcher:
-        ...  # noqa
+    class _Fetcher: ...  # noqa
 
-    class _Worker:
-        ...  # noqa
+    class _Worker: ...  # noqa
 
 
 __all__ = ["App", "BootStrategy"]
@@ -466,7 +463,7 @@ class App(AppT, Service):
         self._default_options = (id, options)
 
         # The agent manager manages all agents.
-        self.agents = AgentManager(self)
+        self.agents = AgentManager(self, loop=loop)
 
         # Sensors monitor Faust using a standard sensor API.
         self.sensors = SensorDelegate(self)
@@ -1326,7 +1323,9 @@ class App(AppT, Service):
         def _decorator(fun: ViewHandlerFun) -> ViewHandlerFun:
             _query_param = query_param
             if shard_param is not None:
-                warnings.warn(DeprecationWarning(W_DEPRECATED_SHARD_PARAM))
+                warnings.warn(
+                    DeprecationWarning(W_DEPRECATED_SHARD_PARAM), stacklevel=2
+                )
                 if query_param:
                     raise TypeError("Cannot specify shard_param and query_param")
                 _query_param = shard_param
@@ -1370,7 +1369,9 @@ class App(AppT, Service):
         def _decorator(fun: ViewHandlerFun) -> ViewHandlerFun:
             _query_param = query_param
             if shard_param is not None:
-                warnings.warn(DeprecationWarning(W_DEPRECATED_SHARD_PARAM))
+                warnings.warn(
+                    DeprecationWarning(W_DEPRECATED_SHARD_PARAM), stacklevel=2
+                )
                 if query_param:
                     raise TypeError("Cannot specify shard_param and query_param")
                 _query_param = shard_param
@@ -1791,7 +1792,7 @@ class App(AppT, Service):
         return revoked, newly_assigned
 
     def _new_producer(self) -> ProducerT:
-        return self.transport.create_producer(beacon=self.beacon)
+        return self.transport.create_producer(loop=self.loop, beacon=self.beacon)
 
     def _new_consumer(self) -> ConsumerT:
         return self.transport.create_consumer(
@@ -1899,7 +1900,8 @@ class App(AppT, Service):
                         f"Cannot use both compat option {old!r} and {new!r}"
                     )
                 warnings.warn(
-                    FutureWarning(W_OPTION_DEPRECATED.format(old=old, new=new))
+                    FutureWarning(W_OPTION_DEPRECATED.format(old=old, new=new)),
+                    stacklevel=2,
                 )
         return options
 

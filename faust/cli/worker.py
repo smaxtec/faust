@@ -1,4 +1,5 @@
 """Program ``faust worker`` used to start application from console."""
+
 import asyncio
 import os
 import platform
@@ -57,7 +58,7 @@ class worker(AppCommand):
             "-h",
             default=None,
             type=str,
-            help=f"Canonical host name for the web server " f"(default: {WEB_BIND})",
+            help=f"Canonical host name for the web server (default: {WEB_BIND})",
         ),
     ]
 

@@ -1,11 +1,11 @@
 """Cache backend - base implementation."""
+
 import abc
-from typing import Any, ClassVar, Optional, Tuple, Type, Union
+from contextlib import asynccontextmanager
+from typing import Any, AsyncGenerator, ClassVar, Optional, Tuple, Type, Union
 
 from mode import Service
-from mode.utils.contexts import asynccontextmanager
 from mode.utils.logging import get_logger
-from mode.utils.typing import AsyncGenerator
 from yarl import URL
 
 from faust.types import AppT
@@ -39,18 +39,15 @@ class CacheBackend(CacheBackendT, Service):
         Service.__init__(self, **kwargs)
 
     @abc.abstractmethod
-    async def _get(self, key: str) -> Optional[bytes]:
-        ...
+    async def _get(self, key: str) -> Optional[bytes]: ...
 
     @abc.abstractmethod
     async def _set(
         self, key: str, value: bytes, timeout: Optional[float] = None
-    ) -> None:
-        ...
+    ) -> None: ...
 
     @abc.abstractmethod
-    async def _delete(self, key: str) -> None:
-        ...
+    async def _delete(self, key: str) -> None: ...
 
     async def get(self, key: str) -> Optional[bytes]:
         """Get cached-value by key."""
@@ -80,8 +77,10 @@ class CacheBackend(CacheBackendT, Service):
             self.log.warning(E_CACHE_INVALIDATING, key, exc, exc_info=1)  # noqa: G200
             try:
                 await self._delete(key)
-            except self.operational_errors + self.invalidating_errors as exc:
-                self.log.exception(E_CANNOT_INVALIDATE, key, exc)  # noqa: G200
+            except (  # noqa: B030
+                self.operational_errors + self.invalidating_errors
+            ) as exc:
+                self.log.exception(E_CANNOT_INVALIDATE, key, exc)
             raise self.Unavailable()
         except self.operational_errors as exc:
             self.log.warning(E_CACHE_INOPERATIONAL, exc, exc_info=1)  # noqa: G200

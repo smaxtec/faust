@@ -1,4 +1,5 @@
 """Wrappers for windowed tables."""
+
 import operator
 import typing
 from datetime import datetime
@@ -9,6 +10,7 @@ from typing import (
     ItemsView,
     Iterator,
     KeysView,
+    NoReturn,
     Optional,
     Tuple,
     Type,
@@ -17,7 +19,6 @@ from typing import (
 )
 
 from mode import Seconds
-from mode.utils.typing import NoReturn
 
 from faust.exceptions import ImproperlyConfigured
 from faust.streams import current_event
@@ -40,8 +41,7 @@ if typing.TYPE_CHECKING:  # pragma: no cover
     from .table import Table as _Table
 else:
 
-    class _Table:
-        ...  # noqa
+    class _Table: ...  # noqa
 
 
 __all__ = [
@@ -341,6 +341,7 @@ class WindowWrapper(WindowWrapperT):
                 key_type=self.table.key_type,
                 window=None,
             )
+            self.table.app.tables.add(self.key_index_table)
         self._get_relative_timestamp = self._relative_handler(relative_to)
 
     def clone(self, relative_to: RelativeArg) -> WindowWrapperT:

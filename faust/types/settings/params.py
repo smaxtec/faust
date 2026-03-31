@@ -37,11 +37,9 @@ if typing.TYPE_CHECKING:
     from .settings import Settings as _Settings
 else:
 
-    class _Section:
-        ...  # noqa
+    class _Section: ...  # noqa
 
-    class _Settings:
-        ...  # noqa
+    class _Settings: ...  # noqa
 
 
 __all__ = [
@@ -374,7 +372,7 @@ class Param(Generic[IT, OT], property):
         if self.version_deprecated:
             # we use UserWarning because DeprecationWarning is silenced
             # by default in Python.
-            warnings.warn(UserWarning(self.build_deprecation_warning()))
+            warnings.warn(UserWarning(self.build_deprecation_warning()), stacklevel=2)
         return self.on_get(obj)
 
     def __set__(self, obj: Any, value: IT) -> None:
@@ -534,8 +532,7 @@ class Number(Param[IT, OT]):
         self.number_aliases = number_aliases or {}
 
     @abc.abstractmethod
-    def convert(self, conf: _Settings, value: IT) -> OT:
-        ...
+    def convert(self, conf: _Settings, value: IT) -> OT: ...
 
     def to_python(self, conf: _Settings, value: IT) -> OT:
         """Convert given value to number."""

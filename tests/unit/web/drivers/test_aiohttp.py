@@ -1,11 +1,11 @@
 import asyncio
 import sys
 from pathlib import Path
+from unittest.mock import ANY, Mock, call, patch
 
 import aiohttp_cors
 import pytest
 from aiohttp.web import Application
-from mode.utils.mocks import ANY, AsyncMock, Mock, call, patch
 from yarl import URL
 
 from faust.types.web import ResourceOptions
@@ -16,6 +16,7 @@ from faust.web.drivers.aiohttp import (
     ServerThread,
     _prepare_cors_options,
 )
+from tests.helpers import AsyncMock
 
 if sys.platform == "win32":
     DATAPATH = "c:/Program Files/Faust/data"
@@ -293,7 +294,8 @@ class Test_Web:
     def test_route__with_cors_options(self, *, web):
         handler = Mock()
         handler.get_methods = Mock(
-            name="get_methods", return_value=set({"GET", "PUT", "POST", "DELETE"})
+            name="get_methods",
+            return_value=set({"GET", "PUT", "POST", "DELETE"}),
         )
         cors_options = {
             "http://example.com": ResourceOptions(
@@ -320,7 +322,8 @@ class Test_Web:
         web._cors.add.assert_has_calls(
             [
                 call(
-                    web.web_app.router.add_route(), _prepare_cors_options(cors_options)
+                    web.web_app.router.add_route(),
+                    _prepare_cors_options(cors_options),
                 )
                 for _ in NON_OPTIONS_METHODS
             ],

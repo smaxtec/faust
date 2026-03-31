@@ -1,4 +1,5 @@
 """Base interface for Web server and views."""
+
 import abc
 import socket
 from datetime import datetime
@@ -186,7 +187,7 @@ class Web(Service):
         else:
             blueprints.extend(self.production_blueprints)
         self.blueprints = BlueprintManager(blueprints)
-        Service.__init__(self, **kwargs)
+        Service.__init__(self, loop=app.loop, **kwargs)
 
     @abc.abstractmethod
     def text(

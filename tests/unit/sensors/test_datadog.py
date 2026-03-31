@@ -1,5 +1,6 @@
+from unittest.mock import Mock, call
+
 import pytest
-from mode.utils.mocks import Mock, call
 
 from faust.exceptions import ImproperlyConfigured
 from faust.sensors.datadog import DatadogMonitor, DatadogStatsClient  # noqa
@@ -240,7 +241,10 @@ class TestDatadogMonitor:
         client.increment.assert_has_calls(
             [
                 call(
-                    "messages_send_failed", sample_rate=mon.rate, tags=None, value=1.0
+                    "messages_send_failed",
+                    sample_rate=mon.rate,
+                    tags=None,
+                    value=1.0,
                 ),
             ]
         )
@@ -264,7 +268,10 @@ class TestDatadogMonitor:
         client.increment.assert_has_calls(
             [
                 call(
-                    "assignments_complete", sample_rate=mon.rate, tags=None, value=1.0
+                    "assignments_complete",
+                    sample_rate=mon.rate,
+                    tags=None,
+                    value=1.0,
                 ),
             ]
         )
@@ -283,7 +290,12 @@ class TestDatadogMonitor:
         client = mon.client.client
         client.increment.assert_has_calls(
             [
-                call("assignments_error", sample_rate=mon.rate, tags=None, value=1.0),
+                call(
+                    "assignments_error",
+                    sample_rate=mon.rate,
+                    tags=None,
+                    value=1.0,
+                ),
             ]
         )
         client.timing.assert_called_once_with(
@@ -343,7 +355,10 @@ class TestDatadogMonitor:
             [
                 call("rebalances", sample_rate=mon.rate, tags=None, value=1.0),
                 call(
-                    "rebalances_recovering", sample_rate=mon.rate, tags=None, value=1.0
+                    "rebalances_recovering",
+                    sample_rate=mon.rate,
+                    tags=None,
+                    value=1.0,
                 ),
             ]
         )
@@ -366,7 +381,10 @@ class TestDatadogMonitor:
             [
                 call("rebalances", sample_rate=mon.rate, tags=None, value=1.0),
                 call(
-                    "rebalances_recovering", sample_rate=mon.rate, tags=None, value=1.0
+                    "rebalances_recovering",
+                    sample_rate=mon.rate,
+                    tags=None,
+                    value=1.0,
                 ),
             ]
         )

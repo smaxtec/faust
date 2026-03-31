@@ -1,3 +1,5 @@
+"""Aerospike storage."""
+
 import time
 import typing
 from typing import Any, Dict, Iterator, Optional, Tuple, Union
@@ -41,13 +43,13 @@ class AeroSpikeStore(base.SerializedStore):
     ttl: int
     policies: typing.Mapping[str, Any]
     BIN_KEY = "value_key"
-    USERNAME_KEY = "username"
-    HOSTS_KEY = "hosts"
-    PASSWORD_KEY = "password"  # nosec
-    NAMESPACE_KEY = "namespace"
-    TTL_KEY = "ttl"
-    POLICIES_KEY = "policies"
-    CLIENT_OPTIONS_KEY = "client"
+    USERNAME_KEY: str = "user"
+    HOSTS_KEY: str = "hosts"
+    PASSWORD_KEY: str = "password"  # nosec
+    NAMESPACE_KEY: str = "namespace"
+    TTL_KEY: str = "ttl"
+    POLICIES_KEY: str = "policies"
+    CLIENT_OPTIONS_KEY: str = "client"
 
     def __init__(
         self,
@@ -70,18 +72,23 @@ class AeroSpikeStore(base.SerializedStore):
 
     @staticmethod
     def get_aerospike_client(aerospike_config: Dict[Any, Any]) -> Client:
+        """Try to get Aerospike client instance."""
         global aerospike_client
         if aerospike_client:
             return aerospike_client
         else:
-            client = aerospike.client(
-                aerospike_config.get(AeroSpikeStore.CLIENT_OPTIONS_KEY)
+            client_config: Dict[Any, Any] = aerospike_config.get(
+                AeroSpikeStore.CLIENT_OPTIONS_KEY, {}
             )
+            client_config[AeroSpikeStore.USERNAME_KEY] = aerospike_config.get(
+                AeroSpikeStore.USERNAME_KEY, None
+            )
+            client_config[AeroSpikeStore.PASSWORD_KEY] = aerospike_config.get(
+                AeroSpikeStore.PASSWORD_KEY, None
+            )
+
             try:
-                client.connect(
-                    aerospike_config.get(AeroSpikeStore.USERNAME_KEY),
-                    aerospike_config.get(AeroSpikeStore.PASSWORD_KEY),
-                )
+                client = aerospike.client(client_config)
                 aerospike_client = client
                 return client
             except Exception as e:
@@ -91,7 +98,7 @@ class AeroSpikeStore(base.SerializedStore):
         key = (self.namespace, self.table_name, key)
         fun = self.client.get
         try:
-            (key, meta, bins) = self.aerospike_fun_call_with_retry(fun=fun, key=key)
+            key, meta, bins = self.aerospike_fun_call_with_retry(fun=fun, key=key)
             if bins:
                 return bins[self.BIN_KEY]
             return None
@@ -166,7 +173,7 @@ class AeroSpikeStore(base.SerializedStore):
                 fun=fun, namespace=self.namespace, set=self.table_name
             )
             for result in scan.results():
-                (key, meta, bins) = result
+                key, meta, bins = result
                 if bins:
                     yield bins[self.BIN_KEY]
                 else:
@@ -186,8 +193,8 @@ class AeroSpikeStore(base.SerializedStore):
                 fun=fun, namespace=self.namespace, set=self.table_name
             )
             for result in scan.results():
-                (key_data, meta, bins) = result
-                (ns, set, policy, key) = key_data
+                key_data, meta, bins = result
+                ns, set, policy, key = key_data
 
                 if bins:
                     bins = bins[self.BIN_KEY]
@@ -200,13 +207,14 @@ class AeroSpikeStore(base.SerializedStore):
             raise ex
 
     def _size(self) -> int:
+        """Always returns 0 for Aerospike."""
         return 0
 
     def _contains(self, key: bytes) -> bool:
         try:
             if self.app.conf.store_check_exists:
                 key = (self.namespace, self.table_name, key)
-                (key, meta) = self.aerospike_fun_call_with_retry(
+                key, meta = self.aerospike_fun_call_with_retry(
                     fun=self.client.exists, key=key
                 )
                 if meta:
@@ -224,10 +232,20 @@ class AeroSpikeStore(base.SerializedStore):
             raise ex
 
     def _clear(self) -> None:
-        pass
+        """This is typically used to clear data.
+
+        This does nothing when using the Aerospike store.
+
+        """
+        ...
 
     def reset_state(self) -> None:
-        pass
+        """Remove system state.
+
+        This does nothing when using the Aerospike store.
+
+        """
+        ...
 
     def persisted_offset(self, tp: TP) -> Optional[int]:
         """Return the persisted offset.
@@ -237,6 +255,7 @@ class AeroSpikeStore(base.SerializedStore):
         return None
 
     def aerospike_fun_call_with_retry(self, fun, *args, **kwargs):
+        """Call function and retry until Aerospike throws exception."""
         f_tries = self.app.conf.aerospike_retries_on_exception
         f_delay = self.app.conf.aerospike_sleep_seconds_between_retries_on_exception
         while f_tries > 1:
@@ -262,3 +281,23 @@ class AeroSpikeStore(base.SerializedStore):
                     ex
                 )  # crash the app to prevent the offset from progressing
             raise ex
+
+    async def backup_partition(
+        self, tp: Union[TP, int], flush: bool = True, purge: bool = False, keep: int = 1
+    ) -> None:
+        """Backup partition from this store.
+
+        Not yet implemented for Aerospike.
+
+        """
+        raise NotImplementedError("Not yet implemented for Aerospike.")
+
+    def restore_backup(
+        self, tp: Union[TP, int], latest: bool = True, backup_id: int = 0
+    ) -> None:
+        """Restore partition backup from this store.
+
+        Not yet implemented for Aerospike.
+
+        """
+        raise NotImplementedError("Not yet implemented for Aerospike.")
