@@ -196,43 +196,24 @@ class TestTransactionManager:
 
         await manager.on_rebalance(set(), set(), set())
 
-    @pytest.mark.skip("Needs fixing")
     @pytest.mark.asyncio
     async def test__stop_transactions(self, *, manager, producer):
         tids = ["0-0", "1-0"]
         manager._start_new_producer = AsyncMock()
         await manager._stop_transactions(tids)
-        producer.stop_transaction.assert_called()
-        producer.stop_transaction.assert_called_once_with(
-            [
-                # The problem is that some reason calls with extra
-                # (commented out) garbage are being included
-                # call.shortlabel.__bool__(),
-                # call.shortlabel._str__(),
-                call("0-0"),
-                # call.shortlabel.__bool__(),
-                # call.shortlabel._str__(),
-                call("1-0"),
-            ]
+        assert producer.stop_transaction.call_count == 2
+        producer.stop_transaction.assert_has_calls(
+            [call("0-0"), call("1-0")], any_order=True
         )
 
-    @pytest.mark.skip("Needs fixing")
     @pytest.mark.asyncio
     async def test_start_transactions(self, *, manager, producer):
         tids = ["0-0", "1-0"]
         manager._start_new_producer = AsyncMock()
         await manager._start_transactions(tids)
+        assert producer.maybe_begin_transaction.call_count == 2
         producer.maybe_begin_transaction.assert_has_calls(
-            [
-                # The problem is that some reason calls with extra
-                # (commented out) garbage are being included
-                # call.shortlabel.__bool__(),
-                # call.shortlabel._str__(),
-                call("0-0"),
-                # call.shortlabel.__bool__(),
-                # call.shortlabel._str__(),
-                call("1-0"),
-            ]
+            [call("0-0"), call("1-0")], any_order=True
         )
 
     @pytest.mark.asyncio
@@ -946,9 +927,10 @@ class TestConsumer:
 
     @pytest.mark.asyncio
     async def test_commit_offsets(self, *, consumer):
-        consumer._commit = AsyncMock(name="_commit")
+        consumer._commit = AsyncMock(name="_commit", return_value=True)
         consumer.current_assignment.update({TP1, TP2})
         consumer.app.producer.flush = AsyncMock()
+        consumer.app.monitor.on_tp_commit = Mock(name="on_tp_commit")
         await consumer._commit_offsets(
             {
                 TP1: 3003,
@@ -961,6 +943,15 @@ class TestConsumer:
                 TP2: 6006,
             }
         )
+        # On a successful commit, bookkeeping must advance.
+        consumer.app.monitor.on_tp_commit.assert_called_once_with(
+            {
+                TP1: 3003,
+                TP2: 6006,
+            }
+        )
+        assert consumer._committed_offset[TP1] == 3003
+        assert consumer._committed_offset[TP2] == 6006
 
     @pytest.mark.asyncio
     async def test_commit_offsets__did_not_commit(self, *, consumer):
@@ -969,6 +960,8 @@ class TestConsumer:
         consumer.app.producer.flush = AsyncMock()
         consumer.current_assignment.update({TP1, TP2})
         consumer.app.tables = Mock(name="app.tables")
+        consumer.app.monitor.on_tp_commit = Mock(name="on_tp_commit")
+        committed_offset_before = dict(consumer._committed_offset)
         await consumer._commit_offsets(
             {
                 TP1: 3003,
@@ -977,6 +970,11 @@ class TestConsumer:
             }
         )
         consumer.app.tables.on_commit.assert_not_called()
+        # Bookkeeping must not advance when the underlying commit failed
+        # (see faust-streaming/faust#316): a failed commit must not make
+        # Faust believe those offsets were actually committed.
+        consumer.app.monitor.on_tp_commit.assert_not_called()
+        assert consumer._committed_offset == committed_offset_before
 
     @pytest.mark.asyncio
     async def test_commit_offsets__in_transaction(self, *, consumer):
