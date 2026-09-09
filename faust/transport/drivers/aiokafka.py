@@ -42,7 +42,7 @@ from aiokafka.errors import (
 )
 from aiokafka.partitioner import DefaultPartitioner, murmur2
 from aiokafka.protocol.admin import CreateTopicsRequest
-from aiokafka.protocol.metadata import MetadataRequest
+from aiokafka.protocol.metadata import MetadataRequest, MetadataRequest_v1
 from aiokafka.structs import OffsetAndMetadata, TopicPartition as _TopicPartition
 from aiokafka.util import parse_kafka_version
 from mode import Service, get_logger
@@ -1517,7 +1517,11 @@ class Transport(base.Transport):
         for node_id in nodes:
             if node_id is None:
                 raise NotReady("Not connected to Kafka Broker")
-            request = MetadataRequest([])
+            if _AIOKAFKA_HAS_API_VERSION:
+                # aiokafka < 0.13: MetadataRequest is a versioned list.
+                request = MetadataRequest_v1([])
+            else:
+                request = MetadataRequest([])
             wait_result = await owner.wait(
                 client.send(node_id, request),
                 timeout=timeout,
@@ -1566,11 +1570,16 @@ class Transport(base.Transport):
             else:
                 raise Exception("Controller node is None")
 
-        request = CreateTopicsRequest(
+        create_topics_args = (
             [(topic, partitions, replication, [], list(config.items()))],
             timeout,
             False,
         )
+        if _AIOKAFKA_HAS_API_VERSION:
+            # aiokafka < 0.13: CreateTopicsRequest is indexed by protocol version.
+            request = CreateTopicsRequest[1](*create_topics_args)
+        else:
+            request = CreateTopicsRequest(*create_topics_args)
         wait_result = await owner.wait(
             client.send(controller_node, request),
             timeout=timeout,
